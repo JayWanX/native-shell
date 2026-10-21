@@ -187,20 +187,20 @@ class ResumeTests(unittest.TestCase):
         self.assertTrue(all(int(asset["content_hash"].split("-")[1]) >= 5921 for asset in selected))
 
     def test_build_identity_changes_with_binaries_revisions_and_harness(self):
-        niu, rubash = self.root / "niu.exe", self.root / "rubash.exe"
-        niu.write_bytes(b"inert niu fixture")
+        native_shell, rubash = self.root / "native-shell.exe", self.root / "rubash.exe"
+        native_shell.write_bytes(b"inert native-shell fixture")
         rubash.write_bytes(b"inert rubash fixture")
-        def identity(niu_rev="niu-a", rubash_rev="rubash-a", slow=2.0):
-            return ECO.build_identity(niu, rubash, niu_rev, rubash_rev, slow,
+        def identity(native_shell_rev="ns-a", rubash_rev="rubash-a", slow=2.0):
+            return ECO.build_identity(native_shell, rubash, native_shell_rev, rubash_rev, slow,
                                       SimpleNamespace(bin=None))[0]
         original = identity()
         self.assertEqual(original, identity())
-        self.assertNotEqual(original, identity(niu_rev="niu-b"))
+        self.assertNotEqual(original, identity(native_shell_rev="niu-b"))
         self.assertNotEqual(original, identity(rubash_rev="rubash-b"))
         self.assertNotEqual(original, identity(slow=3.0))
-        niu.write_bytes(b"changed niu")
+        native_shell.write_bytes(b"changed native-shell")
         self.assertNotEqual(original, identity())
-        niu.write_bytes(b"inert niu fixture")
+        native_shell.write_bytes(b"inert native-shell fixture")
         rubash.write_bytes(b"changed rubash")
         self.assertNotEqual(original, identity())
         rubash.write_bytes(b"inert rubash fixture")
@@ -267,9 +267,9 @@ class ResumeTests(unittest.TestCase):
     # ── #409 oracle probe (CR #410 F1: never elect our own forwarder) ──
 
     def test_msys_candidates_drop_self_forwarder_paths(self):
-        # winuxcmd is niubash's own shim layout: `where git` and PATH resolve
+        # winuxcmd is native-shell's own shim layout: `where git` and PATH resolve
         # to it on dev boxes, and it must never enter the candidate chain
-        winux = (r"C:\Users\x\AppData\Local\Programs\Niubash"
+        winux = (r"C:\Users\x\AppData\Local\Programs\NativeShell"
                  r"\winuxcmd\usr\bin\bash.exe")
         with mock.patch.dict(os.environ, {"ECO_GNU_BASH": ""}), \
              mock.patch.object(ECO.subprocess, "run",
@@ -289,9 +289,9 @@ class ResumeTests(unittest.TestCase):
 
     def test_eco_gnu_bash_pin_inside_self_layout_is_dropped(self):
         # an explicit ECO_GNU_BASH pin into our own shim layout is refused
-        # too — loud, not silent (a functional niu forwarder would pass any
+        # too — loud, not silent (a functional native-shell forwarder would pass any
         # output check, so the path filter is the authoritative guard)
-        winux = r"C:\x\Niubash\winuxcmd\usr\bin\bash.exe"
+        winux = r"C:\x\NativeShell\winuxcmd\usr\bin\bash.exe"
         with mock.patch.dict(os.environ, {"ECO_GNU_BASH": winux}), \
              mock.patch.object(ECO.subprocess, "run",
                                return_value=SimpleNamespace(stdout="")), \
@@ -336,7 +336,7 @@ class ResumeTests(unittest.TestCase):
     def test_probe_rejects_shim_that_cannot_run_a_script(self):
         # CR #410 F1: --version alone must not crown the oracle. A forwarder
         # that answers --version but fails a marker script (rc=1, no output —
-        # the observed `niu: 拒绝访问` shape) is not bash; the probe must
+        # the observed `native-shell: 拒绝访问` shape) is not bash; the probe must
         # fall through (here: to WSL, which the fake reports as absent).
         gnu, fake = self._probe_with_fake_bash(1, "")
         self.assertIsNone(gnu.bin)
@@ -349,11 +349,11 @@ class ResumeTests(unittest.TestCase):
         self.assertIn("5.3.0", gnu.version)
 
     def test_oracle_availability_and_version_change_identity(self):
-        niu, rubash = self.root / "niu.exe", self.root / "rubash.exe"
-        niu.write_bytes(b"inert niu")
+        native_shell, rubash = self.root / "native-shell.exe", self.root / "rubash.exe"
+        native_shell.write_bytes(b"inert native-shell")
         rubash.write_bytes(b"inert rubash")
         def identity(oracle):
-            return ECO.build_identity(niu, rubash, "niu-a", "rubash-a", 2.0, oracle)
+            return ECO.build_identity(native_shell, rubash, "ns-a", "rubash-a", 2.0, oracle)
         missing_id, missing = identity(SimpleNamespace(bin=None))
         available_id, available = identity(SimpleNamespace(
             bin="/usr/bin/bash", kind="wsl", version="GNU bash 5.3"))
@@ -379,10 +379,10 @@ class ResumeTests(unittest.TestCase):
         db_path = manifest / "eco-manifest.sqlite"
         with contextlib.closing(sqlite3.connect(db_path)) as disk:
             self.db.backup(disk)
-        niu, rubash = self.root / "niu.exe", self.root / "rubash.exe"
-        niu.write_bytes(b"inert niu")
+        native_shell, rubash = self.root / "native-shell.exe", self.root / "rubash.exe"
+        native_shell.write_bytes(b"inert native-shell")
         rubash.write_bytes(b"inert rubash")
-        args = ["--niu", str(niu), "--rubash", str(rubash), "--manifest-dir", str(manifest),
+        args = ["--native-shell", str(native_shell), "--rubash", str(rubash), "--manifest-dir", str(manifest),
                 "--results-dir", str(self.root), "--tmp-root", str(self.root / "tmp"),
                 "--cache-dir", str(self.root / "cache")]
         def fixture(asset, cfg):
@@ -449,10 +449,10 @@ class ResumeTests(unittest.TestCase):
         self.asset("safe", "t5")
         with contextlib.closing(sqlite3.connect(db_path)) as disk:
             self.db.backup(disk)
-        niu, rubash = self.root / "niu.exe", self.root / "rubash.exe"
-        niu.write_bytes(b"not executable")
+        native_shell, rubash = self.root / "native-shell.exe", self.root / "rubash.exe"
+        native_shell.write_bytes(b"not executable")
         rubash.write_bytes(b"not executable")
-        args = ["--niu", str(niu), "--rubash", str(rubash), "--manifest-dir", str(manifest),
+        args = ["--native-shell", str(native_shell), "--rubash", str(rubash), "--manifest-dir", str(manifest),
                 "--results-dir", str(self.root), "--tmp-root", str(self.root / "tmp"),
                 "--cache-dir", str(self.root / "cache")]
         def fixture(asset, cfg):

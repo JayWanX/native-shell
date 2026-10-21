@@ -1,7 +1,7 @@
 # External Completion Providers
 
-Niubash ships no third-party completion provider in its binary. The shell
-provides the *protocol*; providers are *data* you source from `~/.niubashrc`
+Native Shell ships no third-party completion provider in its binary. The shell
+provides the *protocol*; providers are *data* you source from `~/.native-shellrc`
 — the same setup a bash or zsh user writes by hand. Any tool that speaks the
 bash completion protocol integrates this way; carapace-bin below is one
 example, not a special case.
@@ -29,12 +29,12 @@ through `compgen -F`; their resolution *at the interactive Tab press* is an
 engine follow-up (see the rubash release notes). Until it lands, a
 function-based provider should also speak the compdef protocol below.
 
-### 2. compdef functions (`NIU_COMPDEFS`)
+### 2. compdef functions (`NATIVE_SHELL_COMPDEFS`)
 
 For providers that compute candidates with a shell function, the rc declares
 a `command:function` mapping and defines the function. The function sees
-`NIU_COMP_WORDS` (space-joined, bash COMP_WORDS semantics) and
-`NIU_COMP_CWORD`; it writes back `NIU_COMP_RESULT`, one candidate per line,
+`NATIVE_SHELL_COMP_WORDS` (space-joined, bash COMP_WORDS semantics) and
+`NATIVE_SHELL_COMP_CWORD`; it writes back `NATIVE_SHELL_COMP_RESULT`, one candidate per line,
 as `value` or `value<TAB>description` — the description shows up in the
 completion menu.
 
@@ -42,12 +42,12 @@ completion menu.
 _mytool_comp() {
     # a real provider would shell out here and translate its output;
     # carapace's `value<TAB>description` fish output drops in unchanged
-    NIU_COMP_RESULT="start"$'\n'"stop"$'\n'"restart\tRestart the service"
+    NATIVE_SHELL_COMP_RESULT="start"$'\n'"stop"$'\n'"restart\tRestart the service"
 }
-NIU_COMPDEFS="mytool:_mytool_comp"
+NATIVE_SHELL_COMPDEFS="mytool:_mytool_comp"
 ```
 
-Candidates are filtered by the typed prefix; `NIU_COMPDEFS` holds one
+Candidates are filtered by the typed prefix; `NATIVE_SHELL_COMPDEFS` holds one
 `command:function` pair per line.
 
 ### 3. Completion definition files
@@ -59,15 +59,15 @@ definitions the embedded base layers use. The files are never executed: both
 formats are read as data.
 
 A completion-definition directory is declared with a directory line in
-`NIU_COMPDEFS` — the same variable that carries `command:function` pairs
+`NATIVE_SHELL_COMPDEFS` — the same variable that carries `command:function` pairs
 (issue #306). Every line that resolves to an existing directory is loaded
 (both file formats); every other line is a `command:function` pair. A user
 `mytool.toml` overrides the compiled-in definition for `mytool` entirely:
 
 ```bash
-# ~/.niubashrc — completion files as plain rc data
-NIU_COMPDEFS="C:/agents/completions"
-NIU_COMPDEFS="$NIU_COMPDEFS
+# ~/.native-shellrc — completion files as plain rc data
+NATIVE_SHELL_COMPDEFS="C:/agents/completions"
+NATIVE_SHELL_COMPDEFS="$NATIVE_SHELL_COMPDEFS
 mytool:_mytool_comp"
 ```
 
@@ -106,7 +106,7 @@ gh, docker, ...). Its bash integration emits standard bash completion code,
 so the standard snippet is all it takes:
 
 ```bash
-# ~/.niubashrc — requires carapace-bin installed, e.g.
+# ~/.native-shellrc — requires carapace-bin installed, e.g.
 #   wpm install carapace-bin
 # (or see https://github.com/carapace-sh/carapace-bin/releases).
 # Until carapace is on PATH this block is a no-op.
@@ -115,7 +115,7 @@ if command -v carapace >/dev/null 2>&1; then
 fi
 ```
 
-`niu setup` offers this snippet as an opt-in (default off) — the wizard
+`native-shell setup` offers this snippet as an opt-in (default off) — the wizard
 writes the same block, it installs nothing.
 
 Static compspecs from the snippet serve candidates today; the snippet's
@@ -123,21 +123,21 @@ Static compspecs from the snippet serve candidates today; the snippet's
 resolution lands. Providers that want description-carrying candidates
 *today* can bridge through the compdef protocol — carapace's
 `carapace <command> fish <words...>` output (`value<TAB>description`, already
-prefix-filtered) matches `NIU_COMP_RESULT`'s format line for line:
+prefix-filtered) matches `NATIVE_SHELL_COMP_RESULT`'s format line for line:
 
 ```bash
-# compdef bridge: carapace data through niubash's function protocol
+# compdef bridge: carapace data through native-shell's function protocol
 _carapace_bridge() {
     local cmd
-    set -- $NIU_COMP_WORDS
+    set -- $NATIVE_SHELL_COMP_WORDS
     cmd=$1
-    NIU_COMP_RESULT="$(carapace "$cmd" fish $NIU_COMP_WORDS 2>/dev/null)"
+    NATIVE_SHELL_COMP_RESULT="$(carapace "$cmd" fish $NATIVE_SHELL_COMP_WORDS 2>/dev/null)"
 }
-NIU_COMPDEFS="git:_carapace_bridge"
-NIU_COMPDEFS="$NIU_COMPDEFS
+NATIVE_SHELL_COMPDEFS="git:_carapace_bridge"
+NATIVE_SHELL_COMPDEFS="$NATIVE_SHELL_COMPDEFS
 docker:_carapace_bridge
 curl:_carapace_bridge"
 ```
 
-List the commands you care about — `NIU_COMPDEFS` is plain rc data, edited
+List the commands you care about — `NATIVE_SHELL_COMPDEFS` is plain rc data, edited
 any time.

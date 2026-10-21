@@ -1,38 +1,37 @@
 [package]
-name = "niubash"
-version = "1.4.2"
+name = "native-shell"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
-authors = ["unixwin team <arookieofc@gmail.com>"]
 description = "AI-native bash-compatible shell for Windows, built on rubash + winuxcmd"
 readme = "README.md"
-homepage = "https://github.com/unixwin/niubash"
-repository = "https://github.com/unixwin/niubash"
+homepage = "https://github.com/JayWanX/native-shell"
+repository = "https://github.com/JayWanX/native-shell"
 
 [[bin]]
-name = "niu"
+name = "native-shell"
 path = "src/main.rs"
 
 [workspace]
-members = [".", "crates/niubash-runtime"]
+members = [".", "crates/native-shell-runtime"]
 resolver = "2"
 
 [dependencies]
-niubash-runtime = { path = "crates/niubash-runtime", version = "1.4.2" }
-rubash = { version = "1.4.1", git = "https://github.com/unixwin/rubash.git", branch = "master" }
+native-shell-runtime = { path = "crates/native-shell-runtime", version = "1.0.0" }
+rubash = { version = "1.4.2", git = "https://github.com/unixwin/rubash.git", branch = "master" }
 anyhow = "1.0"
 env_logger = "0.10"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-# niubash#311: self-update verifies the downloaded installer against the
+# native-shell#311: self-update verifies the downloaded installer against the
 # release's published .sha256 sidecar before executing it (fail-closed).
 sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 # Win32_System_Pipes/Win32_Security/Win32_Storage_FileSystem/Win32_System_Console:
-# the niubash#245 piped-stdout pump (CreatePipe/SetStdHandle/GetFileType).
+# the native-shell#245 piped-stdout pump (CreatePipe/SetStdHandle/GetFileType).
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Networking_WinHttp", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_Console", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_Security"] }
 
 # rubash#827: build.rs stamps a `-dirty-<8 hex>` digest of the uncommitted
@@ -63,7 +62,7 @@ portable-pty = "0.9"
 lto = "thin"
 codegen-units = 1
 panic = "abort"
-# niubash#193: release artifacts shipped as "not stripped" (~12 MB ELF with
+# native-shell#193: release artifacts shipped as "not stripped" (~12 MB ELF with
 # full symbols; strip saves ~1 MB on disk and in self-update downloads).
 # "symbols" (stable since Rust 1.59) strips the symbol table on every
 # target the release pipeline builds (GNU/Linux, macOS, MSVC), so no
@@ -72,7 +71,7 @@ panic = "abort"
 # win comes from the ELF/Mach-O Unix artifacts the release pipeline ships.
 strip = "symbols"
 
-# Local override for cross-repo compat runs: build niu against the local
+# Local override for cross-repo compat runs: build native-shell against the local
 # rubash worktree (master + unpushed fixes) instead of the pinned git rev.
 [patch."https://github.com/unixwin/rubash.git"]
 rubash = { path = "../rubash" }

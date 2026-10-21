@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Isolated PTY smoke test for `niu setup`.
+"""Isolated PTY smoke test for `native-shell setup`.
 
-Spawns the niu.exe under test inside a ConPTY with HOME/USERPROFILE/
+Spawns the native-shell.exe under test inside a ConPTY with HOME/USERPROFILE/
 LOCALAPPDATA pointed at a fresh temp dir and PATH limited to the smoke
 winuxcmd + System32 — nothing touches the real profile, the installed
 binary, or the real font/registry state. Assertions run against the
@@ -11,9 +11,9 @@ redraw bugs that raw byte matching cannot see.
 Requires pywinpty and pyte (both present in the dev image).
 
 Usage:
-    python scripts/test_setup_wizard_pty.py [path\\to\\niu.exe]
+    python scripts/test_setup_wizard_pty.py [path\\to\\native-shell.exe]
 
-Default binary: target\\release\\niu.exe. Local-only gate, like the
+Default binary: target\\release\\native-shell.exe. Local-only gate, like the
 bash-upstream runner — not part of cargo test or CI.
 """
 
@@ -29,7 +29,7 @@ import pyte
 from winpty import PtyProcess
 
 REPO = Path(__file__).resolve().parent.parent
-SMOKE = Path(os.environ.get("NIU_SMOKE_ROOT", r"K:\niu-smoke"))
+SMOKE = Path(os.environ.get("NATIVE_SHELL_SMOKE_ROOT", r"K:\native-shell-smoke"))
 
 UP = "\x1b[A"
 DOWN = "\x1b[B"
@@ -39,7 +39,7 @@ CTRL_C = "\x03"
 
 
 class Session:
-    """A niu.exe instance under ConPTY with a pyte-parsed screen."""
+    """A native-shell.exe instance under ConPTY with a pyte-parsed screen."""
 
     def __init__(self, exe: Path, home: Path, cols: int = 120, rows: int = 36):
         winuxcmd = SMOKE / "winuxcmd"
@@ -50,7 +50,7 @@ class Session:
             "HOME": str(home),
             "USERPROFILE": str(home),
             "LOCALAPPDATA": str(home / "local-appdata"),
-            "NIU_APP_BUNDLE_PATH": str(SMOKE / "bundles" / "oh-my-niu"),
+            "NATIVE_SHELL_APP_BUNDLE_PATH": str(SMOKE / "bundles" / "oh-my-native-shell"),
             "PATH": os.pathsep.join(
                 [
                     str(winuxcmd / "bin"),
@@ -211,8 +211,8 @@ def test_esc_fast_forwards_to_summary(exe: Path):
             s.send(CTRL_C)
             s.wait_for("nothing was written")
             check(
-                not (Path(home) / ".niubashrc").exists(),
-                "Ctrl+C abort must not write ~/.niubashrc",
+                not (Path(home) / ".native-shellrc").exists(),
+                "Ctrl+C abort must not write ~/.native-shellrc",
             )
         finally:
             s.close()
@@ -304,10 +304,10 @@ def test_full_apply_writes_rc(exe: Path):
             else:
                 raise TimeoutError("wizard never finished:\n" + s.text())
             check(
-                (Path(home) / ".niubashrc").exists(),
-                "Apply should write ~/.niubashrc inside the sandbox\n" + s.text(),
+                (Path(home) / ".native-shellrc").exists(),
+                "Apply should write ~/.native-shellrc inside the sandbox\n" + s.text(),
             )
-            real_rc = Path.home() / ".niubashrc"
+            real_rc = Path.home() / ".native-shellrc"
             check(
                 not real_rc.exists()
                 or real_rc.stat().st_mtime < time.time() - 120,
@@ -325,9 +325,9 @@ def test_full_apply_writes_rc(exe: Path):
 
 
 def main() -> int:
-    exe = Path(sys.argv[1]) if len(sys.argv) > 1 else REPO / "target" / "release" / "niu.exe"
+    exe = Path(sys.argv[1]) if len(sys.argv) > 1 else REPO / "target" / "release" / "native-shell.exe"
     if not exe.is_file():
-        print(f"niu.exe not found: {exe}")
+        print(f"native-shell.exe not found: {exe}")
         return 2
 
     tests = [

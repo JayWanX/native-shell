@@ -1,12 +1,12 @@
 ---
-tags: [niubash, platforms, unix, harmonyos]
+tags: [native-shell, platforms, unix, harmonyos]
 created: 2026-10-09
 status: active
 ---
 
 # Platform Support
 
-Which platforms Niubash runs on, what "runs" means for each, and the parts
+Which platforms Native Shell runs on, what "runs" means for each, and the parts
 of the surface that are deliberately different per platform. This page is
 the contract; if a platform behaves differently from a claim here, that is
 a bug.
@@ -61,7 +61,7 @@ The Rust target is `aarch64-unknown-linux-ohos`. Two facts make it mostly
 free:
 
 - `rustc --print cfg --target aarch64-unknown-linux-ohos` reports
-  `target_os = "linux"` and `target_family = "unix"`. So Niubash's existing
+  `target_os = "linux"` and `target_family = "unix"`. So Native Shell's existing
   unix leg and rubash's existing Linux leg apply nearly unchanged, and
   `fd/mod.rs`'s `#[cfg(unix)]` arm is taken as-is.
 - The target is **Tier 2 with host tools** in Rust, so a check-only build
@@ -70,7 +70,7 @@ free:
 The one compile blocker found so far was rubash's `ulimit`, which typed its
 resource selector as `libc::__rlimit_resource_t` — a typedef only glibc
 defines. musl and the OpenHarmony libc take a plain `c_int`. Fixed by
-aliasing on `target_env` (rubash#449). With that, the whole Niubash
+aliasing on `target_env` (rubash#449). With that, the whole Native Shell
 workspace compiles for `aarch64-unknown-linux-ohos`.
 
 `cross-target-check` (in `ci.yml`) keeps it compiling. It is check-only
@@ -84,7 +84,7 @@ An earlier revision of this page described HarmonyOS as "a de-GNU'd Linux
 distribution — musl libc, `mksh` as the default shell, `toybox` built in".
 **That is wrong for HarmonyOS PC.** It came from OpenHarmony's dev-board
 userland and was applied to the whole platform. The two are different
-products and the difference changes how much Niubash has to supply.
+products and the difference changes how much Native Shell has to supply.
 
 **HarmonyOS PC is not stripped down.** A measured install (HarmonyOS
 1.12.0, aarch64, kernel `HongMeng Kernel 1.12.0`) runs **bash** as the
@@ -130,7 +130,7 @@ against musl:
 
 **No Huawei-specific shell patches.** It is an ordinary musl-linked GNU
 bash, which is a useful data point for us: the userland under HarmonyOS is
-a musl + Linux-ABI stack, not a bespoke one. That is *why* Niubash's
+a musl + Linux-ABI stack, not a bespoke one. That is *why* Native Shell's
 `target_os = "linux"` cfgs all hit and why the port was two lines.
 
 Note the version split when quoting numbers: the measured machine ran
@@ -190,7 +190,7 @@ The honest split:
 | Shell | **bash** | `mksh` |
 | Command set | **454 commands** at `/data/service/hnp/bin` (~93%) | `toybox`, per-device trimmed |
 | Text processing | **fully covered** | gaps; `awk`/`grep` absent, `diff` may be "unknown" though the source exists |
-| What Niubash adds | a **consistent** bash + GNU-toolset baseline across OS versions, plus the Bash semantics | the missing tools, not just the semantics |
+| What Native Shell adds | a **consistent** bash + GNU-toolset baseline across OS versions, plus the Bash semantics | the missing tools, not just the semantics |
 
 State the argument plainly, because it changed: on HarmonyOS PC the value
 is **not** "the commands are missing". It is that the toolset is not
@@ -254,9 +254,9 @@ HAP project root
         └── sub_dir/test.hnp
 ```
 
-So shipping Niubash to HarmonyOS PC is **not** "publish a `.hnp` and let
+So shipping Native Shell to HarmonyOS PC is **not** "publish a `.hnp` and let
 people install it". It means publishing **a HAP on the app store** whose
-payload is Niubash's binaries. That is an app-store listing, a signature,
+payload is Native Shell's binaries. That is an app-store listing, a signature,
 and a review — the same shape of gate as the phone form factor, just with
 a looser runtime policy. Anyone who thought "HarmonyOS PC is a tarball"
 should recalibrate: the packaging is cheap, the **distribution** is a
@@ -293,9 +293,9 @@ directory. Tools that install and then say "安装后找不到 ninja 命令？" 
 ask you to `export PATH=...` by hand have gone a manual route; that is not
 what the packaging system does by itself.
 
-This is good news for Niubash: **no Unix command-directory discovery
+This is good news for Native Shell: **no Unix command-directory discovery
 mechanism is needed.** Once the HAP is installed, the host looks like any
-other Unix box and Niubash's existing `PATH`-based discovery works
+other Unix box and Native Shell's existing `PATH`-based discovery works
 unchanged. A real device should still run the smoke gate — but this
 particular unknown does not need one.
 
@@ -332,13 +332,13 @@ mistaken for an input file. That is a real bug in the wild (BitMagic
 7.13.4), and the fix was to override the platform label, not to change the
 kernel.
 
-There is nothing to special-case in Niubash, and that is deliberate: the
+There is nothing to special-case in Native Shell, and that is deliberate: the
 honest source is the kernel, not a compile-time constant. **Do not add a
 HarmonyOS-specific `sysname()` branch** unless a concrete consumer needs
 it — and if something does need to branch, it should match `HarmonyOS`
 exactly, not `Linux`.
 
-`$BASH_VERSION` reports Niubash's Bash-compatibility level (e.g.
+`$BASH_VERSION` reports Native Shell's Bash-compatibility level (e.g.
 `5.3.0(1)-release`) on every platform, HarmonyOS included.
 
 ### Sandbox quirks worth knowing on HarmonyOS
@@ -353,7 +353,7 @@ verification**, which is why third-party executables on HarmonyOS PC
 frequently hit `Permission denied` on launch.
 
 A shell that assumes a writable `$TMPDIR` or a writable `$HOME` will
-misbehave here. Niubash should be checked against both on the first real
+misbehave here. Native Shell should be checked against both on the first real
 device run; nothing in the build changes.
 
 None of this changes the build. It is listed here so nobody spends a day
@@ -374,7 +374,7 @@ These are two different products, not one port.
 The fork restriction is the load-bearing **runtime** difference. Huawei's
 own FAQ (`faqs-ability-112`) states that on phones the system restricts and
 manages `fork` for ordinary apps, and community reports add that PC does
-not restrict it. Niubash is built on a fork+exec model on unix (see
+not restrict it. Native Shell is built on a fork+exec model on unix (see
 `rubash`'s `fd/unix.rs`: `Command::new` + `Stdio::from_raw_fd` +
 `pre_exec`), so PC is a plain port while the phone form factor needs the
 process-declaration path to be sustainable before it is worth building.
@@ -387,11 +387,11 @@ is the accurate one.
 
 **Do not treat "HarmonyOS support" as one item.** The store-release work is
 shared, but the phone form factor adds a per-process declaration and review
-gate that PC does not — and that gate is not something Niubash controls.
+gate that PC does not — and that gate is not something Native Shell controls.
 
-## What niu is not: no MSYS runtime
+## What native-shell is not: no MSYS runtime
 
-On Windows niu prints MSYS labels: `uname -s` reports `MSYS_NT-…`,
+On Windows native-shell prints MSYS labels: `uname -s` reports `MSYS_NT-…`,
 `$OSTYPE` is `msys`, `$MACHTYPE` is `x86_64-pc-msys`. Those labels are a
 **compatibility persona** ([rubash#154](https://github.com/unixwin/rubash/issues/154)),
 not a runtime. Ecosystem scripts routinely gate on `uname -s` matching
@@ -402,9 +402,9 @@ exists so those gates open. It is a default, not a fact —
 
 Under the labels there is **no MSYS2 runtime**: no `msys-2.0.dll`, no
 `cygwin1.dll`, and nothing inside a child process that converts POSIX argv
-for Windows. niu is a pure native Windows build; every process it starts
+for Windows. native-shell is a pure native Windows build; every process it starts
 is an ordinary Win32 process, and the POSIX-form argv an MSYS runtime
-would rewrite in-child is instead rewritten by niu's own executor before
+would rewrite in-child is instead rewritten by native-shell's own executor before
 that process starts — the distinction the behavioral boundary below
 states. So the `uname` story on this page splits by platform: on unix
 the builtin reports the kernel verbatim (see
@@ -413,60 +413,60 @@ persona labels that name a runtime which is not there.
 
 ### The behavioral boundary (measured)
 
-| A script written for real MSYS assumes | niu does |
+| A script written for real MSYS assumes | native-shell does |
 | --- | --- |
 | The runtime rewrites POSIX-form argv before a native child sees it. | It does — `/c/Users/cmx` reaches a native child as `C:\Users\cmx` (`python -c 'import sys; print(sys.argv[1])' /c/Users/cmx`). The exception is a native command processor: `cmd /c echo /d/repo` prints `/d/repo`, because `cmd` owns `/C`-style switches. |
-| `/d/...` reaches the child as `D:\...`. | For a native child, yes — `git -C /d/repo/niubash rev-parse --show-toplevel` prints `D:/repo/niubash`, and `python -c 'import sys; print(sys.argv[1])' /d/repo` prints `D:\repo`. A native command processor is again the exception (see above). |
+| `/d/...` reaches the child as `D:\...`. | For a native child, yes — `git -C /d/repo/native-shell rev-parse --show-toplevel` prints `D:/repo/native-shell`, and `python -c 'import sys; print(sys.argv[1])' /d/repo` prints `D:\repo`. A native command processor is again the exception (see above). |
 | An MSYS2 root: `/etc/fstab`, `/etc/profile`, MSYS2's `/usr`. | `/` is winuxcmd's installation root (`ls /` lists its `usr`, `bin`, `etc`, `opt`, …), not the current drive's root; the Unix-shaped `/etc` resolves inside that tree to a real Windows directory holding only winuxcmd's `mtab` shim. |
 | MSYS2's bundled perl/awk runtimes. | No perl at all; `awk` is winuxcmd's own native build, not MSYS2's. |
 
-The root row is the one that still bites: niu's `/` is the WinuxCmd
+The root row is the one that still bites: native-shell's `/` is the WinuxCmd
 installation root, so a script that walks out from `/` sees the winuxcmd
 tree (`usr`, `bin`, `etc`, `opt`, …) rather than a drive root, and there
-is no MSYS2 `/etc/profile` or `/etc/fstab`. On the argv rows niu now
+is no MSYS2 `/etc/profile` or `/etc/fstab`. On the argv rows native-shell now
 matches what an MSYS2-targeted script assumes: POSIX-form argv **is**
 rewritten for native children, and shell-namespace roots such as
 `/usr/bin`, `/etc`, and `/tmp` are mapped for every child class. The one
 carve-out is the native command processor, which keeps its slash-prefixed
 drive-form operands verbatim. Unlike an MSYS runtime, though, this is not
-a layer inside the child: it is niu's own path handling, applied by the
+a layer inside the child: it is native-shell's own path handling, applied by the
 Rubash executor at the child boundary and documented in the
 [Windows Path Contract](windows-path-contract.md) (the internal
 `__RUBASH_ARGV_DIALECT=legacy` switch restores the earlier
 existence-gated behaviour).
 
-One line of orientation: **Git Bash = MSYS2 runtime + GNU bash; niu =
+One line of orientation: **Git Bash = MSYS2 runtime + GNU bash; native-shell =
 native engine + compatibility persona.** The labels match so ecosystem
 scripts run; the runtime they name is not present.
 
-## Calling PowerShell from niu
+## Calling PowerShell from native-shell
 
-niu is a full bash, so every command string it runs (through
-`niu -c '...'`, a script file, or piped stdin) goes through expansion
+native-shell is a full bash, so every command string it runs (through
+`native-shell -c '...'`, a script file, or piped stdin) goes through expansion
 first, and bash expands `$` in double-quoted and unquoted text.
 PowerShell uses `$` for the same slot: `$var`, `$args`, `$env:TEMP`. Call
-PowerShell without quoting discipline and niu expands PowerShell's
-variables before PowerShell starts. An undefined niu variable expands to
+PowerShell without quoting discipline and native-shell expands PowerShell's
+variables before PowerShell starts. An undefined native-shell variable expands to
 the empty string, so this:
 
 ```bash
-niu -c 'powershell -NoProfile -Command "$x=1; Write-Output x=$x"'
+native-shell -c 'powershell -NoProfile -Command "$x=1; Write-Output x=$x"'
 ```
 
 hands PowerShell `=1; Write-Output x=`, which fails with
-`=1 : The term '=1' is not recognized`. `$x` was never a niu variable, so
+`=1 : The term '=1' is not recognized`. `$x` was never a native-shell variable, so
 bash replaced both occurrences with nothing.
 
 This is standard bash semantics, not a quoting bug; the ruling and the
 reproduction cases are in
-[niubash#203](https://github.com/unixwin/niubash/issues/203). The fix
+[native-shell#203](https://github.com/JayWanX/native-shell/issues/203). The fix
 belongs to the calling side:
 
 **1. Escape the `$`.** Inside double quotes, `\$` survives expansion as a
 literal dollar sign:
 
 ```bash
-niu -c 'powershell -NoProfile -Command "\$x=1; Write-Output x=\$x"'
+native-shell -c 'powershell -NoProfile -Command "\$x=1; Write-Output x=\$x"'
 # prints x=1
 ```
 
@@ -475,15 +475,15 @@ miss turns into an empty string; the error you get names the mangled
 command, not the missing backslash.
 
 **2. Keep the `$` inside bash single quotes.** Bash never expands inside
-single quotes. From an interactive niu prompt, one pair does the whole
+single quotes. From an interactive native-shell prompt, one pair does the whole
 job:
 
 ```bash
 powershell -NoProfile -Command '$x=1; Write-Output x=$x'
 ```
 
-Through `niu -c` the quoting doubles, because the `-c` payload is itself
-a shell string to whatever shell launches niu. Once you are counting
+Through `native-shell -c` the quoting doubles, because the `-c` payload is itself
+a shell string to whatever shell launches native-shell. Once you are counting
 backslashes at two levels, use the file route instead.
 
 **3. Write a `.ps1` file and run it with `-File` (recommended).** The
@@ -492,7 +492,7 @@ script's text never passes through bash, so nothing needs escaping. The
 written:
 
 ```bash
-niu -c 'powershell -NoProfile -ExecutionPolicy Bypass -File C:/scripts/scan.ps1'
+native-shell -c 'powershell -NoProfile -ExecutionPolicy Bypass -File C:/scripts/scan.ps1'
 ```
 
 `-ExecutionPolicy Bypass` is not optional polish. Windows clients ship
@@ -514,5 +514,5 @@ must not be weakened (no `wpm` strings off Windows):
 - Windows path translation (`/mnt/X` drive argv rewriting) and the Windows
   signal bridge.
 
-Unix tarballs carry only `niu` + `README.md` + `LICENSE`; native system
+Unix tarballs carry only `native-shell` + `README.md` + `LICENSE`; native system
 tools are used as-is rather than bundled.

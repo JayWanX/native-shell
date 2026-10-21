@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 r"""Per-invocation startup cost of every installed shell face, by name.
 
-niubash#377: a shell face is any PATH-reachable name that starts the niu
-engine — the payload `niu.exe` itself, the `bash.exe`/`sh.exe` faces under
+native-shell#377: a shell face is any PATH-reachable name that starts the native-shell
+engine — the payload `native-shell.exe` itself, the `bash.exe`/`sh.exe` faces under
 `winuxcmd\bin` and `winuxcmd\usr\bin`, and convention slots such as
-`C:\Program Files\Git\bin\bash.exe` (niubash#398). AI agents, CI and git
+`C:\Program Files\Git\bin\bash.exe` (native-shell#398). AI agents, CI and git
 hooks pay the face's fixed cost on EVERY `-c` invocation, so the contract
 that matters is execution-level: spawn the face with `-c exit`, time it,
 and compare it against the payload's own spawn.
 
-Since niubash#397 the installed faces are hardlinks to `niu.exe` (same
+Since native-shell#397 the installed faces are hardlinks to `native-shell.exe` (same
 file, one process). The shipped forwarding shims (rubash's `bash` bin)
 remain the fallback wherever hardlinks are unavailable; they re-execute
-`niu.exe`, which is one extra process per call. This script is the number
+`native-shell.exe`, which is one extra process per call. This script is the number
 behind that sentence — run it before and after touching the link layout.
 
 A row is only recorded after the face proves it executes: `<face> -c
@@ -21,22 +21,22 @@ with the failure note instead of a broken face being reported as a fast
 measurement. Structural facts (size, hardlink count, same file as the
 payload) are reported per row as annotations.
 
-Gating (niubash#377 CR round): the gate is `--check-links` and it is
+Gating (native-shell#377 CR round): the gate is `--check-links` and it is
 DETERMINISTIC — every declared face (`winuxcmd\bin\bash.exe`,
 `winuxcmd\bin\sh.exe`, `winuxcmd\usr\bin\bash.exe`, `winuxcmd\usr\bin\sh.exe`)
-must be the SAME FILE as the payload `niu.exe`. The gate exists to catch a
+must be the SAME FILE as the payload `native-shell.exe`. The gate exists to catch a
 link degenerating back into a forwarder, and inode identity is exactly that
 fact, which the script computes either way. A measured-time-ratio gate was
 tried first and rejected with data: shimmed faces measured 1.04-1.46x the
 payload while healthy relinked faces measured 0.91-1.26x — the intervals
 overlap, so no ratio threshold separates the two states without false
 kills. The timing columns stay informational. The Git-bin convention slot
-is never gated; it is not a declared face (niubash#398).
+is never gated; it is not a declared face (native-shell#398).
 
 Usage:
 
     python scripts/perf/shell-face-startup.py
-    python scripts/perf/shell-face-startup.py --root D:/sandbox/Niubash
+    python scripts/perf/shell-face-startup.py --root D:/sandbox/NativeShell
     python scripts/perf/shell-face-startup.py --check-links
     python scripts/perf/shell-face-startup.py --json report.json
     python scripts/perf/shell-face-startup.py --powershell-crosscheck
@@ -59,9 +59,9 @@ import sys
 import time
 
 DEVNULL = subprocess.DEVNULL
-MARKER = "NIU-FACE-OK"
+MARKER = "NATIVE_SHELL-FACE-OK"
 
-# niubash#398: the convention slot an orphan .NET shim occupies. Measured
+# native-shell#398: the convention slot an orphan .NET shim occupies. Measured
 # when present; a missing slot is not an error.
 GIT_SLOT_CANDIDATES = (
     r"C:\Program Files\Git\bin\bash.exe",
@@ -75,7 +75,7 @@ FACE_NAMES = (
     ("winuxcmd\\usr\\bin", "sh.exe"),
 )
 
-# The faces niubash#397 owns: `--check-links` requires each of these to be
+# The faces native-shell#397 owns: `--check-links` requires each of these to be
 # the same file as the payload. Declared explicitly so the gate fails on a
 # face that is missing, not just on one that degenerated into a forwarder.
 DECLARED_FACES = tuple(f"{subdir}\\{name}" for subdir, name in FACE_NAMES)
@@ -84,8 +84,8 @@ DECLARED_FACES = tuple(f"{subdir}\\{name}" for subdir, name in FACE_NAMES)
 def default_root():
     local = os.environ.get("LOCALAPPDATA")
     if local:
-        candidate = os.path.join(local, "Programs", "Niubash")
-        if os.path.isfile(os.path.join(candidate, "niu.exe")):
+        candidate = os.path.join(local, "Programs", "NativeShell")
+        if os.path.isfile(os.path.join(candidate, "native-shell.exe")):
             return candidate
     return None
 
@@ -94,9 +94,9 @@ def collect_faces(root, extra):
     """(label, path) rows for every face that exists under root."""
     rows = []
     if root:
-        payload = os.path.join(root, "niu.exe")
+        payload = os.path.join(root, "native-shell.exe")
         if os.path.isfile(payload):
-            rows.append(("niu.exe (payload)", payload))
+            rows.append(("native-shell.exe (payload)", payload))
         for subdir, name in FACE_NAMES:
             path = os.path.join(root, subdir, name)
             if os.path.isfile(path):
@@ -181,7 +181,7 @@ def structural(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--root", help="installation root (default: the machine's Niubash install)")
+    parser.add_argument("--root", help="installation root (default: the machine's NativeShell install)")
     parser.add_argument("--face", action="append", default=[],
                         help="extra face executable to measure (repeatable)")
     parser.add_argument("--slot", action="store_true", default=True,
@@ -193,7 +193,7 @@ def main():
     parser.add_argument("--timeout", type=int, default=60, help="per-run timeout in seconds")
     parser.add_argument("--check-links", action="store_true",
                         help="gate: every declared face must be the same file as the "
-                             "payload niu.exe (deterministic; timing ratios cannot gate)")
+                             "payload native-shell.exe (deterministic; timing ratios cannot gate)")
     parser.add_argument("--powershell-crosscheck", action="store_true",
                         help="re-time every row with Measure-Command (N samples each)")
     parser.add_argument("--json", help="write the report as JSON to this path")
@@ -215,11 +215,11 @@ def main():
 
     payload_id = None
     if root:
-        payload_info = structural(os.path.join(root, "niu.exe"))
+        payload_info = structural(os.path.join(root, "native-shell.exe"))
         payload_id = payload_info.get("file_id")
 
     report = {
-        "schema": "niubash:perf-shell-face-startup@1.0.0",
+        "schema": "native-shell:perf-shell-face-startup@1.0.0",
         "generated": _dt.datetime.now().isoformat(timespec="seconds"),
         "host": platform.node(),
         "os": platform.platform(),
@@ -282,15 +282,15 @@ def main():
 
 
 def print_link_gate(report, root, payload_id):
-    """Deterministic gate (niubash#377 CR): declared faces == payload inode.
+    """Deterministic gate (native-shell#377 CR): declared faces == payload inode.
 
     Returns the process exit code: 0 pass, 1 fail, 2 cannot evaluate.
     """
     if payload_id is None:
         print(
-            "\n--check-links: cannot evaluate — no payload niu.exe found"
+            "\n--check-links: cannot evaluate — no payload native-shell.exe found"
             f" under root={root or '(none)'}; pass --root pointing at an"
-            " installation that contains niu.exe",
+            " installation that contains native-shell.exe",
             file=sys.stderr,
         )
         return 2
@@ -298,10 +298,10 @@ def print_link_gate(report, root, payload_id):
     by_label = {
         os.path.normcase(row["face"]): row
         for row in report["rows"]
-        if not row["face"].startswith("niu.exe") and "slot:" not in row["face"]
+        if not row["face"].startswith("native-shell.exe") and "slot:" not in row["face"]
     }
     print(f"\n--check-links: {len(DECLARED_FACES)} declared face(s), payload"
-          f" niu.exe under {root}")
+          f" native-shell.exe under {root}")
     failures = 0
     for face in DECLARED_FACES:
         row = by_label.get(os.path.normcase(face))
@@ -313,7 +313,7 @@ def print_link_gate(report, root, payload_id):
             failures += 1
         elif not row.get("same_file_as_payload"):
             print(f"  FAIL {face}: distinct from payload — a forwarder/copy where"
-                  " the hardlink should be; repair with `niu --relink-shells --force`"
+                  " the hardlink should be; repair with `native-shell --relink-shells --force`"
                   " (shims are sanctioned only on layouts without hardlink support)")
             failures += 1
         else:

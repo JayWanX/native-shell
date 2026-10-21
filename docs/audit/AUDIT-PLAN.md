@@ -1,4 +1,4 @@
-# Niubash Self-Discovery Audit Plan (wt74/audit)
+# Native Shell Self-Discovery Audit Plan (wt74/audit)
 
 Owner directive (2026-10-04): 「自己发现 不要等我说了才发现 拍几十个agent也不为过」—
 find it yourself, do not wait for the owner to find it; dozens of parallel
@@ -10,7 +10,7 @@ Every bug the owner found after the 1.3.3 release was discoverable by
 *systematically exercising the product the way the owner does*: #168 (theme
 rebound on 2nd source), #169 (cursor mid-path on multi-line themes), #170
 (fake theme preview), #171 (collections installed only themes), the missing
-`niu plugin ui` verb, #167 (clock eats the first key), the 6-second source
+`native-shell plugin ui` verb, #167 (clock eats the first key), the 6-second source
 wall. The golden journey gate (`scripts/journey/golden-journey.py`,
 `docs/journey-gate.md`) covers ONE happy path (install → wizard → trust →
 theme → terminals → battery). This plan enumerates everything the journey
@@ -29,7 +29,7 @@ error a user can hit, every claim a doc makes — as parallel discovery lanes.
    rc/spec/registry files on disk). Never assert internals.
 3. **Sandboxed HOME always.** `USERPROFILE` **and** `HOME` both point into
    the lane's sandbox (USERPROFILE wins in this product — known pitfall,
-   see journey-gate.md). Never touch the real `~/.niubash` or the real
+   see journey-gate.md). Never touch the real `~/.native-shell` or the real
    Windows Terminal settings.json (back up first if a probe must).
 4. **ConPTY for interactive, bounded CLI otherwise.** Copy the
    `golden-journey.py` driver pattern (`Session` + settle/wake/confirm/
@@ -41,7 +41,7 @@ error a user can hit, every claim a doc makes — as parallel discovery lanes.
    `docs/audit/findings/<lane-id>.md` (tracked). One findings file per lane
    — never a shared file, so parallel lanes cannot clobber each other.
 6. **Build before you measure.** Each lane builds its own
-   `target/release/niu.exe` from its worktree (stale-binary discipline, same
+   `target/release/native-shell.exe` from its worktree (stale-binary discipline, same
    rule as the release journey job).
 7. **Severity classification (label every finding):**
    - **P0** — data loss (rc/registry/spec/tree destruction without consent,
@@ -70,7 +70,7 @@ error a user can hit, every claim a doc makes — as parallel discovery lanes.
 Method: enumerate every verb from `src/main.rs` dispatch (launcher words,
 `setup|configure|font|doctor|plugin`, engine invocation route, REPL
 commands), run each `--help`/bare/missing-arg/unknown-flag form in a
-sandboxed HOME with `NIU_LANG=en`, bounded timeouts, and assert exit code +
+sandboxed HOME with `NATIVE_SHELL_LANG=en`, bounded timeouts, and assert exit code +
 output against the product's own usage text. Raw evidence:
 `target/audit-results/verb-sweep/` (81 probes; sandbox preserved).
 
@@ -88,44 +88,44 @@ output against the product's own usage text. Raw evidence:
   `disable`, `trust`, `update`, `rollback`, `restore`, `sync`
   (`--prune/--bootstrap/--adopt`), `clean`; retired: `info search themes
   bundle doctor review use tool tools`.
-- REPL commands: `self-update`, `update-niubash`, `exit`/`logout`,
-  easter-egg commands (`crates/niubash-runtime/src/easter_eggs/`).
+- REPL commands: `self-update`, `update-native-shell`, `exit`/`logout`,
+  easter-egg commands (`crates/native-shell-runtime/src/easter_eggs/`).
 
 **Findings:**
 
-- **V1 (P1) — wizard-written rc bootstrap PATH-shadows the running niu.**
+- **V1 (P1) — wizard-written rc bootstrap PATH-shadows the running native-shell.**
   The minimal-preset rc (`setup_wizard.rs` write path) emits
-  `command -v niu >/dev/null 2>&1 && niu plugin sync --bootstrap`. On this
-  machine a stale **Niubash 1.2.5** (`C:/Users/Administrator/AppData/
-  Local/Programs/Winuxsh/niu.exe`) is first on PATH; `command -v niu`
+  `command -v native-shell >/dev/null 2>&1 && native-shell plugin sync --bootstrap`. On this
+  machine a stale **Native Shell 1.2.5** (`C:/Users/Administrator/AppData/
+  Local/Programs/Winuxsh/native-shell.exe`) is first on PATH; `command -v native-shell`
   finds it, and every fresh startup (REPL and `-C` alike) prints
-  `niu: unknown plugin subcommand 'sync'` because 1.2.5 predates `sync`.
-  Worse than the noise: whenever the PATH niu is a *different vintage that
+  `native-shell: unknown plugin subcommand 'sync'` because 1.2.5 predates `sync`.
+  Worse than the noise: whenever the PATH native-shell is a *different vintage that
   also has sync*, the reconcile runs under the wrong binary's semantics
   against the shared spec/registry. Controls verified: current exe first on
-  PATH → silent; no niu on PATH → line skipped silently; stale first →
+  PATH → silent; no native-shell on PATH → line skipped silently; stale first →
   error. `NIU_SHELL` (exported from `current_exe()` at `main.rs:120-125`)
   is already available inside the process — the rc line should be
   `"${NIU_SHELL:-niu}"`. Suspected owner: rc template in
   `setup_wizard.rs`; blast radius includes the README-promised `-C`
   "AI-agent friendly" surface (rc noise pollutes scripted output).
-- **V2 (P2) — top-level `niu --help` omits six existing plugin verbs:**
+- **V2 (P2) — top-level `native-shell --help` omits six existing plugin verbs:**
   `ui`, `recipe`, `distro`, `mirror`, `source`, `rollback`
   (`print_usage`, `main.rs:1303-1311`; all present in the dispatch and in
-  `niu plugin --help`).
+  `native-shell plugin --help`).
 - **V3 (P2) — `docs/plugins-quickref.md` verb table documents
   `sync [--prune] [--bootstrap]` — `--adopt` is missing** (exists in
-  dispatch and in `niu plugin --help`).
-- **V4 (P2) — `niu plugin source` usage documents `update <id>`** but bare
+  dispatch and in `native-shell plugin --help`).
+- **V4 (P2) — `native-shell plugin source` usage documents `update <id>`** but bare
   `update` (update-all) is accepted and prints `(no sources installed)`;
   the top-level usage documents `update [<id>]`. The two usage screens
   disagree about the same verb.
-- **V5 (P2) — `niu --self-update --check` network failure prints**
-  `niu: WinHttpSendRequest failed with Windows error 12175: ` — empty
+- **V5 (P2) — `native-shell --self-update --check` network failure prints**
+  `native-shell: WinHttpSendRequest failed with Windows error 12175: ` — empty
   reason after the colon, untranslated Windows error code, no remediation
   hint (offline/proxy). Behavior is honest (nonzero exit); the message is
   not actionable (domain D11 class).
-- **Positive results:** `niu plugin ui` exists on master and degrades
+- **Positive results:** `native-shell plugin ui` exists on master and degrades
   gracefully without a tty (rc=1 + full CLI verb list) — the released
   1.3.3 lacked the verb entirely, so this class is exactly what the audit
   guards; all nine retired verbs exit nonzero with honest retirement
@@ -147,13 +147,13 @@ lane count.
 
 ### D01 — Setup wizard (3 lanes)
 
-Surface: `crates/niubash-runtime/src/setup_wizard.rs` (3,049 lines). Q1
+Surface: `crates/native-shell-runtime/src/setup_wizard.rs` (3,049 lines). Q1
 theme gallery (trusted external sources only) → Q2.5 plugin collection
 (only when ecosystem empty; minimal/recommended/full) → Q3 niu-git →
 summary + Apply/Cancel gate → rc write + backup + journal; Esc fast-forward
 ("every remaining question silently takes [the default]", line 668); Cancel
 at Apply ("Nothing was written"); non-interactive run applies `minimal`;
-`niu setup --preset <name>`; `NIU_LANG` zh/en; MinTTY hint path; `configure`
+`native-shell setup --preset <name>`; `NATIVE_SHELL_LANG` zh/en; MinTTY hint path; `configure`
 alias; re-run (reconfigure) mode; Ctrl-C after Apply does NOT cancel.
 
 - **L02 wizard fresh-install full walk (P0 lens):** ConPTY, empty sandbox:
@@ -174,7 +174,7 @@ alias; re-run (reconfigure) mode; Ctrl-C after Apply does NOT cancel.
   minimal|recommended|full` × 2 runs each (idempotence: second run must
   not duplicate blocks or re-back-up spuriously), `--preset=bogus` (error
   lists available), `--preset` with unknown flags present, non-interactive
-  `niu setup` (minimal + journal), `NIU_LANG=zh` and `en` full walks
+  `native-shell setup` (minimal + journal), `NATIVE_SHELL_LANG=zh` and `en` full walks
   (no mixed-language screens, no mojibake), MinTTY-hint branch.
 
 Severity lens: P0 = rc written unsourceable / backup lost / wizard cannot
@@ -186,8 +186,8 @@ summary promised; P2 = wording/mixed language.
 Surface: wizard gallery (`setup_wizard.rs:330-430` — themes from trusted
 external sources, same-name resolution rank), `ThemePick` Keep/External,
 `external_theme_activation` guarded managed block, OSH_THEME channel,
-`niu plugin enable/disable <theme>`, spec `theme = "..."` field,
-backup/restore via `~/.niubash/backups`.
+`native-shell plugin enable/disable <theme>`, spec `theme = "..."` field,
+backup/restore via `~/.native-shell/backups`.
 
 - **L05 gallery + preview truth (P0/P1 lens — #170 class):** ConPTY walk of
   the gallery with >1 trusted source: entries listed, live preview
@@ -200,7 +200,7 @@ backup/restore via `~/.niubash/backups`.
 - **L06 theme switch/remove/restore state machine (P1 lens):** A→B→A
   switch cycles (no stale blocks, single OSH_THEME line, no orphan managed
   blocks), disable active theme (fallback prompt returns), remove the
-  SOURCE owning the active theme (`niu plugin source remove`) — what does
+  SOURCE owning the active theme (`native-shell plugin source remove`) — what does
   the next startup do (guarded block must fall back silently, not error),
   restore an rc backup over a newer config, journal vs rc agreement.
 - **L07 theme rendering contract (P1 lens — #169 class):** for the 5 most
@@ -252,7 +252,7 @@ collections (`plugins/distros.rs`: list/import/remove/apply), mirrors
   trust, update after sign re-gates until re-signed (documented policy),
   remove uninstalls tree + record (no orphans), degraded trust refusal.
 - **L12 recipes all 5 classes + entry validation (P1 lens — #171 class):**
-  for every recipe in `niu plugin recipe list`: `show` fields consistent
+  for every recipe in `native-shell plugin recipe list`: `show` fields consistent
   with `add` behavior; every git-driver recipe's `entry` names a file that
   actually exists in the upstream tree at the pinned ref (the
   `bash-preexec` seed bug class); download-driver recipes print a
@@ -271,14 +271,14 @@ collections (`plugins/distros.rs`: list/import/remove/apply), mirrors
 
 ### D05 — Spec hand-editing (2 lanes)
 
-Surface: `~/.niubash/plugins.toml` (`plugins/spec.rs`, schema
-`niubash:plugin-spec@0.1.0`; fields target/id/kind/ref/enable/theme).
+Surface: `~/.native-shell/plugins.toml` (`plugins/spec.rs`, schema
+`native-shell:plugin-spec@0.1.0`; fields target/id/kind/ref/enable/theme).
 
 - **L14 spec validity matrix (P1 lens):** valid minimal spec; unknown
   keys; wrong schema string; duplicate entries (same target, same id,
   target+id conflicts); entry missing `target`; `kind` pin that stops
   matching (documented refusal); comments preserved across verb edits
-  (does `niu plugin add` rewrite the file and eat the user's comments?);
+  (does `native-shell plugin add` rewrite the file and eat the user's comments?);
   CRLF spec file; BOM.
 - **L15 spec error surface at startup (P0 lens):** broken TOML in the spec
   at boot (`--bootstrap` must not crash the shell or spam); spec
@@ -300,10 +300,10 @@ Surface: `~/.niubash/plugins.toml` (`plugins/spec.rs`, schema
 ### D07 — rc lifecycle (2 lanes)
 
 Surface: rc write/backup (`write_rc_and_mark_done`, backups dir,
-setup-journal), marker-delimited managed blocks (`>>> niu source ...
-(managed by niu plugin enable/disable) >>>`), foreign rc content,
-defaults-as-floor claims (README floor knobs `NIU_PROMPT_CWD_STYLE`,
-`NIU_COMPLETION_STYLE`), winuxshrc one-time migration, `NIU_ENV`/`BASH_ENV`.
+setup-journal), marker-delimited managed blocks (`>>> native-shell source ...
+(managed by native-shell plugin enable/disable) >>>`), foreign rc content,
+defaults-as-floor claims (README floor knobs `NATIVE_SHELL_PROMPT_CWD_STYLE`,
+`NATIVE_SHELL_COMPLETION_STYLE`), winuxshrc one-time migration, `NATIVE_SHELL_ENV`/`BASH_ENV`.
 
 - **L16 rc backup/restore + managed blocks (P0 lens):** backup created and
   never overwritten across two wizard runs; restore round-trip; enable/
@@ -313,10 +313,10 @@ defaults-as-floor claims (README floor knobs `NIU_PROMPT_CWD_STYLE`,
   rc + plugin enable — where do blocks land?).
 - **L17 foreign rc + floor knobs + env files (P1 lens):** rc with
   user content before/after managed blocks (ordering guarantees), foreign
-  PS1 in rc (documented discard rule, unixwin/niubash#117), floor knobs
+  PS1 in rc (documented discard rule, JayWanX/native-shell#117), floor knobs
   actually shape the built-in prompt but are overridden by an external
-  theme (README:127-128 claim), `NIU_ENV` vs `BASH_ENV` precedence
-  (documented), winuxshrc → niubashrc migration once-only claim
+  theme (README:127-128 claim), `NATIVE_SHELL_ENV` vs `BASH_ENV` precedence
+  (documented), winuxshrc → native-shellrc migration once-only claim
   (`--help:1315`), rc sourcing wall time sanity (feeds D09).
 
 ### D08 — Interactive rendering (2 lanes)
@@ -335,7 +335,7 @@ reedline integration in `repl.rs`, `terminal.rs`.
   font menu), typeahead guard (keys typed while menus draw are not
   dropped — the wt61 class), completion probe ↔ real REPL completion
   agreement, syntax highlighting + autosuggest knobs
-  (`NIU_AUTOSUGGEST_*`, `NIU_HIGHLIGHT_*`) visible effect vs no-effect.
+  (`NATIVE_SHELL_AUTOSUGGEST_*`, `NATIVE_SHELL_HIGHLIGHT_*`) visible effect vs no-effect.
 
 ### D09 — Performance sentinels (2 lanes)
 
@@ -343,8 +343,8 @@ Surface: `startup_trace.rs`, `Shell::new`, rc bootstrap, `sync --bootstrap`
 in rc, completion/autosuggest latency.
 
 - **L20 startup/source wall (P1 lens — 6s source class):** assert budgets,
-  not eyeballs: cold `niu -c 'exit'` (zero-load claim: README:211), `niu -C`
-  with rc, `source ~/.niubashrc` wall time with 1/3/5 sources installed
+  not eyeballs: cold `native-shell -c 'exit'` (zero-load claim: README:211), `native-shell -C`
+  with rc, `source ~/.native-shellrc` wall time with 1/3/5 sources installed
   (local fixtures, no network), `--bootstrap` overhead when clean vs
   degraded; emit a numeric table; budget from the 1.3.3 regression (6s
   source): assert < 2s and report actuals.
@@ -362,12 +362,12 @@ registry/spec vintage skew, `.setup-done` marker.
 - **L22 1.2.x → 1.3.3 first run (P0 lens):** seed a sandbox with a 1.2.x
   rc + registry layout (old winuxsh dir on PATH — the V1 scenario), run
   1.3.3 first contact: wizard appears?, old rc backed up, no crash, no
-  double-managed blocks, `winuxshrc`→`niubashrc` migration once-only
+  double-managed blocks, `winuxshrc`→`native-shellrc` migration once-only
   (second run must not re-migrate), stale-PATH bootstrap noise (V1
   regression probe).
 - **L23 self-update + installer claims (P1 lens):** `--self-update --check`
   output shape online/offline (V5), `--dry-run` downloads without running,
-  REPL `self-update` / `update-niubash` spawn path, `maybe_print_update_hint`
+  REPL `self-update` / `update-native-shell` spawn path, `maybe_print_update_hint`
   (when does the hint fire? does it ever lie about currency?), installer
   payload validation refusal path (`validate_installer_payload` — feed a
   garbage file via the dry-run handoff point, document the error).
@@ -388,28 +388,28 @@ fonts).
   method for wizard questions (invalid input at each question), doctor
   rows (does each ADVICE name a working command? run the suggested command
   and see it succeed), font command on machines without fonts (honest
-  recommendations), REPL errors (`niu: cho: command not found` first-byte
+  recommendations), REPL errors (`native-shell: cho: command not found` first-byte
   eat class — document), engine-route usage errors under the `bash:`
   name.
 
 ### D12 — Docs vs reality (2 lanes)
 
 Surface: README.md, README-zh.md, docs/plugins-guide.md,
-docs/plugins-quickref.md, `.niubashrc.example`, PRIVACY.md, `niu --help`,
-`niu plugin --help`, doctor output claims.
+docs/plugins-quickref.md, `.native-shellrc.example`, PRIVACY.md, `native-shell --help`,
+`native-shell plugin --help`, doctor output claims.
 
 - **L26 README/quickref command census (P2/P1 lens):** extract every
   command line from README (both languages), quickref verb table,
   plugins-guide; run each in a sandbox; diff documented flags vs accepted
-  flags (V3 class); documented env vars (`NIU_*` in README + config.rs)
+  flags (V3 class); documented env vars (`NATIVE_SHELL_*` in README + config.rs)
   each actually changes behavior; documented exit codes match.
 - **L27 claims audit (P1 lens):** prose promises tested one by one:
   "untrusted until trusted", "no re-downloads on new terminal" (J4),
   "byte-faithful manual sourcing" (plugins-guide guarded-line claim —
   diff against real `source` under WSL GNU bash 5.3.0 for error parity),
-  PRIVACY.md claims vs actual network calls observed, `.niubashrc.example`
+  PRIVACY.md claims vs actual network calls observed, `.native-shellrc.example`
   lines all valid, `--help` Configuration/Environment sections true
-  (winuxshrc migration claim, NIU_ENV precedence claim).
+  (winuxshrc migration claim, NATIVE_SHELL_ENV precedence claim).
 
 ### D13 — REPL + engine boundary + easter eggs (2 lanes)
 
@@ -422,10 +422,10 @@ history modes, `--completion-probe`, `-C` semantics.
   exit cleanly (no terminal state left broken — cursor/VT restored,
   `panic_restore` contract), Ctrl-C at prompt/child/mid-egg, Ctrl-D
   semantics, multi-line input continuation in REPL vs `-c`.
-- **L29 history + completion knobs (P2 lens):** `NIU_HISTORY_MODE`
+- **L29 history + completion knobs (P2 lens):** `NATIVE_SHELL_HISTORY_MODE`
   shared/session/private actual behavior (two sessions share?), history
   persistence across restart, `--completion-probe` outputs match REPL
-  Tab behavior for the same line/cursor (sample 20 lines: `niu `, `niu
+  Tab behavior for the same line/cursor (sample 20 lines: `native-shell `, `native-shell
   plugin `, partial words, after `|`).
 
 ### D14 — Trust/security surface (2 lanes)

@@ -18,15 +18,15 @@ impl Sandbox {
     }
 
     fn run(&self, args: &[&str]) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_niu"))
+        Command::new(env!("CARGO_BIN_EXE_native-shell"))
             .args(["plugin", "sync"])
             .args(args)
             .current_dir(&self.0)
             .env("HOME", &self.0)
             .env("USERPROFILE", &self.0)
-            .env("NIU_PLUGIN_SPEC", self.0.join("plugins.toml"))
-            .env("NIU_PLUGIN_SOURCES_ROOT", self.0.join("sources"))
-            .env_remove("NIU_PLUGIN_BOOTSTRAP")
+            .env("NATIVE_SHELL_PLUGIN_SPEC", self.0.join("plugins.toml"))
+            .env("NATIVE_SHELL_PLUGIN_SOURCES_ROOT", self.0.join("sources"))
+            .env_remove("NATIVE_SHELL_PLUGIN_BOOTSTRAP")
             .output()
             .unwrap()
     }
@@ -52,9 +52,9 @@ fn bootstrap_leaves_empty_home_empty() {
 fn bootstrap_preserves_broken_configuration() {
     let sandbox = Sandbox::new();
     let files = [
-        (".niubashrc", "if true; then\r\n"),
+        (".native-shellrc", "if true; then\r\n"),
         ("plugins.toml", "[invalid TOML\n"),
-        (".niubash/sources.lock", "invalid lock\n"),
+        (".native-shell/sources.lock", "invalid lock\n"),
         ("sources/existing/plugin.sh", "echo keep\n"),
     ];
     for (name, contents) in &files {
@@ -74,7 +74,12 @@ fn bootstrap_preserves_broken_configuration() {
         for (name, contents) in &files {
             assert_eq!(fs::read(sandbox.0.join(name)).unwrap(), contents.as_bytes());
         }
-        assert_eq!(fs::read_dir(sandbox.0.join(".niubash")).unwrap().count(), 1);
+        assert_eq!(
+            fs::read_dir(sandbox.0.join(".native-shell"))
+                .unwrap()
+                .count(),
+            1
+        );
         assert_eq!(fs::read_dir(sandbox.0.join("sources")).unwrap().count(), 1);
         assert_eq!(fs::read_dir(&sandbox.0).unwrap().count(), 4);
     }

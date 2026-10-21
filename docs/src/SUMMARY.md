@@ -1,7 +1,7 @@
 # Summary
 
-- [Niubash](index.md)
-- [Why Niubash](why-niubash.md)
+- [Native Shell](index.md)
+- [Why Native Shell](why-native-shell.md)
 - [Coding agents on Windows](agents.md)
 - [Getting Started](getting-started.md)
 - [Advanced Usage](advanced-usage.md)
@@ -14,4 +14,4 @@
 - [Architecture](architecture.md)
 - [Windows Path Contract](windows-path-contract.md)
 - [Platform Support](platform-support.md)
-- [Roadmap](niubash-roadmap.md)
+- [Roadmap](native-shell-roadmap.md)

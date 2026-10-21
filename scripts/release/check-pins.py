@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report release pins that lag the published wpm index.
 
-`scripts/release/preinstall.json` and `scripts/release/winuxcmd-pin.json` are
+`scripts/release/preinstall.json` is
 release *policy*: the release workflow refuses to bundle a WinuxCmd engine or a
 pre-install package whose digest does not match the pin. That check cannot
 notice a pin that is simply **old** - the digest still matches the release it
@@ -31,7 +31,6 @@ from pathlib import Path
 DEFAULT_INDEX = "https://raw.githubusercontent.com/unixwin/wpm-source/main/index.json"
 RELEASE_DIR = Path(__file__).resolve().parent
 PREINSTALL_PIN = RELEASE_DIR / "preinstall.json"
-WINUXCMD_PIN = RELEASE_DIR / "winuxcmd-pin.json"
 
 # Arch keys the release matrix builds; both must stay pinned.
 ARCH_KEYS = ("windows-x64", "windows-arm64")
@@ -66,7 +65,7 @@ def compare(left: str, right: str) -> int:
 
 def load_index(source: str) -> dict:
     if source.startswith(("http://", "https://")):
-        request = urllib.request.Request(source, headers={"User-Agent": "niubash-pin-check"})
+        request = urllib.request.Request(source, headers={"User-Agent": "native-shell-pin-check"})
         with urllib.request.urlopen(request, timeout=60) as response:
             return json.loads(response.read())
     return json.loads(Path(source).read_text(encoding="utf-8"))
@@ -75,20 +74,13 @@ def load_index(source: str) -> dict:
 def pinned_entries() -> list[dict]:
     """Every pin, normalized to one shape."""
     entries = []
-    winuxcmd = json.loads(WINUXCMD_PIN.read_text(encoding="utf-8"))
-    entries.append(
-        {
-            "name": "winuxcmd",
-            "version": winuxcmd["winuxcmd_tag"].lstrip("v"),
-            "sha256": winuxcmd.get("sha256", {}),
-            "source": WINUXCMD_PIN.name,
-            # The core engine is what every install runs, and the release matrix
-            # builds both legs: a missing digest there is a defect.
-            "all_arches_required": True,
-        }
-    )
     preinstall = json.loads(PREINSTALL_PIN.read_text(encoding="utf-8"))
     for package in preinstall.get("packages", []):
+        # A fork-release package never reaches wpm: it is fetched from our own
+        # fork's release, has no index entry and no stored digest, so comparing
+        # it against the published index would always report a false MISSING.
+        if package.get("source") == "fork-release":
+            continue
         entries.append(
             {
                 "name": package["name"],
@@ -130,7 +122,7 @@ def check(entries: list[dict], index: dict) -> tuple[list[str], list[str]]:
                     lines.append(f"          missing {arch} digest in {entry['source']}")
                 else:
                     # The release workflow warns and skips pre-install for an
-                    # arch a package does not pin (fail-open, niubash#312), so
+                    # arch a package does not pin (fail-open, native-shell#312), so
                     # this is worth saying but not worth failing.
                     lines.append(
                         f"          note: no {arch} digest pinned in {entry['source']} "
@@ -149,7 +141,7 @@ def self_test() -> int:
     """Two fixtures: a fresh set and a stale one. Keeps the checker honest."""
     fresh = {
         "packages": [
-            {"name": "winuxcmd", "version": "1.1.13",
+            {"name": "native-cmd", "version": "1.1.13",
              "artifacts": {a: {"sha256": "aa"} for a in ARCH_KEYS}},
             {"name": "gawk", "version": "5.4.1-unixwin1",
              "artifacts": {"windows-x64": {"sha256": "bb"}}},
@@ -157,14 +149,14 @@ def self_test() -> int:
     }
     stale = {
         "packages": [
-            {"name": "winuxcmd", "version": "1.1.14",
+            {"name": "native-cmd", "version": "1.1.14",
              "artifacts": {a: {"sha256": "aa"} for a in ARCH_KEYS}},
             {"name": "gawk", "version": "5.4.1-unixwin2",
              "artifacts": {"windows-x64": {"sha256": "cc"}}},
         ]
     }
     entries = [
-        {"name": "winuxcmd", "version": "1.1.13", "sha256": {a: "aa" for a in ARCH_KEYS},
+        {"name": "native-cmd", "version": "1.1.13", "sha256": {a: "aa" for a in ARCH_KEYS},
          "source": "fixture", "all_arches_required": True},
         {"name": "gawk", "version": "5.4.1-unixwin1", "sha256": {"windows-x64": "bb"},
          "source": "fixture"},
@@ -198,9 +190,9 @@ def self_test() -> int:
     if relaxed:
         print("self-test: a one-arch pre-install pin must not be a problem:", relaxed)
         return 1
-    strict, _ = check([{"name": "winuxcmd", "version": "1.0", "sha256": {"windows-x64": "aa"},
+    strict, _ = check([{"name": "native-cmd", "version": "1.0", "sha256": {"windows-x64": "aa"},
                         "source": "fixture", "all_arches_required": True}],
-                      {"packages": [{"name": "winuxcmd", "version": "1.0",
+                      {"packages": [{"name": "native-cmd", "version": "1.0",
                                      "artifacts": {"windows-x64": {"sha256": "aa"}}}]})
     if len(strict) != 1:
         print("self-test: the core engine must require both arches:", strict)

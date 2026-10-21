@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
@@ -16,13 +16,17 @@ fn niu_binary() -> PathBuf {
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
 #[test]
 fn empty_command_line_suggests_core_commands() {
-    let env = ProbeEnv::new("niubash-completion-empty");
+    let env = ProbeEnv::new("native-shell-completion-empty");
     let suggestions = run_probe("", &env, &[]);
 
     assert_contains(&suggestions, "ls");
@@ -31,7 +35,7 @@ fn empty_command_line_suggests_core_commands() {
 
 #[test]
 fn partial_command_word_suggests_command() {
-    let env = ProbeEnv::new("niubash-completion-partial");
+    let env = ProbeEnv::new("native-shell-completion-partial");
     let suggestions = run_probe("gre", &env, &[]);
 
     assert_contains(&suggestions, "grep");
@@ -43,7 +47,7 @@ fn path_command_is_suggested_by_prefix() {
         return;
     }
 
-    let env = ProbeEnv::new("niubash-completion-path");
+    let env = ProbeEnv::new("native-shell-completion-path");
     let bin = env.root.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::write(bin.join("probecli.cmd"), "@echo off\r\necho probe\r\n").unwrap();
@@ -64,7 +68,7 @@ fn path_command_is_suggested_by_prefix() {
 
 #[test]
 fn blank_argument_position_suggests_paths() {
-    let env = ProbeEnv::new("niubash-completion-path-argument");
+    let env = ProbeEnv::new("native-shell-completion-path-argument");
     std::fs::create_dir_all(env.start.join("adir")).unwrap();
     std::fs::write(env.start.join("alpha.txt"), "alpha").unwrap();
     std::fs::write(env.start.join(".hidden"), "hidden").unwrap();
@@ -79,7 +83,7 @@ fn blank_argument_position_suggests_paths() {
 
 #[test]
 fn dot_prefix_suggests_hidden_paths() {
-    let env = ProbeEnv::new("niubash-completion-hidden-prefix");
+    let env = ProbeEnv::new("native-shell-completion-hidden-prefix");
     std::fs::write(env.start.join(".hidden"), "hidden").unwrap();
 
     let suggestions = run_probe("ls .", &env, &[]);
@@ -89,7 +93,7 @@ fn dot_prefix_suggests_hidden_paths() {
 
 #[test]
 fn cd_blank_argument_position_suggests_directories_only() {
-    let env = ProbeEnv::new("niubash-completion-cd-argument");
+    let env = ProbeEnv::new("native-shell-completion-cd-argument");
     std::fs::create_dir_all(env.start.join("adir")).unwrap();
     std::fs::write(env.start.join("alpha.txt"), "alpha").unwrap();
 
@@ -101,7 +105,7 @@ fn cd_blank_argument_position_suggests_directories_only() {
 
 #[test]
 fn path_completion_preserves_typed_directory_prefix() {
-    let env = ProbeEnv::new("niubash-completion-prefix");
+    let env = ProbeEnv::new("native-shell-completion-prefix");
     let parent = env.start.join("parent");
     std::fs::create_dir_all(parent.join("adir")).unwrap();
     std::fs::write(parent.join("child.txt"), "child").unwrap();
@@ -116,7 +120,7 @@ fn path_completion_preserves_typed_directory_prefix() {
 
 #[test]
 fn tilde_path_completion_lists_home_entries() {
-    let env = ProbeEnv::new("niubash-completion-tilde");
+    let env = ProbeEnv::new("native-shell-completion-tilde");
     std::fs::create_dir_all(env.home.join("adir")).unwrap();
     std::fs::write(env.home.join("alpha.txt"), "alpha").unwrap();
 
@@ -128,7 +132,7 @@ fn tilde_path_completion_lists_home_entries() {
 
 #[test]
 fn completion_probe_loads_startup_rc_aliases() {
-    let env = ProbeEnv::new("niubash-completion-rc-alias");
+    let env = ProbeEnv::new("native-shell-completion-rc-alias");
     env.write_rc("alias fetch='winuxfetch.exe'\n");
 
     let suggestions = run_probe("fet", &env, &[]);
@@ -138,7 +142,7 @@ fn completion_probe_loads_startup_rc_aliases() {
 
 #[test]
 fn completion_probe_loads_startup_rc_functions() {
-    let env = ProbeEnv::new("niubash-completion-rc-function");
+    let env = ProbeEnv::new("native-shell-completion-rc-function");
     env.write_rc("function deploy_site() { echo deploy; }\n");
 
     let suggestions = run_probe("dep", &env, &[]);
@@ -148,7 +152,7 @@ fn completion_probe_loads_startup_rc_functions() {
 
 #[test]
 fn path_completion_escapes_spaces_in_candidates() {
-    let env = ProbeEnv::new("niubash-completion-spaces");
+    let env = ProbeEnv::new("native-shell-completion-spaces");
     std::fs::create_dir_all(env.start.join("two dir")).unwrap();
     std::fs::write(env.start.join("two words.txt"), "two").unwrap();
 
@@ -161,7 +165,7 @@ fn path_completion_escapes_spaces_in_candidates() {
 
 #[test]
 fn path_completion_matches_escaped_spaces_in_input() {
-    let env = ProbeEnv::new("niubash-completion-escaped-input");
+    let env = ProbeEnv::new("native-shell-completion-escaped-input");
     let parent = env.start.join("parent dir");
     std::fs::create_dir_all(&parent).unwrap();
     std::fs::write(env.start.join("two words.txt"), "two").unwrap();
@@ -176,7 +180,7 @@ fn path_completion_matches_escaped_spaces_in_input() {
 
 #[test]
 fn path_completion_matches_double_quoted_input() {
-    let env = ProbeEnv::new("niubash-completion-quoted-input");
+    let env = ProbeEnv::new("native-shell-completion-quoted-input");
     std::fs::write(env.start.join("two words.txt"), "two").unwrap();
 
     let suggestions = run_probe("ls \"two w", &env, &[]);
@@ -186,7 +190,7 @@ fn path_completion_matches_double_quoted_input() {
 
 #[test]
 fn command_position_after_pipe_suggests_command() {
-    let env = ProbeEnv::new("niubash-completion-pipe");
+    let env = ProbeEnv::new("native-shell-completion-pipe");
     let suggestions = run_probe("ls | gre", &env, &[]);
 
     assert_contains(&suggestions, "grep");
@@ -194,7 +198,7 @@ fn command_position_after_pipe_suggests_command() {
 
 #[test]
 fn blank_command_position_after_pipe_suggests_commands() {
-    let env = ProbeEnv::new("niubash-completion-pipe-empty");
+    let env = ProbeEnv::new("native-shell-completion-pipe-empty");
     let suggestions = run_probe("ls | ", &env, &[]);
 
     assert_contains(&suggestions, "grep");
@@ -203,7 +207,7 @@ fn blank_command_position_after_pipe_suggests_commands() {
 
 #[test]
 fn argument_position_does_not_suggest_commands() {
-    let env = ProbeEnv::new("niubash-completion-arg");
+    let env = ProbeEnv::new("native-shell-completion-arg");
     let suggestions = run_probe("echo gre", &env, &[]);
 
     assert_not_contains(&suggestions, "grep");
@@ -215,13 +219,13 @@ fn argument_position_does_not_suggest_commands() {
 // carapace source from #243 was removed before 1.4.0): providers integrate
 // through the startup rc, as data, the same way a zsh user sources a
 // completion hook. These probes source mock provider code from
-// ~/.niubashrc and assert candidates reach the Tab surface.
+// ~/.native-shellrc and assert candidates reach the Tab surface.
 
 /// A provider speaking the GNU static protocol: a `complete -W` compspec
 /// registered from rc-sourced code serves wordlist candidates at Tab.
 #[test]
 fn rc_sourced_compspec_wordlist_serves_candidates() {
-    let env = ProbeEnv::new("niubash-completion-rc-compspec");
+    let env = ProbeEnv::new("native-shell-completion-rc-compspec");
     env.write_primary_rc(
         r#"# external provider hook — standard bash completion code (data layer)
 complete -W 'status switch merge rebase' providertool
@@ -236,18 +240,18 @@ complete -W 'status switch merge rebase' providertool
 }
 
 /// A provider speaking the shell-function protocol: an rc-declared compdef
-/// (NIU_COMPDEFS) runs the hook through the completion bridge and serves its
+/// (NATIVE_SHELL_COMPDEFS) runs the hook through the completion bridge and serves its
 /// `value<TAB>description` lines — the same shape carapace's fish output
 /// emits — filtered by the typed prefix.
 #[test]
 fn rc_sourced_provider_hook_function_serves_described_candidates() {
-    let env = ProbeEnv::new("niubash-completion-rc-provider-hook");
+    let env = ProbeEnv::new("native-shell-completion-rc-provider-hook");
     env.write_primary_rc(
         r#"# external provider hook — carapace-style function, compdef registration
 _carapace_provider_hook() {
-    NIU_COMP_RESULT="checkout	Check out a branch"$'\n'"cherry-pick	Apply a commit"$'\n'"clean	Remove untracked files"
+    NATIVE_SHELL_COMP_RESULT="checkout	Check out a branch"$'\n'"cherry-pick	Apply a commit"$'\n'"clean	Remove untracked files"
 }
-NIU_COMPDEFS="providercmd:_carapace_provider_hook"
+NATIVE_SHELL_COMPDEFS="providercmd:_carapace_provider_hook"
 "#,
     );
 
@@ -258,14 +262,14 @@ NIU_COMPDEFS="providercmd:_carapace_provider_hook"
     assert_not_contains(&suggestions, "clean");
 }
 
-// ── Issue #307: the probe sources NIU_ENV / BASH_ENV like `-c` ───────────────
+// ── Issue #307: the probe sources NATIVE_SHELL_ENV / BASH_ENV like `-c` ───────────────
 
-/// An agent init file (NIU_ENV) registering `complete` compspecs must reach
+/// An agent init file (NATIVE_SHELL_ENV) registering `complete` compspecs must reach
 /// the probe: the `-W` wordlist serves candidates, and the `-F` registration
 /// lands in the engine compspec registry the probe reads.
 #[test]
-fn completion_probe_loads_niu_env_compspecs() {
-    let env = ProbeEnv::new("niubash-completion-niu-env");
+fn completion_probe_loads_native_shell_env_compspecs() {
+    let env = ProbeEnv::new("native-shell-completion-niu-env");
     let env_file = env.root.join("agent.env");
     std::fs::write(
         &env_file,
@@ -279,28 +283,32 @@ complete -F _envtooldyn_hook envtooldyn
     )
     .unwrap();
 
-    let suggestions = run_probe("envtool s", &env, &[("NIU_ENV", path_string(&env_file))]);
+    let suggestions = run_probe(
+        "envtool s",
+        &env,
+        &[("NATIVE_SHELL_ENV", path_string(&env_file))],
+    );
 
     assert_contains(&suggestions, "status");
     assert_contains(&suggestions, "switch");
     assert_not_contains(&suggestions, "merge");
 }
 
-/// NIU_ENV wins over BASH_ENV — the same precedence `niu -c` applies — so
-/// only the NIU_ENV compspec is registered when both are set.
+/// NATIVE_SHELL_ENV wins over BASH_ENV — the same precedence `native-shell -c` applies — so
+/// only the NATIVE_SHELL_ENV compspec is registered when both are set.
 #[test]
-fn completion_probe_prefers_niu_env_over_bash_env() {
-    let env = ProbeEnv::new("niubash-completion-niu-env-priority");
-    let niu_file = env.root.join("niu.env");
+fn completion_probe_prefers_native_shell_env_over_bash_env() {
+    let env = ProbeEnv::new("native-shell-completion-niu-env-priority");
+    let native_shell_file = env.root.join("native-shell.env");
     let bash_file = env.root.join("bash.env");
-    std::fs::write(&niu_file, "complete -W 'alpha beta' ptool\n").unwrap();
+    std::fs::write(&native_shell_file, "complete -W 'alpha beta' ptool\n").unwrap();
     std::fs::write(&bash_file, "complete -W 'gamma delta' ptool\n").unwrap();
 
     let suggestions = run_probe(
         "ptool a",
         &env,
         &[
-            ("NIU_ENV", path_string(&niu_file)),
+            ("NATIVE_SHELL_ENV", path_string(&native_shell_file)),
             ("BASH_ENV", path_string(&bash_file)),
         ],
     );
@@ -309,10 +317,10 @@ fn completion_probe_prefers_niu_env_over_bash_env() {
     assert_not_contains(&suggestions, "gamma");
 }
 
-/// With NIU_ENV unset the probe falls back to BASH_ENV (bash-compatible).
+/// With NATIVE_SHELL_ENV unset the probe falls back to BASH_ENV (bash-compatible).
 #[test]
 fn completion_probe_falls_back_to_bash_env() {
-    let env = ProbeEnv::new("niubash-completion-bash-env");
+    let env = ProbeEnv::new("native-shell-completion-bash-env");
     let bash_file = env.root.join("bash.env");
     std::fs::write(&bash_file, "complete -W 'gamma delta' ptool\n").unwrap();
 
@@ -320,7 +328,7 @@ fn completion_probe_falls_back_to_bash_env() {
         "ptool g",
         &env,
         &[
-            ("NIU_ENV", String::new()),
+            ("NATIVE_SHELL_ENV", String::new()),
             ("BASH_ENV", path_string(&bash_file)),
         ],
     );
@@ -332,14 +340,14 @@ fn completion_probe_falls_back_to_bash_env() {
     assert_not_contains(&suggestions, "alpha");
 }
 
-// ── Issue #306: NIU_COMPDEFS directory entries declare completion files ──────
+// ── Issue #306: NATIVE_SHELL_COMPDEFS directory entries declare completion files ──────
 
-/// A NIU_COMPDEFS line pointing at an existing directory declares
+/// A NATIVE_SHELL_COMPDEFS line pointing at an existing directory declares
 /// completion-definition files: `<cmd>.toml` (embedded-applet schema) and
 /// `<cmd>.bash` (statically parsed; the file body is never executed).
 #[test]
-fn completion_dir_declared_in_niu_compdefs_serves_candidates() {
-    let env = ProbeEnv::new("niubash-completion-compdefs-dir");
+fn completion_dir_declared_in_native_shell_compdefs_serves_candidates() {
+    let env = ProbeEnv::new("native-shell-completion-compdefs-dir");
     let defs = env.root.join("compdefs");
     std::fs::create_dir_all(&defs).unwrap();
     std::fs::write(
@@ -372,7 +380,10 @@ complete -F _bashtool bashtool
 "#,
     )
     .unwrap();
-    env.write_primary_rc(&format!("NIU_COMPDEFS=\"{}\"\n", path_string(&defs)));
+    env.write_primary_rc(&format!(
+        "NATIVE_SHELL_COMPDEFS=\"{}\"\n",
+        path_string(&defs)
+    ));
 
     let toml_suggestions = run_probe("mytool -", &env, &[]);
     assert_contains(&toml_suggestions, "--fixture-flag");
@@ -388,7 +399,7 @@ complete -F _bashtool bashtool
 
 #[test]
 fn builtin_git_definition_completes_subcommands_and_flags() {
-    let env = ProbeEnv::new("niubash-completion-builtin-git");
+    let env = ProbeEnv::new("native-shell-completion-builtin-git");
 
     let subcommands = run_probe("git ch", &env, &[]);
     assert_contains(&subcommands, "checkout");
@@ -402,7 +413,7 @@ fn builtin_git_definition_completes_subcommands_and_flags() {
 
 #[test]
 fn builtin_tar_definition_completes_flags() {
-    let env = ProbeEnv::new("niubash-completion-builtin-tar");
+    let env = ProbeEnv::new("native-shell-completion-builtin-tar");
 
     let suggestions = run_probe("tar --", &env, &[]);
     assert_contains(&suggestions, "--gzip");
@@ -412,7 +423,7 @@ fn builtin_tar_definition_completes_flags() {
 
 #[test]
 fn builtin_curl_definition_completes_flag_values() {
-    let env = ProbeEnv::new("niubash-completion-builtin-curl");
+    let env = ProbeEnv::new("native-shell-completion-builtin-curl");
 
     let suggestions = run_probe("curl -X ", &env, &[]);
     assert_contains(&suggestions, "POST");
@@ -422,7 +433,7 @@ fn builtin_curl_definition_completes_flag_values() {
 
 #[test]
 fn builtin_ssh_definition_completes_flags() {
-    let env = ProbeEnv::new("niubash-completion-builtin-ssh");
+    let env = ProbeEnv::new("native-shell-completion-builtin-ssh");
 
     let suggestions = run_probe("ssh -", &env, &[]);
     assert_contains(&suggestions, "-i");
@@ -432,7 +443,7 @@ fn builtin_ssh_definition_completes_flags() {
 
 #[test]
 fn builtin_docker_definition_completes_subcommands_and_flags() {
-    let env = ProbeEnv::new("niubash-completion-builtin-docker");
+    let env = ProbeEnv::new("native-shell-completion-builtin-docker");
 
     let subcommands = run_probe("docker r", &env, &[]);
     assert_contains(&subcommands, "run");
@@ -445,7 +456,7 @@ fn builtin_docker_definition_completes_subcommands_and_flags() {
 
 #[test]
 fn builtin_kubectl_definition_completes_subcommands_and_flags() {
-    let env = ProbeEnv::new("niubash-completion-builtin-kubectl");
+    let env = ProbeEnv::new("native-shell-completion-builtin-kubectl");
 
     let subcommands = run_probe("kubectl g", &env, &[]);
     assert_contains(&subcommands, "get");
@@ -457,7 +468,7 @@ fn builtin_kubectl_definition_completes_subcommands_and_flags() {
 
 #[test]
 fn builtin_npm_definition_completes_subcommands_and_flags() {
-    let env = ProbeEnv::new("niubash-completion-builtin-npm");
+    let env = ProbeEnv::new("native-shell-completion-builtin-npm");
 
     let subcommands = run_probe("npm i", &env, &[]);
     assert_contains(&subcommands, "install");
@@ -468,13 +479,18 @@ fn builtin_npm_definition_completes_subcommands_and_flags() {
 }
 
 fn run_probe(line: &str, env: &ProbeEnv, extra_env: &[(&str, String)]) -> Vec<String> {
-    let output = run_niu_probe(line, &env.start, &env.home, extra_env);
+    let output = run_native_shell_probe(line, &env.start, &env.home, extra_env);
     assert_success(&output, line);
     stdout_lines(&output)
 }
 
-fn run_niu_probe(line: &str, cwd: &Path, home: &Path, extra_env: &[(&str, String)]) -> Output {
-    let mut command = Command::new(niu_binary());
+fn run_native_shell_probe(
+    line: &str,
+    cwd: &Path,
+    home: &Path,
+    extra_env: &[(&str, String)],
+) -> Output {
+    let mut command = Command::new(native_shell_binary());
     command
         .arg("--completion-probe")
         .arg(line)
@@ -484,7 +500,7 @@ fn run_niu_probe(line: &str, cwd: &Path, home: &Path, extra_env: &[(&str, String
         // Hermetic by default: a developer machine's agent init file must not
         // leak compspecs into a probe assertion. Tests that exercise the
         // env-file surface (issue #307) override these explicitly.
-        .env("NIU_ENV", "")
+        .env("NATIVE_SHELL_ENV", "")
         .env("BASH_ENV", "");
 
     for (key, value) in extra_env {
@@ -493,7 +509,7 @@ fn run_niu_probe(line: &str, cwd: &Path, home: &Path, extra_env: &[(&str, String
 
     command
         .output()
-        .unwrap_or_else(|err| panic!("spawn niubash: {err}"))
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"))
 }
 
 fn assert_success(output: &Output, context: &str) {
@@ -555,7 +571,7 @@ fn native_path(path: &Path) -> String {
 }
 
 /// Forward-slash spelling of a host path: safe to embed in an rc assignment
-/// or pass as NIU_ENV/BASH_ENV on both Windows and Unix — the shell's own
+/// or pass as NATIVE_SHELL_ENV/BASH_ENV on both Windows and Unix — the shell's own
 /// path resolution (resolve_non_interactive_env_path) handles either form.
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
@@ -578,12 +594,12 @@ impl ProbeEnv {
     }
 
     fn write_rc(&self, content: &str) {
-        std::fs::write(self.home.join(".niubashrc"), content).unwrap();
+        std::fs::write(self.home.join(".native-shellrc"), content).unwrap();
     }
 
-    /// Write the primary startup rc (`~/.niubashrc`).
+    /// Write the primary startup rc (`~/.native-shellrc`).
     fn write_primary_rc(&self, content: &str) {
-        std::fs::write(self.home.join(".niubashrc"), content).unwrap();
+        std::fs::write(self.home.join(".native-shellrc"), content).unwrap();
     }
 }
 

@@ -1,14 +1,14 @@
-//! niubash#451 regression gate: a console-less `niu -c` run must never show
-//! a console window — not for niu.exe and not for any external child it
+//! native-shell#451 regression gate: a console-less `native-shell -c` run must never show
+//! a console window — not for native-shell.exe and not for any external child it
 //! spawns. The bug class: a console-subsystem child created by a parent
 //! with no console gets a *visible* console auto-allocated by Windows.
 //!
 //! Two spawn postures are covered:
-//! - DETACHED_PROCESS niu (agents/CI/git hooks, the `bash.exe` forwarder):
+//! - DETACHED_PROCESS native-shell (agents/CI/git hooks, the `bash.exe` forwarder):
 //!   children take rubash's CREATE_NO_WINDOW path — a *hidden* console is
 //!   fine, a visible window fails the gate.
-//! - Plain-spawned niu (callers that forward no creation flags): Windows
-//!   auto-allocates niu.exe a visible console before main(); the gate only
+//! - Plain-spawned native-shell (callers that forward no creation flags): Windows
+//!   auto-allocates native-shell.exe a visible console before main(); the gate only
 //!   demands that no such window survives the startup release — a brief
 //!   (<poll) flash is the best a CUI binary can do in-process.
 
@@ -168,7 +168,7 @@ fn process_entries() -> Vec<(u32, u32, String)> {
 
 /// Poll while `child` runs; collect owner pids of visible console windows
 /// belonging to `child`'s subtree. `transient_ok` ignores windows that die
-/// before the next poll (the auto-allocated niu window released at
+/// before the next poll (the auto-allocated native-shell window released at
 /// startup); `transient_ok=false` treats any sighting as a violation.
 fn collect_offenders(
     child_pid: u32,
@@ -198,8 +198,8 @@ fn collect_offenders(
 }
 
 fn spawn_niu(args: &[&str], detached: bool) -> std::process::Child {
-    let niu = env!("CARGO_BIN_EXE_niu");
-    let mut command = Command::new(niu);
+    let native_shell = env!("CARGO_BIN_EXE_native-shell");
+    let mut command = Command::new(native_shell);
     command
         .args(args)
         .stdin(Stdio::null())
@@ -208,11 +208,11 @@ fn spawn_niu(args: &[&str], detached: bool) -> std::process::Child {
     if detached {
         command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
     }
-    command.spawn().expect("spawn niu")
+    command.spawn().expect("spawn native-shell")
 }
 
 #[test]
-fn detached_niu_c_spawns_no_visible_console_window() {
+fn detached_native_shell_c_spawns_no_visible_console_window() {
     // ~2s of external-command work — long enough for a regression to flash.
     let mut child = spawn_niu(
         &["-c", "C:/Windows/System32/ping.exe -n 3 127.0.0.1 >NUL"],
@@ -220,17 +220,17 @@ fn detached_niu_c_spawns_no_visible_console_window() {
     );
     let pid = child.id();
     let offenders = collect_offenders(pid, || child.try_wait().ok().flatten().is_none(), false);
-    let status = child.wait().expect("wait niu");
-    assert!(status.success(), "niu -c ping exited {status}");
+    let status = child.wait().expect("wait native-shell");
+    assert!(status.success(), "native-shell -c ping exited {status}");
     assert!(
         offenders.is_empty(),
-        "visible console windows appeared in the niu tree (owner pids {offenders:?})"
+        "visible console windows appeared in the native-shell tree (owner pids {offenders:?})"
     );
 }
 
 #[test]
-fn plainly_spawned_niu_c_leaves_no_console_window_behind() {
-    // A console-less host makes niu auto-allocate a visible console that the
+fn plainly_spawned_native_shell_c_leaves_no_console_window_behind() {
+    // A console-less host makes native-shell auto-allocate a visible console that the
     // startup release must kill; a host WITH a console shares it (no new
     // window at all). Either way nothing visible may persist.
     let mut child = spawn_niu(
@@ -239,8 +239,8 @@ fn plainly_spawned_niu_c_leaves_no_console_window_behind() {
     );
     let pid = child.id();
     let offenders = collect_offenders(pid, || child.try_wait().ok().flatten().is_none(), true);
-    let status = child.wait().expect("wait niu");
-    assert!(status.success(), "niu -c ping exited {status}");
+    let status = child.wait().expect("wait native-shell");
+    assert!(status.success(), "native-shell -c ping exited {status}");
     assert!(
         offenders.is_empty(),
         "console windows lingered past the startup release (owner pids {offenders:?})"
@@ -248,8 +248,8 @@ fn plainly_spawned_niu_c_leaves_no_console_window_behind() {
 }
 
 #[test]
-fn detached_multi_command_niu_c_allocates_at_most_one_hidden_console() {
-    // niubash#462: a console-less `niu -c` session running N sequential
+fn detached_multi_command_native_shell_c_allocates_at_most_one_hidden_console() {
+    // native-shell#462: a console-less `native-shell -c` session running N sequential
     // external commands must claim the first child's hidden console and let
     // children 2..N inherit it, allocating at most 1 conhost.exe for the
     // entire session while keeping piped stdout intact.
@@ -261,7 +261,11 @@ fn detached_multi_command_niu_c_allocates_at_most_one_hidden_console() {
         "C:/Windows/System32/hostname.exe"
     );
     let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
-    assert!(output.status.success(), "niu -c exited {}", output.status);
+    assert!(
+        output.status.success(),
+        "native-shell -c exited {}",
+        output.status
+    );
     assert!(
         offenders.is_empty(),
         "visible console windows appeared (owner pids {offenders:?})"
@@ -300,10 +304,10 @@ fn run_and_observe_exe(
         .args(args)
         // Keep the console gates hermetic: on a host where winuxcmd's
         // command links are missing (CI runner), startup auto-activation
-        // would spawn `winuxcmd.exe wpm links rebuild` and legitimately
+        // would spawn `native-cmd.exe wpm links rebuild` and legitimately
         // allocate the session's one hidden console, breaking the
         // builtin-only 0-conhost assertion for environment reasons.
-        .env("NIU_SKIP_WINUXCMD_ACTIVATION", "1")
+        .env("NATIVE_SHELL_SKIP_WINUXCMD_ACTIVATION", "1")
         .creation_flags(flags | CREATE_NEW_PROCESS_GROUP)
         .stdin(if stdin_bytes.is_some() {
             Stdio::piped()
@@ -350,8 +354,8 @@ fn run_and_observe_niu(
     Vec<u32>,
     std::collections::HashSet<u32>,
 ) {
-    let niu = std::path::Path::new(env!("CARGO_BIN_EXE_niu"));
-    run_and_observe_exe(niu, args, flags, None)
+    let native_shell = std::path::Path::new(env!("CARGO_BIN_EXE_native-shell"));
+    run_and_observe_exe(native_shell, args, flags, None)
 }
 
 fn non_empty_lines(bytes: &[u8]) -> Vec<String> {
@@ -374,7 +378,11 @@ fn detached_builtin_only_session_allocates_zero_conhosts() {
         "pwd >/dev/null"
     );
     let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
-    assert!(output.status.success(), "niu -c exited {}", output.status);
+    assert!(
+        output.status.success(),
+        "native-shell -c exited {}",
+        output.status
+    );
     assert!(
         offenders.is_empty(),
         "visible windows appeared: {offenders:?}"
@@ -400,7 +408,11 @@ fn detached_command_substitutions_share_single_hidden_console() {
         "echo \"$h1|$h2|$h3\""
     );
     let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
-    assert!(output.status.success(), "niu -c exited {}", output.status);
+    assert!(
+        output.status.success(),
+        "native-shell -c exited {}",
+        output.status
+    );
     assert!(
         offenders.is_empty(),
         "visible windows appeared: {offenders:?}"
@@ -426,7 +438,11 @@ fn detached_pipelines_share_single_hidden_console() {
         "C:/Windows/System32/hostname.exe | C:/Windows/System32/findstr.exe ."
     );
     let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
-    assert!(output.status.success(), "niu -c exited {}", output.status);
+    assert!(
+        output.status.success(),
+        "native-shell -c exited {}",
+        output.status
+    );
     assert!(
         offenders.is_empty(),
         "visible windows appeared: {offenders:?}"
@@ -453,7 +469,11 @@ fn detached_background_jobs_and_wait_share_single_hidden_console() {
         "C:/Windows/System32/hostname.exe"
     );
     let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
-    assert!(output.status.success(), "niu -c exited {}", output.status);
+    assert!(
+        output.status.success(),
+        "native-shell -c exited {}",
+        output.status
+    );
     assert!(
         offenders.is_empty(),
         "visible windows appeared in background jobs: {offenders:?}"
@@ -475,7 +495,11 @@ fn detached_subshells_functions_and_loops_share_single_hidden_console() {
         "for n in 1 2 3; do emit_host; done"
     );
     let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
-    assert!(output.status.success(), "niu -c exited {}", output.status);
+    assert!(
+        output.status.success(),
+        "native-shell -c exited {}",
+        output.status
+    );
     assert!(
         offenders.is_empty(),
         "visible windows appeared: {offenders:?}"
@@ -489,28 +513,28 @@ fn detached_subshells_functions_and_loops_share_single_hidden_console() {
 }
 
 #[test]
-fn detached_nested_niu_and_exec_builtin_share_single_hidden_console() {
-    // Deep nesting: `niu -c` spawning nested `niu -c` and `niu -c 'exec ...'`.
-    // Once the outer niu claims the hidden console, nested niu processes
+fn detached_nested_native_shell_and_exec_builtin_share_single_hidden_console() {
+    // Deep nesting: `native-shell -c` spawning nested `native-shell -c` and `native-shell -c 'exec ...'`.
+    // Once the outer native-shell claims the hidden console, nested native-shell processes
     // inherit it (GetConsoleCP()!=0, IsWindowVisible==0 so release_orphan_console
     // keeps it) and the whole multi-level tree allocates at most 1 conhost.exe.
     let script = concat!(
-        "\"$NIU_SHELL\" -c \"C:/Windows/System32/hostname.exe; C:/Windows/System32/ping.exe -n 2 127.0.0.1 >NUL\"; ",
-        "\"$NIU_SHELL\" -c \"exec C:/Windows/System32/hostname.exe\""
+        "\"$NATIVE_SHELL_BIN\" -c \"C:/Windows/System32/hostname.exe; C:/Windows/System32/ping.exe -n 2 127.0.0.1 >NUL\"; ",
+        "\"$NATIVE_SHELL_BIN\" -c \"exec C:/Windows/System32/hostname.exe\""
     );
     let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
     assert!(
         output.status.success(),
-        "nested niu -c exited {}",
+        "nested native-shell -c exited {}",
         output.status
     );
     assert!(
         offenders.is_empty(),
-        "visible windows appeared in nested niu tree: {offenders:?}"
+        "visible windows appeared in nested native-shell tree: {offenders:?}"
     );
     assert!(
         conhosts.len() <= 1,
-        "nested niu tree must share <=1 conhost.exe, saw {}: {conhosts:?}",
+        "nested native-shell tree must share <=1 conhost.exe, saw {}: {conhosts:?}",
         conhosts.len()
     );
     assert_eq!(non_empty_lines(&output.stdout).len(), 2);
@@ -518,9 +542,9 @@ fn detached_nested_niu_and_exec_builtin_share_single_hidden_console() {
 
 #[test]
 fn detached_hardlink_faces_bash_and_sh_spawn_zero_windows_and_one_conhost() {
-    // niubash#397 + #462: `bash.exe` and `sh.exe` hardlinked to `niu.exe` must
-    // behave identically to `niu.exe` when invoked console-less.
-    let niu = std::path::Path::new(env!("CARGO_BIN_EXE_niu"));
+    // native-shell#397 + #462: `bash.exe` and `sh.exe` hardlinked to `native-shell.exe` must
+    // behave identically to `native-shell.exe` when invoked console-less.
+    let native_shell = std::path::Path::new(env!("CARGO_BIN_EXE_native-shell"));
     let dir = std::env::temp_dir().join(format!("niu-gate-faces-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create temp face dir");
@@ -533,8 +557,8 @@ fn detached_hardlink_faces_bash_and_sh_spawn_zero_windows_and_one_conhost() {
     );
     for face_name in ["bash.exe", "sh.exe"] {
         let face_path = dir.join(face_name);
-        if std::fs::hard_link(niu, &face_path).is_err() {
-            std::fs::copy(niu, &face_path).expect("copy niu face");
+        if std::fs::hard_link(native_shell, &face_path).is_err() {
+            std::fs::copy(native_shell, &face_path).expect("copy native-shell face");
         }
         let (output, offenders, conhosts) =
             run_and_observe_exe(&face_path, &["-c", script], DETACHED_PROCESS, None);
@@ -560,8 +584,8 @@ fn detached_hardlink_faces_bash_and_sh_spawn_zero_windows_and_one_conhost() {
 
 #[test]
 fn detached_script_file_and_stdin_routes_spawn_zero_windows_and_one_conhost() {
-    // Covers `niu <script.sh>` and `niu` with piped script on stdin (no `-c`).
-    let niu = std::path::Path::new(env!("CARGO_BIN_EXE_niu"));
+    // Covers `native-shell <script.sh>` and `native-shell` with piped script on stdin (no `-c`).
+    let native_shell = std::path::Path::new(env!("CARGO_BIN_EXE_native-shell"));
     let dir = std::env::temp_dir().join(format!("niu-gate-script-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create temp script dir");
@@ -589,7 +613,7 @@ fn detached_script_file_and_stdin_routes_spawn_zero_windows_and_one_conhost() {
     assert_eq!(non_empty_lines(&out_file.stdout).len(), 2);
 
     let (out_stdin, offenders_stdin, conhosts_stdin) =
-        run_and_observe_exe(niu, &[], DETACHED_PROCESS, Some(body.as_bytes()));
+        run_and_observe_exe(native_shell, &[], DETACHED_PROCESS, Some(body.as_bytes()));
     assert!(out_stdin.status.success());
     assert!(
         offenders_stdin.is_empty(),
@@ -628,7 +652,7 @@ fn detached_repl_command_and_launcher_verbs_spawn_zero_windows() {
     );
     assert_eq!(non_empty_lines(&out_c.stdout).len(), 2);
 
-    // `--version` probes `winuxcmd.exe --version` (<=1 hidden console);
+    // `--version` probes `native-cmd.exe --version` (<=1 hidden console);
     // `--help` and `plugin list` are pure in-process routes (0 conhosts).
     let (out_v, offenders_v, conhosts_v) = run_and_observe_niu(&["--version"], DETACHED_PROCESS);
     assert!(out_v.status.success());
@@ -644,7 +668,11 @@ fn detached_repl_command_and_launcher_verbs_spawn_zero_windows() {
 
     for args in [&["--help"][..], &["plugin", "list"][..]] {
         let (out, offenders, conhosts) = run_and_observe_niu(args, DETACHED_PROCESS);
-        assert!(out.status.success(), "niu {args:?} failed: {}", out.status);
+        assert!(
+            out.status.success(),
+            "native-shell {args:?} failed: {}",
+            out.status
+        );
         assert!(
             offenders.is_empty(),
             "visible windows on {args:?}: {offenders:?}"
@@ -658,8 +686,8 @@ fn detached_repl_command_and_launcher_verbs_spawn_zero_windows() {
 
 #[test]
 fn create_no_window_parent_reuses_caller_hidden_console() {
-    // When the caller itself spawned niu with CREATE_NO_WINDOW (e.g. a
-    // runner/agent or the bash.exe shim), niu starts with a hidden console
+    // When the caller itself spawned native-shell with CREATE_NO_WINDOW (e.g. a
+    // runner/agent or the bash.exe shim), native-shell starts with a hidden console
     // already attached. `release_orphan_console` must keep it, and all
     // external children must inherit that single console without allocating a
     // second conhost.exe.
@@ -687,10 +715,10 @@ fn create_no_window_parent_reuses_caller_hidden_console() {
 #[test]
 fn detached_scaling_timing_gate_avoids_per_spawn_console_tax() {
     // Timing & zero-window gate: compare N=1 vs N=10 external commands in a
-    // detached `niu -c` session. With 1 hidden console per session, the 9
+    // detached `native-shell -c` session. With 1 hidden console per session, the 9
     // additional `hostname.exe` spawns inherit the existing hidden console
     // instead of paying ~22-33 ms of fresh conhost.exe startup each.
-    let niu = std::path::Path::new(env!("CARGO_BIN_EXE_niu"));
+    let native_shell = std::path::Path::new(env!("CARGO_BIN_EXE_native-shell"));
     let cmd = "C:/Windows/System32/hostname.exe >NUL";
     let script_1 = cmd.to_string();
     let script_10 = std::iter::repeat(cmd)
@@ -699,13 +727,14 @@ fn detached_scaling_timing_gate_avoids_per_spawn_console_tax() {
         .join("; ");
 
     // Warmup
-    let _ = run_and_observe_exe(niu, &["-c", &script_1], DETACHED_PROCESS, None);
+    let _ = run_and_observe_exe(native_shell, &["-c", &script_1], DETACHED_PROCESS, None);
 
     let mut samples_1 = Vec::new();
     let mut samples_10 = Vec::new();
     for _ in 0..3 {
         let t0 = Instant::now();
-        let (out1, off1, _) = run_and_observe_exe(niu, &["-c", &script_1], DETACHED_PROCESS, None);
+        let (out1, off1, _) =
+            run_and_observe_exe(native_shell, &["-c", &script_1], DETACHED_PROCESS, None);
         let d1 = t0.elapsed();
         assert!(out1.status.success());
         assert!(off1.is_empty(), "visible windows in N=1: {off1:?}");
@@ -713,7 +742,7 @@ fn detached_scaling_timing_gate_avoids_per_spawn_console_tax() {
 
         let t0 = Instant::now();
         let (out10, off10, con10) =
-            run_and_observe_exe(niu, &["-c", &script_10], DETACHED_PROCESS, None);
+            run_and_observe_exe(native_shell, &["-c", &script_10], DETACHED_PROCESS, None);
         let d10 = t0.elapsed();
         assert!(out10.status.success());
         assert!(off10.is_empty(), "visible windows in N=10: {off10:?}");
@@ -860,7 +889,7 @@ fn detached_missing_first_command_and_encoded_command_stay_windowless() {
 
 #[test]
 fn detached_shim_forwarded_grandchild_spawns_zero_windows_and_one_conhost() {
-    // niubash#466: a `layout: shim` command (`winuxcmd-shim.exe` ->
+    // native-shell#466: a `layout: shim` command (`native-cmd-shim.exe` ->
     // `opt/<pkg>/<tool>.exe` -> grandchild `hostname.exe`/`git.exe`) invoked
     // with redirected stdio (e.g. `python - <<'EOF'` calling `subprocess.run`)
     // must NOT be detached by the shim (`DETACHED_PROCESS`), which used to
@@ -869,10 +898,10 @@ fn detached_shim_forwarded_grandchild_spawns_zero_windows_and_one_conhost() {
     // and allocate a fresh conhost.exe.
     //
     // Stage a synthetic `<root>/.wpm/shims.map` + `<root>/usr/bin/probe.exe`
-    // (backed by the installed `winuxcmd-shim.exe` when present, or a copy of
-    // `niu.exe` when running in a bare cargo checkout) that forwards to a
+    // (backed by the installed `native-cmd-shim.exe` when present, or a copy of
+    // `native-shell.exe` when running in a bare cargo checkout) that forwards to a
     // payload spawning 3 external grandchildren with redirected stdin.
-    let niu = std::path::Path::new(env!("CARGO_BIN_EXE_niu"));
+    let native_shell = std::path::Path::new(env!("CARGO_BIN_EXE_native-shell"));
     let dir = std::env::temp_dir().join(format!("niu-gate-466-shim-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let wpm_dir = dir.join(".wpm");
@@ -882,26 +911,26 @@ fn detached_shim_forwarded_grandchild_spawns_zero_windows_and_one_conhost() {
     std::fs::create_dir_all(&usr_bin).expect("mkdir usr/bin");
     std::fs::create_dir_all(&opt_pkg).expect("mkdir opt/pkg");
 
-    // Payload at `opt/pkg/probe.exe` is `niu.exe` itself; when invoked via
+    // Payload at `opt/pkg/probe.exe` is `native-shell.exe` itself; when invoked via
     // `usr/bin/probe.exe -c ... <<<heredoc`, it runs 3 external grandchildren.
     let payload_exe = opt_pkg.join("probe.exe");
-    if std::fs::hard_link(niu, &payload_exe).is_err() {
-        std::fs::copy(niu, &payload_exe).expect("copy payload");
+    if std::fs::hard_link(native_shell, &payload_exe).is_err() {
+        std::fs::copy(native_shell, &payload_exe).expect("copy payload");
     }
     std::fs::write(wpm_dir.join("shims.map"), "probe=opt\\pkg\\probe.exe\n")
         .expect("write shims.map");
 
-    // Prefer the real `winuxcmd-shim.exe` from the host installation if
+    // Prefer the real `native-cmd-shim.exe` from the host installation if
     // available so the test exercises the actual forwarder binary.
     let candidate_shims = [
-        std::path::PathBuf::from(r"D:\repo\winuxcmd-main\winuxcmd-shim.exe"),
+        std::path::PathBuf::from(r"D:\repo\winuxcmd-main\native-cmd-shim.exe"),
         dirs_shim_candidate(),
     ];
     let shim_src = candidate_shims
         .iter()
         .find(|p| p.is_file())
         .map(|p| p.as_path())
-        .unwrap_or(niu);
+        .unwrap_or(native_shell);
     let shim_exe = usr_bin.join("probe.exe");
     std::fs::copy(shim_src, &shim_exe).expect("stage usr/bin/probe.exe");
 
@@ -936,11 +965,11 @@ fn dirs_shim_candidate() -> std::path::PathBuf {
         .map(std::path::PathBuf::from)
         .unwrap_or_default()
         .join("Programs")
-        .join("Niubash")
+        .join("NativeShell")
         .join("winuxcmd")
         .join("usr")
         .join("bin")
-        .join("winuxcmd-shim.exe")
+        .join("native-cmd-shim.exe")
 }
 
 fn encode_base64(input: &[u8]) -> String {

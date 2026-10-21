@@ -1,4 +1,4 @@
-# How Real Shells Test Interactive Rendering — and the Niubash Adoption Plan
+# How Real Shells Test Interactive Rendering — and the Native Shell Adoption Plan
 
 Lane wt74/rtstudy (2026-10-02). Owner directive (verbatim intent): 看看别人的
 shell 是怎么测试的，不要给我想当然 — *study how real shells test, do not
@@ -12,7 +12,7 @@ TLS was being reset, so tarballs + raw fetches carried the day):
 | --- | --- |
 | fish-shell/fish-shell | `master` @ `35c290272cc9c4c51518d0b87810a404d1ce66e1` |
 | zsh-users/zsh | `master` @ `8cc5eade5ff80de1dca7bd27509eddca4f849f29` |
-| nushell/reedline | `main` @ `d7bcb12ff583d151906fbf819e4bc844c1afaefc` (+ pinned vendored **0.50.0** — the exact version niubash builds against) |
+| nushell/reedline | `main` @ `d7bcb12ff583d151906fbf819e4bc844c1afaefc` (+ pinned vendored **0.50.0** — the exact version native-shell builds against) |
 | atuinsh/atuin | `main` @ `d440a2e616825533d3eee0db2af7d22d68dcc5c2` |
 | oils-for-unix/oils | `master` raw fetch (`spec/stateful/{bind,harness}.py`) |
 | alacritty | `alacritty_terminal/tests/ref.rs` raw fetch (fixture-snapshot precedent) |
@@ -229,7 +229,7 @@ not by watchdog.
 ## 3. GNU readline — the canonical cursor model, untested upstream
 
 The vendored bash tree's readline (`lib/readline/display.c`) is the
-specification niubash's rendering must honor, and it is honest about how hard
+specification native-shell's rendering must honor, and it is honest about how hard
 this is:
 
 - **The two tracked coordinates**: `_rl_last_c_pos` (visible cursor column;
@@ -272,11 +272,11 @@ test suite** — only the manual `examples/rltest.c` harness; the bash tree's
 83 `tests/*.tests` files contain no readline-display test (verified by
 inventory). The canonical model is enforced *only* by downstream shells
 (fish's tmux layer, zsh's zpty layer, and the modern-Rust patterns below).
-That is precisely the gap niubash must fill for itself.
+That is precisely the gap native-shell must fill for itself.
 
 ---
 
-## 4. reedline (the SAME editor crate niubash pins) and atuin — the modern Rust patterns
+## 4. reedline (the SAME editor crate native-shell pins) and atuin — the modern Rust patterns
 
 ### reedline
 
@@ -300,7 +300,7 @@ harness helper `repaint_from_stale_anchor_at` (`painter.rs:1958`) can set the
 cached anchor and the terminal-reported cursor row **independently** — the
 two quantities that drift apart in real terminals.
 
-**Public API niubash can drive today (verified in the vendored 0.50.0
+**Public API native-shell can drive today (verified in the vendored 0.50.0
 source):** `Reedline::run_edit_commands(&[EditCommand])` (`engine.rs:2013`),
 `current_insertion_point() -> usize` (`engine.rs:921`), and
 `current_buffer_contents() -> &str` (`engine.rs:926`); builders
@@ -309,14 +309,14 @@ the `W::Sink`/`W::Capture` writers and an in-crate `seam_engine()` helper
 that forces the prompt anchor for tests (`engine.rs` `mod tests` at
 `:2672`, `rl.painter.force_prompt_anchored_for_test(0)`) — but those are
 `cfg(test) pub(crate)`: usable only *inside* reedline's own suite, not from
-niubash.
+native-shell.
 
-### atuin — the complete PTY-screen harness in Rust, on niubash's own drivers
+### atuin — the complete PTY-screen harness in Rust, on native-shell's own drivers
 
 Atuin's e2e suite (`crates/atuin/tests/README.md:1-19` — "Interactive shell
 tests against a rendered PTY screen", `#![cfg(unix)]`, rstest-parametrized
 over `tests/shells/{bash-blesh,bash-preexec,fish-default,fish-vi,zsh-emacs,zsh-vi}.toml`)
-is built on **portable-pty — the same ConPTY driver niubash's
+is built on **portable-pty — the same ConPTY driver native-shell's
 `tests/interactive` already uses** — plus the `vt100` crate as an in-process
 terminal emulator:
 
@@ -329,7 +329,7 @@ terminal emulator:
   with the comment "Process output in order so cursor reports reflect the
   position at the query" (`:29`) and a dedicated split-point unit test
   `cursor_reports_follow_output_order` across `#[values(0, 1, 5, 7, 9, 12, 16)]`
-  byte splits (`:271-286`). (Niubash's driver answers CPR from a
+  byte splits (`:271-286`). (Native Shell's driver answers CPR from a
   byte-counting approximation — `tests/interactive/driver.rs:94-125, 196-206` —
   which counts escape bytes as text; see the adoption plan.)
 - **Prompt detection is cursor-anchored**: `wait_for_prompt` waits until *the
@@ -373,11 +373,11 @@ terminal emulator:
   `spec/stateful/harness.py:127-131`) and syncs `LINES`/`COLUMNS` env vars to
   the same numbers (`TerminalDimensionEnvVars`, `harness.py:72-97`), with a
   `num_retries` retry knob for stateful tests (`harness.py:106-110, 170-173`).
-- **Niubash itself already runs pyte** in the journey gate
+- **Native Shell itself already runs pyte** in the journey gate
   (`scripts/journey/golden-journey.py:216-223` builds a `pyte.HistoryScreen`;
   `Session.text()`/`transcript()` render from it at `:264-278`). Verified
   gap: **nothing in the journey reads `screen.cursor`** (zero references) —
-  the cursor class is currently unasserted in every niubash harness.
+  the cursor class is currently unasserted in every native-shell harness.
 - **Does anyone snapshot rendered screens as fixtures?** In the shells
   studied: no. fish's screen checks are *inline* `#CHECK:` rows against a
   live `capture-pane`; atuin's are inline predicates against the live grid.
@@ -390,7 +390,7 @@ terminal emulator:
   `saved_cursor`, and `newline_with_cursor_beyond_scroll_region` — cursor
   behavior as *named, versioned fixtures*.
 
-**Reading for niubash:** the shell ecosystem asserts rendered screens
+**Reading for native-shell:** the shell ecosystem asserts rendered screens
 *inline* (predicate or row-list) and keeps *raw transcripts* as artifacts —
 which is exactly what the journey gate already does — while golden *fixtures*
 are reserved for terminal emulators. Adopt inline cursor assertions + keep
@@ -403,7 +403,7 @@ transcripts; do not introduce golden screen fixtures.
 The bug: at the themed multi-line prompt, after typing/accepting a path, the
 cursor sits *in the middle* of the rendered line instead of after the last
 character (invisible-width bytes counted, or a stale prompt anchor). Every
-current niubash harness is blind to it: the journey matches text rows and
+current native-shell harness is blind to it: the journey matches text rows and
 never reads `screen.cursor`; the Rust harness answers `\x1b[6n` from a
 byte-counting approximation and never asserts on it.
 
@@ -417,7 +417,7 @@ The pattern, as each studied project expresses it:
 | reedline | `anchors == vec![35; 4]` — the prompt never walks when the terminal-reported cursor row disagrees with the believed height (`painter.rs:1996`) |
 | atuin | `screen.rows(...).nth(screen.cursor_position().0).trim() == PROMPT` — the prompt is *where the cursor is* (`pty.rs:205-212`) |
 
-**Concretely, for niubash:** after any input action at the themed prompt,
+**Concretely, for native-shell:** after any input action at the themed prompt,
 
 ```python
 row = index of last non-empty row of screen.display
@@ -438,19 +438,19 @@ rendered row (pyte's `screen.display` strings are already escape-free, so
 
 ---
 
-## 7. Adoption plan for niubash
+## 7. Adoption plan for native-shell
 
 ### (a) Run today — reedline-native, pure Rust, no new machinery
 
 1. **Editor cursor-semantics tests over reedline 0.50's public API**
-   (`crates/niubash-runtime/tests/reedline_editing.rs`; `reedline` is
+   (`crates/native-shell-runtime/tests/reedline_editing.rs`; `reedline` is
    already a direct dependency of that crate): construct
    `Reedline::create().with_edit_mode(...)`, drive
    `run_edit_commands(&[EditCommand::InsertChar('c'), …,
    EditCommand::MoveToLineStart, …])`, then assert
    `current_insertion_point()` and `current_buffer_contents()`. This pins
    the *in-buffer half* of the cursor class (offset semantics of every
-   keybinding niubash wires: Home/End/arrows/word-motions/accept-line) with
+   keybinding native-shell wires: Home/End/arrows/word-motions/accept-line) with
    zero I/O — the same surface zsh exposes via its `zle-finish` widget
    (`Test/comptest:79-89`) and reedline's own engine tests use 72 times.
 2. **Upstream reedline suite at the exact pin.** Script
@@ -475,7 +475,7 @@ rendered row (pyte's `screen.display` strings are already escape-free, so
   from the approximation) — atuin's `answer_queries` (`pty.rs:29-66`) is the
   reference implementation, including byte-order and split-chunk handling
   (unit-test it across split points like `pty.rs:271-286`).
-- New assertion methods on `NiuSession`: `cursor() -> (u16, u16)`,
+- New assertion methods on `NativeShellSession`: `cursor() -> (u16, u16)`,
   `expect_cursor_at(row, col)`, `expect_cursor_at_line_end()`
   (implements §6), `wait_for_screen(pred)` with bounded deadline +
   screen-dump-on-timeout (`pty.rs:228-246` shape), and
@@ -525,7 +525,7 @@ standing rule), add a `cursor` assertion class to the verdict vocabulary:
 | 2 | `scripts/run-reedline-upstream.sh` (upstream suite at pin) | upstream gate | hours | editor regressions flowing in via the pin |
 | 3 | vt100 screen in `tests/interactive` + `expect_cursor_at_line_end()` + CPR-from-grid | e2e (Rust) | 1–2 days | **the owner's cursor class, offline, in `cargo test`** |
 | 4 | journey `cursor` assertion class + J7/J8 + ledger/verdict fields | release gate | 2–3 days | cursor bugs on the *real themed* prompt, blocking release |
-| 5 | (optional, later) prompt-layout unit tests mirroring fish's `line_starts`/`last_line_width` if niubash grows its own prompt pre-layout code | unit | as-needed | prompt width math drift |
+| 5 | (optional, later) prompt-layout unit tests mirroring fish's `line_starts`/`last_line_width` if native-shell grows its own prompt pre-layout code | unit | as-needed | prompt width math drift |
 
 Rationale: 1–2 are pure additions with no flake surface (no PTY), and they
 make everything above them debuggable; 3 gives the offline, per-PR net;
@@ -609,6 +609,6 @@ and need no manifest entries.
   screen-position tests are flaky enough that fish itself disables the
   flakiest one on CI (`tmux-multiline-prompt.fish:4`) — so "real shells"
   manage this flake class by admission and polling, not by eliminating it.
-  Niubash's existing settle/anchor/ledger machinery in the journey gate is
+  Native Shell's existing settle/anchor/ledger machinery in the journey gate is
   already *more* defensive than anything studied here; the missing piece is
   the cursor axis, not the timing machinery.

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Generate niubash demo GIFs with PIL - pure data, no real terminal, no screen recording.
+"""Generate native-shell demo GIFs with PIL - pure data, no real terminal, no screen recording.
 
-Renders animated terminal windows in the niubash brand palette (deep navy,
+Renders animated terminal windows in the native-shell brand palette (deep navy,
 cyan/green/tan accents, Consolas).  Outputs:
 
-    assets/demo.gif           main niubash interactive session
-    assets/demo-gitbash.gif   Git Bash (MSYS) failing where niubash just works
+    assets/demo.gif           main native-shell interactive session
+    assets/demo-gitbash.gif   Git Bash (MSYS) failing where native-shell just works
 
 Usage:  python scripts/gen-demos.py
 """
@@ -42,7 +42,7 @@ def line(spans, t, cps=0):
 
 class Term:
     def __init__(self, lines, cols=88, rows=20, font_size=15, pad=18,
-                 title="niubash", duration=24.0):
+                 title="native-shell", duration=24.0):
         self.lines = sorted(lines, key=lambda l: l["t"])
         self.font = ImageFont.truetype(FONT, font_size)
         self.font_b = ImageFont.truetype(FONT_B, font_size)
@@ -125,15 +125,15 @@ class Term:
 
 def demo_main(out="assets/demo.gif"):
     lines = [
-        line([("  niubash - bash, native on Windows", YELLOW),
+        line([("  native-shell - bash, native on Windows", YELLOW),
               ("   one binary, no VM, no /mnt/c, no cmdlet dialect", DIM)], t=0.0),
         line([("$ pwd", CYAN)], t=0.7, cps=26),
-        line([("C:\\Users\\caomengxuan\\repo\\niubash", WHITE)], t=1.6),
+        line([("C:\\Users\\caomengxuan\\repo\\native-shell", WHITE)], t=1.6),
         line([("$ cd \"C:/Program Files\" && pwd", CYAN)], t=2.3, cps=26),
         line([("C:\\Program Files", WHITE)], t=4.0),
-        line([("$ cd /c/Users/caomengxuan/repo/niubash", CYAN),
+        line([("$ cd /c/Users/caomengxuan/repo/native-shell", CYAN),
               ("   # msys-style input also works", DIM)], t=4.7, cps=22),
-        line([("C:\\Users\\caomengxuan\\repo\\niubash", WHITE)], t=6.8),
+        line([("C:\\Users\\caomengxuan\\repo\\native-shell", WHITE)], t=6.8),
         line([("$ printf \"%s\\n\" alpha beta gamma | grep -v gamma", CYAN)], t=7.5, cps=28),
         line([("alpha", WHITE)], t=9.7),
         line([("beta", WHITE)], t=10.1),
@@ -144,33 +144,33 @@ def demo_main(out="assets/demo.gif"):
         line([("bash syntax - pick any two.", WHITE)], t=15.0),
         line([("we ship all three.", TAN)], t=15.5),
         line([("EOF", DIM)], t=16.0),
-        line([("$ hello() { echo \"hello from $1\"; }; hello niubash", CYAN)], t=16.5, cps=30),
-        line([("hello from niubash", GREEN)], t=18.2),
+        line([("$ hello() { echo \"hello from $1\"; }; hello native-shell", CYAN)], t=16.5, cps=30),
+        line([("hello from native-shell", GREEN)], t=18.2),
         line([("---- same command line, two shells ----", DIM)], t=18.8),
         line([("node -e \"console.log(JSON.stringify(process.argv.slice(1)))\" \"a b\" \"\" 'c\"d' \"e\\f\" \"---\"", DIM)], t=19.4, cps=42),
-        line([("niubash : [\"a b\",\"\",\"c\\\"d\",\"e\\\\f\",\"---\"]", GREEN)], t=21.2),
+        line([("native-shell : [\"a b\",\"\",\"c\\\"d\",\"e\\\\f\",\"---\"]", GREEN)], t=21.2),
         line([("pwsh    : [\"a b\",\"cd e\\\\f ---\"]", RED),
               ("   # empty arg eaten, quote flattened", DIM)], t=22.3),
         line([("$ git status --short", CYAN)], t=23.3, cps=16),
         line([(" M README.md", RED)], t=24.2),
-        line([("?? assets/niubash-banner.svg", GREEN)], t=24.6),
+        line([("?? assets/native-shell-banner.svg", GREEN)], t=24.6),
         line([("bash syntax, windows paths, real binaries. all three.", CYAN)], t=25.4),
     ]
-    Term(lines, title="niubash - bash, native on Windows", duration=27.2).save(out)
+    Term(lines, title="native-shell - bash, native on Windows", duration=27.2).save(out)
 
 
 def demo_gitbash(out="assets/demo-gitbash.gif"):
     lines = [
-        line([("$ cd C:\\Users\\caomengxuan\\repo\\niubash", CYAN)], t=0.0, cps=22),
-        line([("bash: cd: C:Userscaomengxuanreponiubash: No such file or directory", RED)], t=2.0),
+        line([("$ cd C:\\Users\\caomengxuan\\repo\\native-shell", CYAN)], t=0.0, cps=22),
+        line([("bash: cd: C:Userscaomengxuanreponative-shell: No such file or directory", RED)], t=2.0),
         line([("# backslashes eaten by MSYS", DIM)], t=2.9),
         line([("$ cmd /c cd /c/Users/caomengxuan", CYAN)], t=3.7, cps=20),
         line([("The system cannot find the path specified.", RED)], t=5.4),
         line([("# /c/ paths rejected by cmd", DIM)], t=6.3),
-        line([("$ git grep -n niubash -- src/main.rs", CYAN)], t=7.1, cps=20),
-        line([("fatal: cannot chdir to 'C:Userscaomengxuanreponiubash'", RED)], t=9.1),
+        line([("$ git grep -n native-shell -- src/main.rs", CYAN)], t=7.1, cps=20),
+        line([("fatal: cannot chdir to 'C:Userscaomengxuanreponative-shell'", RED)], t=9.1),
         line([("# MSYS mangled the backslashes again", DIM)], t=10.0),
-        line([("---- every one of these just works in niubash ----", GREY)], t=10.8),
+        line([("---- every one of these just works in native-shell ----", GREY)], t=10.8),
     ]
     Term(lines, cols=82, rows=13, title="Git Bash (MSYS)", duration=13.4).save(out)
 

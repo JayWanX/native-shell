@@ -210,7 +210,7 @@ def render_table(result):
     for key, label in (
         ("native_spawn", "native spawn (GUI app, editor, script)"),
         ("via_cmd", "`cmd.exe /c`"),
-        ("warm_niu", "warm `niu -c` (per call)"),
+        ("warm_niu", "warm `native-shell -c` (per call)"),
         ("warm_gitbash", "warm Git Bash (`bash -c`, per call)"),
     ):
         row = result["rows"].get(key, {})
@@ -228,7 +228,7 @@ def render_table(result):
     p = result["provenance"]
     lines += ["", "Measured %s on %s, python %s." % (p["date"], p["os"], p["python"]),
               "Git Bash: %s (%s)" % (p["git_bash"], p["git_bash_identity"]),
-              "niu: %s" % p["niu"], "Repo: %s" % p["repo"]]
+              "native-shell: %s" % p["native-shell"], "Repo: %s" % p["repo"]]
     for name, path in p["binaries"].items():
         lines.append("%s: %s" % (name, path))
     return "\n".join(lines)
@@ -242,14 +242,14 @@ def main():
     ap.add_argument("--shell-n", type=int, default=10,
                     help="git calls per measurement inside a long-lived shell")
     ap.add_argument("--git-bash", default=None, help="path to a real Git for Windows bash.exe")
-    ap.add_argument("--niu", default=None, help="path to niu.exe")
+    ap.add_argument("--native-shell", default=None, help="path to native-shell.exe")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
     repo = os.path.abspath(args.repo or os.getcwd())
     repo_posix = to_posix(repo)
 
-    niu = args.niu or shutil.which("niu") or shutil.which("niu.exe")
+    native_shell = args.native_shell or shutil.which("native-shell") or shutil.which("native-shell.exe")
     git = shutil.which("git")
     gfw = first_existing(GFW_GIT_CANDIDATES)
     gfw_cmd = first_existing(GFW_CMD_GIT_CANDIDATES)
@@ -277,16 +277,16 @@ def main():
     comspec = os.environ.get("COMSPEC") or r"C:\Windows\System32\cmd.exe"
     result["rows"]["via_cmd"] = {n: timed([comspec, "/c", p, "--version"],
                                           max(args.n // 2, 5)) for n, p in binaries}
-    if niu:
+    if native_shell:
         result["rows"]["warm_niu"] = {
-            n: per_call_in_shell(niu, ["-c"], "%s --version" % p, args.shell_n)
+            n: per_call_in_shell(native_shell, ["-c"], "%s --version" % p, args.shell_n)
             for n, p in binaries}
     if bash:
         result["rows"]["warm_gitbash"] = {
             n: per_call_in_shell(bash, ["-c"], "%s --version" % to_posix(p), args.shell_n)
             for n, p in binaries}
-    if niu:
-        result["rows"]["new_terminal"]["niu -c exit"] = shell_startup(niu, ["-c", "exit"])
+    if native_shell:
+        result["rows"]["new_terminal"]["native-shell -c exit"] = shell_startup(native_shell, ["-c", "exit"])
     if bash:
         result["rows"]["new_terminal"]["Git Bash -c exit (non-login)"] = shell_startup(bash, ["-c", "exit"])
         result["rows"]["new_terminal"]["Git Bash -lc exit (login)"] = shell_startup(bash, ["-lc", "exit"])
@@ -315,7 +315,7 @@ def main():
         "os": platform.platform(),
         "python": platform.python_version(),
         "repo": repo,
-        "niu": niu,
+        "native-shell": native_shell,
         "git_bash": bash,
         "git_bash_identity": bash_identity,
         "binaries": {n: p for n, p in binaries},
@@ -325,7 +325,7 @@ def main():
         print(json.dumps(result, indent=2))
     else:
         print(render_table(result))
-    if not binaries and not niu and not bash:
+    if not binaries and not native_shell and not bash:
         return 1
     return 0
 

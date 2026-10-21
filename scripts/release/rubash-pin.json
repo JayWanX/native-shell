@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "rubash_rev": "a83a09d32b4a4f953d29af0acc0e781b542206b8",
-  "rubash_version": "1.4.1",
-  "description": "Rubash source pin for niubash releases (rubash#827, conclusion B). Every release job fetches exactly this rubash commit into ../rubash -- where the [patch] path override in Cargo.toml deterministically picks it up -- and fails the release unless the checked-out HEAD equals rubash_rev. This is the source-level twin of winuxcmd-pin.json (niubash#312/#327): the bundled WinuxCmd was already pinned, but the compiled engine was 'whatever rubash master HEAD was at build time'.",
+  "rubash_rev": "d75cc150773ae0e961868eb0a409d7d954c4cd65",
+  "rubash_version": "1.4.2",
+  "description": "Rubash source pin for native-shell releases (rubash#827, conclusion B). Every release job fetches exactly this rubash commit into ../rubash -- where the [patch] path override in Cargo.toml deterministically picks it up -- and fails the release unless the checked-out HEAD equals rubash_rev. The compiled engine is pinned to an exact commit instead of being 'whatever rubash master HEAD was at build time'.",
   "notes": [
-    "Recorded from rubash master HEAD a83a09d32b4a4f953d29af0acc0e781b542206b8 (2026-10-20, Cargo.toml version 1.4.1) — includes rubash#909 (child spawn console suppression when parent has no visible console) and rubash#911 (preserve argv[0]-marked login_shell shopt across reset_shell_options).",
+    "Recorded from rubash master HEAD d75cc150773ae0e961868eb0a409d7d954c4cd65 (2026-10-21, Cargo.toml version 1.4.2) — the bash 5.3.20 version bump (rubash#978); supersedes a83a09d3 (1.4.1) because CI clones rubash master and a --locked build cannot span two engine versions.",
     "NOTE: the rev includes #863 — rubash's own Cargo.lock self-entry must be 1.4.1 or the release build's --locked cargo calls (bash shim) fail inside the pinned clone.",
     "Bumping the pin is a deliberate release decision: update rubash_rev and rubash_version together.",
     "verify with: python scripts/release/verify-rubash-pin.py --fetch-self-test"

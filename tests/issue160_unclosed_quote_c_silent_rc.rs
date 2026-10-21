@@ -1,9 +1,9 @@
-//! niubash#160: `niu -c 'echo "x'` exited silently (worse than reported: the
+//! native-shell#160: `native-shell -c 'echo "x'` exited silently (worse than reported: the
 //! fast path folded the quote and executed `echo x`, rc=0) while GNU Bash
 //! 5.3.0 reports `bash: -c: line 1: unexpected EOF while looking for
 //! matching `"'` and exits 2.
 //!
-//! Root cause: `Shell::execute_script` (crates/niubash-runtime/src/shell.rs)
+//! Root cause: `Shell::execute_script` (crates/native-shell-runtime/src/shell.rs)
 //! tokenized+parsed the command string directly, bypassing the engine's
 //! read-time EOF diagnostic gate (rubash script_driver.rs run_source_impl —
 //! GNU owner parse.y:5419-5437 read_token_word, error.c:324 exit status 2).
@@ -13,29 +13,33 @@
 //!
 //! GNU baseline: WSL GNU Bash 5.3.0 script-file probe with per-shape stream
 //! capture (16 shapes, rc and diagnostics byte-identical modulo the shell
-//! name, which is $0 and therefore `niu` here — error.c get_name_for_error).
+//! name, which is $0 and therefore `native-shell` here — error.c get_name_for_error).
 
 use std::path::PathBuf;
 use std::process::Command;
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
 fn run_c(command: &str) -> (String, String, i32) {
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg("-c")
         .arg(command)
         .output()
-        .expect("spawn niu -c");
+        .expect("spawn native-shell -c");
     (
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -50,7 +54,7 @@ fn unclosed_double_quote_reports_and_exits_2() {
     assert_eq!(stdout, "", "the broken word must not execute");
     assert_eq!(
         stderr,
-        "niu: -c: line 1: unexpected EOF while looking for matching `\"'\n"
+        "native-shell: -c: line 1: unexpected EOF while looking for matching `\"'\n"
     );
     assert_eq!(code, 2);
 }
@@ -60,15 +64,15 @@ fn unclosed_quote_family_reports() {
     for (command, expected) in [
         (
             "echo 'x",
-            "niu: -c: line 1: unexpected EOF while looking for matching `''\n",
+            "native-shell: -c: line 1: unexpected EOF while looking for matching `''\n",
         ),
         (
             "echo `x",
-            "niu: -c: line 1: unexpected EOF while looking for matching ``'\n",
+            "native-shell: -c: line 1: unexpected EOF while looking for matching ``'\n",
         ),
         (
             "echo ${x",
-            "niu: -c: line 1: unexpected EOF while looking for matching `}'\n",
+            "native-shell: -c: line 1: unexpected EOF while looking for matching `}'\n",
         ),
     ] {
         let (stdout, stderr, code) = run_c(command);
@@ -81,7 +85,7 @@ fn unclosed_quote_family_reports() {
     let (_, stderr, code) = run_c("echo $(x");
     assert_eq!(
         stderr,
-        "niu: -c: line 2: unexpected EOF while looking for matching `)'\n"
+        "native-shell: -c: line 2: unexpected EOF while looking for matching `)'\n"
     );
     assert_eq!(code, 2);
 }
@@ -93,7 +97,7 @@ fn heredoc_delimiter_unclosed_quote_reports_matching_quote() {
     let (_, stderr, code) = run_c("cat << \"q");
     assert_eq!(
         stderr,
-        "niu: -c: line 1: unexpected EOF while looking for matching `\"'\n"
+        "native-shell: -c: line 1: unexpected EOF while looking for matching `\"'\n"
     );
     assert_eq!(code, 2);
 }
@@ -104,7 +108,7 @@ fn unclosed_compound_assignment_subscript_exits_1() {
     let (_, stderr, code) = run_c("foo=([)");
     assert_eq!(
         stderr,
-        "niu: -c: line 1: unexpected EOF while looking for matching `]'\n"
+        "native-shell: -c: line 1: unexpected EOF while looking for matching `]'\n"
     );
     assert_eq!(code, 1);
 }
@@ -116,7 +120,7 @@ fn complete_prefix_lines_execute_before_diagnostic() {
     assert_eq!(stdout, "multi1\nmulti2\n");
     assert_eq!(
         stderr,
-        "niu: -c: line 3: unexpected EOF while looking for matching `\"'\n"
+        "native-shell: -c: line 3: unexpected EOF while looking for matching `\"'\n"
     );
     assert_eq!(code, 2);
 
@@ -128,12 +132,12 @@ fn complete_prefix_lines_execute_before_diagnostic() {
 /// The $0 word after the command string names the diagnostic prefix.
 #[test]
 fn command_name_word_becomes_diagnostic_prefix() {
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg("-c")
         .arg("echo \"x")
         .arg("myzero")
         .output()
-        .expect("spawn niu -c with name");
+        .expect("spawn native-shell -c with name");
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
         "myzero: -c: line 1: unexpected EOF while looking for matching `\"'\n"
@@ -151,10 +155,10 @@ fn script_file_unclosed_quote_reports() {
     let script = dir.join("unclosed.sh");
     std::fs::write(&script, b"echo a\necho b\necho \"x\n").expect("write script");
 
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg(&script)
         .output()
-        .expect("spawn niu script");
+        .expect("spawn native-shell script");
     assert_eq!(String::from_utf8_lossy(&output.stdout), "a\nb\n");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(

@@ -48,14 +48,14 @@ git stash push -m "describe work briefly"
 
 ### 3. Perform Git Operations in Separate Directory
 ```bash
-cd /tmp/niubash-pr-review-$$
+cd /tmp/native-shell-pr-review-$$
 git clone <repository> .
 # Now safe to check out branches, test PRs, etc.
 ```
 
 ### 4. Restore User's Work When Done
 ```bash
-cd ../unixwin-niubash
+cd ../unixwin-native-shell
 git stash pop  # Restore user's unstaged work
 ```
 
@@ -63,12 +63,12 @@ git stash pop  # Restore user's unstaged work
 
 ```bash
 # Create separate worktree for testing
-git worktree add ../niubash-pr-review origin/pr/58
-cd ../niubash-pr-review
+git worktree add ../native-shell-pr-review origin/pr/58
+cd ../native-shell-pr-review
 # Now safe to test PR without affecting original work directory
 # When done:
-cd ../unixwin-niubash
-git worktree remove ../niubash-pr-review
+cd ../unixwin-native-shell
+git worktree remove ../native-shell-pr-review
 ```
 
 ## Emergency Recovery If Work Was Lost
@@ -153,6 +153,6 @@ git checkout origin/pr/58
 # ... perform PR review ...
 
 # Step 4: Return and restore work
-cd ../unixwin-niubash
+cd ../unixwin-native-shell
 git stash pop
 ```

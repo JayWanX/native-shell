@@ -28,14 +28,14 @@ Windows 测试 job 另有 90 分钟上限，包含构建时间。
   测试时间和尝试次数；新构建不覆盖旧构建历史。
 - `eco_test_meta`：一次性旧数据迁移标志。
 
-构建身份由实际 `niu.exe`、`rubash.exe` 的 SHA256，两者构建 checkout SHA，
+构建身份由实际 `native-shell.exe`、`rubash.exe` 的 SHA256，两者构建 checkout SHA，
 `eco-test.py` 的 SHA256、slow threshold，以及 GNU oracle 的可用性、已解析的命令路径
 和版本共同计算。主流程先探测 oracle，再计算身份和选择资产；oracle 从不可用恢复、
 路径或版本变化都会产生新身份，之前降级分类的稳定 verdict 只能作为 stale 历史，
 按正常旧版本预算重测，不会永久遮盖恢复后的分类，也不绕过未测/暂态优先级。
 CI 从实际构建目录读取两个
 checkout 的 HEAD（rubash 为 sibling master，不误用被 path patch 替代的锁文件版本）。
-本地未提供 `--niu-revision` / `--rubash-revision` 时记录 `unknown`，仍有实际二进制哈希。
+本地未提供 `--native-shell-revision` / `--rubash-revision` 时记录 `unknown`，仍有实际二进制哈希。
 每条结果 JSONL 同样带 `build_id` 和完整 `build_identity`。
 
 首次迁移保留旧 `assets.verdict`，导入为版本未知的 `legacy` 历史；本地旧 JSONL 若存在，
@@ -58,7 +58,7 @@ python -m unittest discover -s scripts/harvest -p "test_*.py" -v
 ```
 
 fixtures 使用临时/内存 SQLite、不可执行的假二进制字节和模拟 verdict；不联网，
-不启动 Niubash、rubash、WSL 或 ConPTY，不执行任何收割资产。
+不启动 Native Shell、rubash、WSL 或 ConPTY，不执行任何收割资产。
 覆盖旧 DB/JSONL 迁移、构建身份变化、版本历史、暂态重试、跨 tier 公平推进、
 旧版本上限、redo、派发预算、空跑摘要、fetch 门禁，以及 10106 总数/4185 未测的合成场景。
 Oracle 恢复与版本变化测试完全使用 mock；恢复场景验证相同二进制的旧 HANG 不会阻止

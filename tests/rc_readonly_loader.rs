@@ -1,7 +1,7 @@
-//! niubash#359 gate cases (design doc `rc-readonly-redesign.md` §5, rubash#746
+//! native-shell#359 gate cases (design doc `rc-readonly-redesign.md` §5, rubash#746
 //! ratchet format): the generated plugin loader, the read-only rc contract,
-//! the double-execution guard, `niu plugin migrate-rc`, and the rollback
-//! switch — exercised end-to-end against the built `niu` binary.
+//! the double-execution guard, `native-shell plugin migrate-rc`, and the rollback
+//! switch — exercised end-to-end against the built `native-shell` binary.
 //!
 //! Case map (this file pins the 1.4.2 slice):
 //! - 359.4  explicit verbs never write the rc (success AND failure paths)
@@ -11,7 +11,7 @@
 //! - 359.8  double-execution guard: a legacy managed block keeps the loader
 //!          OFF; removing it by hand turns the loader ON (exactly one path)
 //! - 359.9  order and override: loader before rc, user overrides win;
-//!          the rollback switch (`NIU_PLUGIN_LOADER=off`) skips loading
+//!          the rollback switch (`NATIVE_SHELL_PLUGIN_LOADER=off`) skips loading
 //!          with zero writes
 //! - 359.12 structure ratchet: the retired managed-block writers have no
 //!          call sites outside their rollback zone (source-level audit)
@@ -23,15 +23,19 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::SystemTime;
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
@@ -67,12 +71,12 @@ impl Sandbox {
             ("HOME", home.to_string_lossy().into_owned()),
             ("USERPROFILE", home.to_string_lossy().into_owned()),
             (
-                "NIU_PLUGIN_SOURCES_ROOT",
+                "NATIVE_SHELL_PLUGIN_SOURCES_ROOT",
                 sources_root.to_string_lossy().into_owned(),
             ),
             (
-                "NIU_PLUGIN_SPEC",
-                home.join(".niubash/plugins.toml")
+                "NATIVE_SHELL_PLUGIN_SPEC",
+                home.join(".native-shell/plugins.toml")
                     .to_string_lossy()
                     .into_owned(),
             ),
@@ -81,14 +85,14 @@ impl Sandbox {
     }
 
     fn rc_path(&self) -> PathBuf {
-        self.home.join(".niubashrc")
+        self.home.join(".native-shellrc")
     }
 
     fn loader_path(&self) -> PathBuf {
         self.home
-            .join(".niubash")
+            .join(".native-shell")
             .join("generated")
-            .join("plugins.niu")
+            .join("plugins.nsh")
     }
 
     fn rc(&self) -> String {
@@ -111,18 +115,18 @@ impl Sandbox {
 
     fn assert_rc_identity_unchanged(&self, before: &(Vec<u8>, u64, SystemTime)) {
         let after = self.rc_identity();
-        assert_eq!(before.0, after.0, "rc bytes changed (niubash#359)");
-        assert_eq!(before.1, after.1, "rc length changed (niubash#359)");
+        assert_eq!(before.0, after.0, "rc bytes changed (native-shell#359)");
+        assert_eq!(before.1, after.1, "rc length changed (native-shell#359)");
         assert_eq!(
             before.2, after.2,
-            "rc mtime changed — something rewrote the rc (niubash#359)"
+            "rc mtime changed — something rewrote the rc (native-shell#359)"
         );
     }
 
-    /// Sorted (name, len) inventory of ~/.niubash — the zero-write config
+    /// Sorted (name, len) inventory of ~/.native-shell — the zero-write config
     /// dir check (359.9's opt-out matrix).
     fn config_inventory(&self) -> Vec<(String, u64)> {
-        let root = self.home.join(".niubash");
+        let root = self.home.join(".native-shell");
         let mut out = Vec::new();
         fn walk(dir: &Path, prefix: &str, out: &mut Vec<(String, u64)>) {
             let Ok(entries) = fs::read_dir(dir) else {
@@ -164,15 +168,15 @@ impl Drop for Sandbox {
 }
 
 fn run_niu(args: &[&str], envs: &[(&'static str, String)]) -> Output {
-    let mut command = Command::new(niu_binary());
+    let mut command = Command::new(native_shell_binary());
     command.args(args);
     for (key, value) in envs {
         command.env(key, value);
     }
-    command.env_remove("NIU_PLUGIN_LOADER");
+    command.env_remove("NATIVE_SHELL_PLUGIN_LOADER");
     command
         .output()
-        .unwrap_or_else(|err| panic!("failed to run niu {args:?}: {err}"))
+        .unwrap_or_else(|err| panic!("failed to run native-shell {args:?}: {err}"))
 }
 
 fn stdout_text(output: &Output) -> String {
@@ -208,29 +212,29 @@ fn install_trusted_omb(sandbox: &Sandbox) {
     assert_success(&sandbox.run(&["plugin", "trust", "oh-my-bash"]), "trust");
 }
 
-/// The write-era managed block for the fixture (what an old niu left in a
+/// The write-era managed block for the fixture (what an old native-shell left in a
 /// pre-migration rc).
 fn legacy_omb_block() -> String {
     format!(
-        "# >>> niu source oh-my-bash (managed by `niu plugin enable/disable`) >>>\n\
+        "# >>> native-shell source oh-my-bash (managed by `native-shell plugin enable/disable`) >>>\n\
          OSH_THEME='robbyrussell'\n\
-         export NIU_RC_MARK=rcblock\n\
-         # <<< niu source oh-my-bash <<<\n"
+         export NATIVE_SHELL_RC_MARK=rcblock\n\
+         # <<< native-shell source oh-my-bash <<<\n"
     )
 }
 
 /// A minimal valid loader document with one hand-written section.
 fn loader_doc_with(body: &str) -> String {
     format!(
-        "# niubash generated plugin loader — DO NOT EDIT (regenerated by `niu plugin` verbs).\n\
-         # schema: niubash:plugin-loader@1\n\
-         # generated from ~/.niubash/plugins.toml + ~/.niubash/sources/registry.toml\n\
+        "# native-shell generated plugin loader — DO NOT EDIT (regenerated by `native-shell plugin` verbs).\n\
+         # schema: native-shell:plugin-loader@1\n\
+         # generated from ~/.native-shell/plugins.toml + ~/.native-shell/sources/registry.toml\n\
          # sourced by the host BEFORE the user rc; user overrides win.\n\
          # superseded managed-block markers: (none recorded)\n\
          \n\
-         # --- niu plugin source: testprobe ---\n\
+         # --- native-shell plugin source: testprobe ---\n\
          {body}\n\
-         # --- end niu plugin source: testprobe ---\n"
+         # --- end native-shell plugin source: testprobe ---\n"
     )
 }
 
@@ -300,7 +304,7 @@ fn case_359_4_explicit_verbs_never_write_the_rc() {
         sandbox.loader()
     );
     assert!(
-        !sandbox.rc().contains("niu source"),
+        !sandbox.rc().contains("native-shell source"),
         "no managed block in the rc: {}",
         sandbox.rc()
     );
@@ -309,7 +313,7 @@ fn case_359_4_explicit_verbs_never_write_the_rc() {
 /// ── 359.6 ──────────────────────────────────────────────────────────────────
 ///
 /// The #324 corrupt fixture (six moved-out guard sections, five missing
-/// their `fi`) survives every verb byte-identically: niu never "repairs"
+/// their `fi`) survives every verb byte-identically: native-shell never "repairs"
 /// the rc anymore — the evidence belongs to the user (doctor/migrate-rc
 /// report; the fix is the user's edit).
 #[test]
@@ -321,17 +325,17 @@ fn case_359_6_corrupt_rc_is_preserved_through_all_verbs() {
 
     let guard = |with_fi: bool| {
         format!(
-            "# drift guard (static): `niu plugin sync` lists drifted ids in drifted-sources.txt\n\
-             _niu_drift=\"${{NIU_PLUGIN_SOURCES_ROOT:-$HOME/.niubash/sources}}/drifted-sources.txt\"\n\
-             if [ -s \"$_niu_drift\" ] && grep -qx 'oh-my-bash' \"$_niu_drift\" 2>/dev/null; then\n\
+            "# drift guard (static): `native-shell plugin sync` lists drifted ids in drifted-sources.txt\n\
+             _native_shell_drift=\"${{NATIVE_SHELL_PLUGIN_SOURCES_ROOT:-$HOME/.native-shell/sources}}/drifted-sources.txt\"\n\
+             if [ -s \"$_native_shell_drift\" ] && grep -qx 'oh-my-bash' \"$_native_shell_drift\" 2>/dev/null; then\n\
              \x20 echo drifted >&2\n\
-             {}unset _niu_drift\n",
+             {}unset _native_shell_drift\n",
             if with_fi { "fi\n" } else { "" }
         )
     };
     let mut corrupt = legacy_omb_block();
     for with_fi in [false, false, false, false, false, true] {
-        corrupt.push_str("# user lines moved out of a managed block by `niu plugin` (niu #176)\n");
+        corrupt.push_str("# user lines moved out of a managed block by `native-shell plugin` (native-shell #176)\n");
         corrupt.push_str(&guard(with_fi));
     }
     fs::write(sandbox.rc_path(), &corrupt).unwrap();
@@ -351,7 +355,7 @@ fn case_359_6_corrupt_rc_is_preserved_through_all_verbs() {
         assert_eq!(
             fs::read(sandbox.rc_path()).unwrap(),
             corrupt_bytes,
-            "verb {verb:?} rewrote the corrupt rc (niubash#359 forbids rc writes)"
+            "verb {verb:?} rewrote the corrupt rc (native-shell#359 forbids rc writes)"
         );
     }
 }
@@ -391,7 +395,8 @@ fn case_359_7_loader_regeneration_is_byte_stable_and_idempotent() {
     assert_ne!(first, second, "the generation changed");
     drop(reader_handle);
     assert!(
-        String::from_utf8_lossy(&second).contains("# --- niu plugin source: oh-my-bash ---"),
+        String::from_utf8_lossy(&second)
+            .contains("# --- native-shell plugin source: oh-my-bash ---"),
         "the remaining section is intact: {}",
         String::from_utf8_lossy(&second)
     );
@@ -413,13 +418,13 @@ fn case_359_8_double_execution_guard_and_hand_removal() {
     // another. While both exist, only the rc block may run.
     let loader = sandbox.loader();
     let marked = loader.replace(
-        "# --- niu plugin source: oh-my-bash ---",
-        "# --- niu plugin source: oh-my-bash ---\nexport NIU_LOADER_MARK=loader",
+        "# --- native-shell plugin source: oh-my-bash ---",
+        "# --- native-shell plugin source: oh-my-bash ---\nexport NATIVE_SHELL_LOADER_MARK=loader",
     );
     fs::write(sandbox.loader_path(), marked).unwrap();
     fs::write(sandbox.rc_path(), legacy_omb_block()).unwrap();
 
-    let probe = r#"printf '%s' "${NIU_LOADER_MARK-}|${NIU_RC_MARK-}""#;
+    let probe = r#"printf '%s' "${NATIVE_SHELL_LOADER_MARK-}|${NATIVE_SHELL_RC_MARK-}""#;
     let out = sandbox.run_interactive(probe);
     assert_success(&out, "interactive probe with legacy block");
     assert_eq!(
@@ -436,7 +441,7 @@ fn case_359_8_double_execution_guard_and_hand_removal() {
     );
     let hint_marker = sandbox
         .home
-        .join(".niubash")
+        .join(".native-shell")
         .join("generated")
         .join(".legacy-block-hint-shown");
     assert!(hint_marker.is_file(), "the hint marker records the nudge");
@@ -449,7 +454,7 @@ fn case_359_8_double_execution_guard_and_hand_removal() {
         stderr_text(&out2)
     );
 
-    // The user removes the block by hand (the only removal niu ever offers):
+    // The user removes the block by hand (the only removal native-shell ever offers):
     // the loader becomes the single live path.
     fs::write(
         sandbox.rc_path(),
@@ -475,7 +480,7 @@ fn case_359_8_double_execution_guard_and_hand_removal() {
 ///
 /// Order and override: the loader sources BEFORE the user rc, so user
 /// PS1/alias/variable overrides win; the rollback switch
-/// (`NIU_PLUGIN_LOADER=off`) disables loading with ZERO writes anywhere.
+/// (`NATIVE_SHELL_PLUGIN_LOADER=off`) disables loading with ZERO writes anywhere.
 #[test]
 fn case_359_9_order_override_and_rollback_switch() {
     let sandbox = Sandbox::new("359-9");
@@ -483,19 +488,19 @@ fn case_359_9_order_override_and_rollback_switch() {
     fs::write(
         sandbox.loader_path(),
         loader_doc_with(
-            "export NIU_PLUGIN_FLOOR=floor\nexport PS1='plugin> '\nexport NIU_LOADER_LOADS=yes",
+            "export NATIVE_SHELL_PLUGIN_FLOOR=floor\nexport PS1='plugin> '\nexport NATIVE_SHELL_LOADER_LOADS=yes",
         ),
     )
     .unwrap();
     fs::write(
         sandbox.rc_path(),
-        "export NIU_USER_TOP=user\nexport PS1='user> '\n",
+        "export NATIVE_SHELL_USER_TOP=user\nexport PS1='user> '\n",
     )
     .unwrap();
     let inventory_before = sandbox.config_inventory();
 
     // Default: both load, loader first, user wins.
-    let probe = r#"printf '%s|%s|%s' "$NIU_PLUGIN_FLOOR" "$NIU_USER_TOP" "$PS1""#;
+    let probe = r#"printf '%s|%s|%s' "$NATIVE_SHELL_PLUGIN_FLOOR" "$NATIVE_SHELL_USER_TOP" "$PS1""#;
     let out = sandbox.run_interactive(probe);
     assert_success(&out, "interactive override probe");
     assert_eq!(
@@ -507,17 +512,17 @@ fn case_359_9_order_override_and_rollback_switch() {
     assert_eq!(
         sandbox.config_inventory(),
         inventory_before,
-        "a clean startup writes nothing into ~/.niubash"
+        "a clean startup writes nothing into ~/.native-shell"
     );
 
     // Rollback switch: the loader is skipped, the rc still runs, and
     // nothing anywhere is written.
-    let mut command = Command::new(niu_binary());
+    let mut command = Command::new(native_shell_binary());
     command.args(["-i", "-c", probe]);
     for (key, value) in &sandbox.envs {
         command.env(key, value);
     }
-    command.env("NIU_PLUGIN_LOADER", "off");
+    command.env("NATIVE_SHELL_PLUGIN_LOADER", "off");
     let rolled = command.output().unwrap();
     assert_success(&rolled, "rolled-back probe");
     assert_eq!(
@@ -542,7 +547,7 @@ fn case_359_9_order_override_and_rollback_switch() {
 ///
 /// The read-only migration diagnostic: publishes the candidate generation,
 /// reports every legacy block with its line range and ownership, writes the
-/// suggested post-migration rc ONLY under ~/.niubash/candidates/ with
+/// suggested post-migration rc ONLY under ~/.native-shell/candidates/ with
 /// --diff, and never modifies the rc.
 #[test]
 fn migrate_rc_reports_never_writes_and_candidates_the_diff() {
@@ -574,15 +579,15 @@ fn migrate_rc_reports_never_writes_and_candidates_the_diff() {
     // NONE of the managed block.
     let candidate = sandbox
         .home
-        .join(".niubash")
+        .join(".native-shell")
         .join("candidates")
-        .join("rc-after-plugin-migration.niu");
+        .join("rc-after-plugin-migration.nsh");
     assert!(candidate.is_file(), "the candidate diff was written");
     let suggested = fs::read_to_string(&candidate).unwrap();
     assert!(suggested.contains("MY_VAR=1"), "{suggested}");
     assert!(suggested.contains("AFTER=1"), "{suggested}");
     assert!(
-        !suggested.contains("niu source"),
+        !suggested.contains("native-shell source"),
         "the suggested rc has no managed block: {suggested}"
     );
 
@@ -593,12 +598,12 @@ fn migrate_rc_reports_never_writes_and_candidates_the_diff() {
         "the manifest's selection is in the generation: {loader}"
     );
     assert!(
-        loader.contains("superseded-marker: # >>> niu source oh-my-bash"),
+        loader.contains("superseded-marker: # >>> native-shell source oh-my-bash"),
         "the superseded pair is recorded: {loader}"
     );
 
     // A second run is idempotent and reports the same blocks (the user has
-    // not removed them yet — niu still does not).
+    // not removed them yet — native-shell still does not).
     let again = sandbox.run(&["plugin", "migrate-rc"]);
     assert_success(&again, "migrate-rc again");
     sandbox.assert_rc_identity_unchanged(&identity);
@@ -620,7 +625,7 @@ fn migrate_rc_on_a_clean_machine_is_a_honest_noop() {
     assert!(report.contains("clean"), "{report}");
     assert!(!sandbox.rc_path().exists(), "the rc must not be created");
     assert!(
-        !sandbox.home.join(".niubash/candidates").exists(),
+        !sandbox.home.join(".native-shell/candidates").exists(),
         "no candidate for a clean rc"
     );
 }
@@ -638,7 +643,7 @@ fn migrate_rc_names_guard_trips_the_scan_cannot_attribute() {
     // id-anchored scan finds no id to attribute it to.
     fs::write(
         sandbox.rc_path(),
-        "# my rc\n# >>> niu source >>>\nexport LEFTOVER=1\n# <<< niu source <<<\n",
+        "# my rc\n# >>> native-shell source >>>\nexport LEFTOVER=1\n# <<< native-shell source <<<\n",
     )
     .unwrap();
     let identity = sandbox.rc_identity();
@@ -761,7 +766,10 @@ fn case_359_12_retired_writers_have_no_verb_call_sites() {
             }
         }
     }
-    collect(&manifest.join("crates/niubash-runtime/src"), &mut sources);
+    collect(
+        &manifest.join("crates/native-shell-runtime/src"),
+        &mut sources,
+    );
     collect(&manifest.join("src"), &mut sources);
     assert!(
         sources.len() >= 40,
@@ -781,7 +789,7 @@ fn case_359_12_retired_writers_have_no_verb_call_sites() {
     // retired helpers themselves).
     const ZONE_ALLOWED: [usize; 5] = [2, 3, 1, 2, 1];
 
-    let assets_path = manifest.join("crates/niubash-runtime/src/plugins/assets.rs");
+    let assets_path = manifest.join("crates/native-shell-runtime/src/plugins/assets.rs");
     for path in &sources {
         let raw = fs::read_to_string(path).unwrap();
         let display = path.strip_prefix(&manifest).unwrap_or(path).display();
@@ -799,7 +807,7 @@ fn case_359_12_retired_writers_have_no_verb_call_sites() {
                 assert_eq!(
                     count, *allowed,
                     "{symbol} appears {count} times in assets.rs (allowed: {allowed}) — a \
-                     call site re-attached the retired rc writer (niubash#359 ratchet)"
+                     call site re-attached the retired rc writer (native-shell#359 ratchet)"
                 );
             }
         } else {
@@ -810,7 +818,7 @@ fn case_359_12_retired_writers_have_no_verb_call_sites() {
                 assert!(
                     !raw.contains(symbol),
                     "{} references {symbol} — the retired rc writer leaked out of the \
-                     rollback zone (niubash#359 ratchet)",
+                     rollback zone (native-shell#359 ratchet)",
                     display
                 );
             }
@@ -834,7 +842,7 @@ fn case_359_12_retired_writers_have_no_verb_call_sites() {
                 assert!(
                     !raw.contains(symbol),
                     "{} reaches the wizard's rc writer {symbol} (confine W6 to \
-                     setup_wizard.rs, niubash#359 ratchet)",
+                     setup_wizard.rs, native-shell#359 ratchet)",
                     path.display()
                 );
             }
@@ -855,19 +863,19 @@ fn lone_begin_with_executable_content_holds_the_loader_off() {
     assert_success(&sandbox.run(&["plugin", "enable", "git"]), "enable");
     let loader = sandbox.loader();
     let marked = loader.replace(
-        "# --- niu plugin source: oh-my-bash ---",
-        "# --- niu plugin source: oh-my-bash ---\nexport NIU_LOADER_MARK=loader",
+        "# --- native-shell plugin source: oh-my-bash ---",
+        "# --- native-shell plugin source: oh-my-bash ---\nexport NATIVE_SHELL_LOADER_MARK=loader",
     );
     fs::write(sandbox.loader_path(), marked).unwrap();
 
     // The end_missing state: begin marker, orphan body, NO end marker.
     fs::write(
         sandbox.rc_path(),
-        "# >>> niu source oh-my-bash >>>\nexport NIU_RC_MARK=rcblock\n",
+        "# >>> native-shell source oh-my-bash >>>\nexport NATIVE_SHELL_RC_MARK=rcblock\n",
     )
     .unwrap();
 
-    let probe = r#"printf '%s' "${NIU_LOADER_MARK-}|${NIU_RC_MARK-}""#;
+    let probe = r#"printf '%s' "${NATIVE_SHELL_LOADER_MARK-}|${NATIVE_SHELL_RC_MARK-}""#;
     let out = sandbox.run_interactive(probe);
     assert_success(&out, "probe with an unpaired begin");
     assert_eq!(
@@ -899,8 +907,8 @@ fn lone_begin_with_executable_content_holds_the_loader_off() {
     // test.)
     let regenerated = sandbox.loader();
     let remarked = regenerated.replace(
-        "# --- niu plugin source: oh-my-bash ---",
-        "# --- niu plugin source: oh-my-bash ---\nexport NIU_LOADER_MARK=loader",
+        "# --- native-shell plugin source: oh-my-bash ---",
+        "# --- native-shell plugin source: oh-my-bash ---\nexport NATIVE_SHELL_LOADER_MARK=loader",
     );
     fs::write(sandbox.loader_path(), remarked).unwrap();
     fs::write(sandbox.rc_path(), "# my rc\nexport MY_OWN=1\n").unwrap();
@@ -926,18 +934,18 @@ fn lone_begin_with_only_comments_keeps_the_loader_on() {
     assert_success(&sandbox.run(&["plugin", "enable", "git"]), "enable");
     let loader = sandbox.loader();
     let marked = loader.replace(
-        "# --- niu plugin source: oh-my-bash ---",
-        "# --- niu plugin source: oh-my-bash ---\nexport NIU_LOADER_MARK=loader",
+        "# --- native-shell plugin source: oh-my-bash ---",
+        "# --- native-shell plugin source: oh-my-bash ---\nexport NATIVE_SHELL_LOADER_MARK=loader",
     );
     fs::write(sandbox.loader_path(), marked).unwrap();
 
     fs::write(
         sandbox.rc_path(),
-        "# >>> niu source >>>\n# historical note: blocks were removed by hand\n\n",
+        "# >>> native-shell source >>>\n# historical note: blocks were removed by hand\n\n",
     )
     .unwrap();
 
-    let probe = r#"printf '%s' "${NIU_LOADER_MARK-}|${NIU_RC_MARK-}""#;
+    let probe = r#"printf '%s' "${NATIVE_SHELL_LOADER_MARK-}|${NATIVE_SHELL_RC_MARK-}""#;
     let out = sandbox.run_interactive(probe);
     assert_success(&out, "probe with an inert lone marker");
     assert_eq!(
@@ -995,7 +1003,7 @@ fn startup_hint_marker_is_the_only_config_dir_write() {
     );
 }
 
-/// niubash#422 hardening: the rbash × generated-loader combo. The loader
+/// native-shell#422 hardening: the rbash × generated-loader combo. The loader
 /// step lives on the non-login rc branch of run_startup_files and the
 /// rbash face arms its restrictions at the finish_startup tail — AFTER
 /// the loader and the user rc have sourced — so an rbash-named session
@@ -1013,14 +1021,16 @@ fn rbash_named_session_loads_the_generated_loader_then_restricts() {
     // finish_startup tail).
     fs::write(
         sandbox.loader_path(),
-        loader_doc_with("HISTFILE=\"$HOME/loader-history\"\nexport NIU_LOADER_MARK=loaded"),
+        loader_doc_with(
+            "HISTFILE=\"$HOME/loader-history\"\nexport NATIVE_SHELL_LOADER_MARK=loaded",
+        ),
     )
     .unwrap();
     // Same ordering probe for the rc: an ENV assignment only survives if
     // the rc ran before the restrictions armed.
     fs::write(
         sandbox.rc_path(),
-        "ENV=\"${ENV-}rc\"\nexport NIU_RC_MARK=rc\n",
+        "ENV=\"${ENV-}rc\"\nexport NATIVE_SHELL_RC_MARK=rc\n",
     )
     .unwrap();
     let inventory = sandbox.config_inventory();
@@ -1030,7 +1040,7 @@ fn rbash_named_session_loads_the_generated_loader_then_restricts() {
     // The rbash face through the shim-forwarded invocation name, on the
     // interactive dispatch whose startup takes the rc branch.
     let probe = concat!(
-        r#"printf '%s|%s|' "${NIU_LOADER_MARK-}" "${NIU_RC_MARK-}"; "#,
+        r#"printf '%s|%s|' "${NATIVE_SHELL_LOADER_MARK-}" "${NATIVE_SHELL_RC_MARK-}"; "#,
         r#"case $- in *r*) echo R-YES;; *) echo R-NO;; esac; "#,
         r#"( PATH=/x ) 2>/dev/null; echo P=$?; "#,
         r#"( SHELL=/x ) 2>/dev/null; echo S=$?; "#,
@@ -1038,13 +1048,13 @@ fn rbash_named_session_loads_the_generated_loader_then_restricts() {
         r#"( BASH_ENV=/x ) 2>/dev/null; echo B=$?; "#,
         r#"( HISTFILE=/x ) 2>/dev/null; echo H=$?"#,
     );
-    let mut command = Command::new(niu_binary());
+    let mut command = Command::new(native_shell_binary());
     command.args(["-i", "-c", probe]);
     for (key, value) in &sandbox.envs {
         command.env(key, value);
     }
-    command.env("NIU_INVOKED_AS", "rbash");
-    command.env_remove("NIU_PLUGIN_LOADER");
+    command.env("NATIVE_SHELL_INVOKED_AS", "rbash");
+    command.env_remove("NATIVE_SHELL_PLUGIN_LOADER");
     let out = command.output().unwrap();
     assert_success(&out, "rbash loader probe");
 
@@ -1074,7 +1084,7 @@ fn rbash_named_session_loads_the_generated_loader_then_restricts() {
     assert_eq!(
         sandbox.config_inventory(),
         inventory,
-        "a restricted startup writes nothing into ~/.niubash"
+        "a restricted startup writes nothing into ~/.native-shell"
     );
     sandbox.assert_rc_identity_unchanged(&rc_before);
     assert_eq!(

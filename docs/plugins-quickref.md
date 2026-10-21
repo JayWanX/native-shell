@@ -1,20 +1,20 @@
-# Niubash Plugin System — AI Quick Reference
+# Native Shell Plugin System — AI Quick Reference
 
-Dense reference for agents operating niubash's plugin surface. Human
+Dense reference for agents operating native-shell's plugin surface. Human
 narrative: `docs/plugins-guide.md`. Design: `docs/planning/
-oh-my-niu-ecosystem.md` §14.6. All verbs: `niu plugin --help`.
+oh-my-native-shell-ecosystem.md` §14.6. All verbs: `native-shell plugin --help`.
 
 ## Model
 
-- **Spec = source of truth**: `~/.niubash/plugins.toml` declares what
-  should be installed/enabled. Registry (`~/.niubash/sources/registry.toml`,
-  schema `niubash:plugin-source-registry@0.3.0`) pins what exists
+- **Spec = source of truth**: `~/.native-shell/plugins.toml` declares what
+  should be installed/enabled. Registry (`~/.native-shell/sources/registry.toml`,
+  schema `native-shell:plugin-source-registry@0.3.0`) pins what exists
   (commit sha + tree sha256) and the last spec-materialized selection
   (`spec_enabled`, `spec_theme`).
 - **CLI = sugar**: every mutating verb edits the spec then runs the
   reconciler (`plugins::sync`). Hand-editing the spec is equally valid.
 - **Managers are data**: one descriptor table (`ManagerDescriptor` in
-  `crates/niubash-runtime/src/plugins/descriptors.rs`) — id, origin,
+  `crates/native-shell-runtime/src/plugins/descriptors.rs`) — id, origin,
   fingerprint, asset patterns, loader spec, selection spec. Adding a
   manager = one row, zero interpreter code. Current rows: `oh-my-bash`,
   `bash-it`, `bash-completion`, `bpkg`. Wild fallback adapter id `file`.
@@ -31,7 +31,7 @@ oh-my-niu-ecosystem.md` §14.6. All verbs: `niu plugin --help`.
 
 | Verb | Effect | Exit |
 |---|---|---|
-| `add <id\|owner/repo\|url\|path> [--id N] [--ref R] [--checksum S] [--path D]` | Append spec entry + sync (install untrusted). A recipe id for an executable tool (fzf, starship, …) prints a package-manager recommendation instead — niu downloads nothing (retraction 2026-10-04) | non-zero if the entry failed to install or is already declared; recipe recommendations exit 0 |
+| `add <id\|owner/repo\|url\|path> [--id N] [--ref R] [--checksum S] [--path D]` | Append spec entry + sync (install untrusted). A recipe id for an executable tool (fzf, starship, …) prints a package-manager recommendation instead — native-shell downloads nothing (retraction 2026-10-04) | non-zero if the entry failed to install or is already declared; recipe recommendations exit 0 |
 | `list [--json]` | Sources, assets (`*` = enabled), tags for wild candidates | 0 |
 | `enable <id\|asset\|id/asset>` | Spec edit + sync; wild/bpkg assets are tree-relative paths | non-zero when untrusted/degraded/ambiguous/whole-source misuse |
 | `disable <target>` | Spec edit (entry removal for source targets) + sync; tree kept | 0 |
@@ -50,7 +50,7 @@ oh-my-niu-ecosystem.md` §14.6. All verbs: `niu plugin --help`.
 
 `awaiting-trust` (installed untrusted — gate is never automatic),
 `activated`, `unchanged`, `deactivated` (spec no longer declares; block
-dropped, tree kept), `degraded` (tree missing → `niu plugin restore`),
+dropped, tree kept), `degraded` (tree missing → `native-shell plugin restore`),
 `drift`, `failed`, `removed` (--prune), `unsupported`.
 
 ## Invariants (pinned by tests/plugin_spec_sync.rs, tests/plugin_anyplug.rs)
@@ -68,7 +68,7 @@ dropped, tree kept), `degraded` (tree missing → `niu plugin restore`),
    auto-deleted; `--prune` is the explicit confirm (removes tree +
    registry entry).
 5. **Trust never automatic**: sync installs through the fetch gate only;
-   activation requires `niu plugin trust <id>`.
+   activation requires `native-shell plugin trust <id>`.
 6. **Honest enumeration**: wild sources list every `*.sh`/`*.bash`
    (≤256, depth-first) with tags (`script`, `fragment`,
    `installer/test-like — review before sourcing`, `bpkg script`); no
@@ -80,16 +80,16 @@ dropped, tree kept), `degraded` (tree missing → `niu plugin restore`),
 8. **Engine zero plugin special-cases**: rubash source contains no plugin
    dispatch (comments citing ecosystem scripts as regression provenance
    only; audited read-only 2026-10-02).
-9. **Zero download responsibility (retraction 2026-10-04)**: niu has no
-   HTTP/download transport at all. `niu plugin add <git-url>` (git clone)
+9. **Zero download responsibility (retraction 2026-10-04)**: native-shell has no
+   HTTP/download transport at all. `native-shell plugin add <git-url>` (git clone)
    is the only extension installation entry; executable-tool recipes are
    catalog rows whose `add` prints package-manager recommendations —
    **wpm first on Windows** (owner correction 2026-10-03; wpm strings are
    `cfg(windows)`-gated and never compile elsewhere), native managers
    (apt/dnf/yum/brew) on other platforms, upstream URL always printed.
-   Fonts are detection+recommendation only (`niu font`).
-10. **Mirrors are transport-only (§14.8), git-only**: `~/.niubash/mirrors.toml`
-   (`NIU_MIRRORS`) injects `git -c url.<base>.insteadOf` for
+   Fonts are detection+recommendation only (`native-shell font`).
+10. **Mirrors are transport-only (§14.8), git-only**: `~/.native-shell/mirrors.toml`
+   (`NATIVE_SHELL_MIRRORS`) injects `git -c url.<base>.insteadOf` for
    clone/fetch; spec/registry records keep canonical URLs;
    missing/malformed/unknown config degrades to direct; legacy
    `[github] prefix` / `[github.releases]` channels parse compatibly and
@@ -99,7 +99,7 @@ dropped, tree kept), `degraded` (tree missing → `niu plugin restore`),
    `git_clone_args_carry_instead_of_mirror_for_github_origins_only`,
    tests/plugin_mirrors.rs.
 
-## Spec schema (`niubash:plugin-spec@0.1.0`)
+## Spec schema (`native-shell:plugin-spec@0.1.0`)
 
 ```toml
 [[sources]]
@@ -119,6 +119,6 @@ tree kept.
 
 ## Env
 
-`NIU_PLUGIN_SPEC` (spec path), `NIU_PLUGIN_SOURCES_ROOT` (install root),
-`NIU_PLUGIN_BOOTSTRAP=off` (disable rc bootstrap line), `NIU_MIRRORS`
-(mirror config path, default `~/.niubash/mirrors.toml`).
+`NATIVE_SHELL_PLUGIN_SPEC` (spec path), `NATIVE_SHELL_PLUGIN_SOURCES_ROOT` (install root),
+`NATIVE_SHELL_PLUGIN_BOOTSTRAP=off` (disable rc bootstrap line), `NATIVE_SHELL_MIRRORS`
+(mirror config path, default `~/.native-shell/mirrors.toml`).

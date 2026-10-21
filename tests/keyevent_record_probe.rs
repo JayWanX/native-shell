@@ -1,4 +1,4 @@
-//! Forensic probe for the Windows console input layer (niubash#341).
+//! Forensic probe for the Windows console input layer (native-shell#341).
 //!
 //! Ignored by default — run explicitly with
 //! `cargo test --test keyevent_record_probe -- --ignored --nocapture`.
@@ -250,7 +250,7 @@ fn key_events(out: &str) -> Vec<&str> {
         .collect()
 }
 
-/// The niubash#341 channel claim, as an executable check: a fed `\r` byte
+/// The native-shell#341 channel claim, as an executable check: a fed `\r` byte
 /// reaches the client as bare-CR KEY_EVENT records only — `vk=0x0d`,
 /// `uc=0x000d`, no control-key state, no LF (`uc=0x000a`, `Enter+CONTROL`)
 /// anywhere. The `\r\r` adjacency models the WT paste's empty line.

@@ -1,4 +1,4 @@
-//! Static guard over the release-archive surface (niubash#470).
+//! Static guard over the release-archive surface (native-shell#470).
 //!
 //! The v1.4.2 x64 zip was 57.1 MB and 61% of it was duplicated payload: the
 //! staged tree's hardlinks (wpm's own install layout — the whole `git.exe`
@@ -45,7 +45,7 @@ fn packager_relinks_identical_staged_files_before_compression() {
         text.contains("function Complete-StagedHardlinks"),
         "package-release.ps1 must define Complete-StagedHardlinks (the staged-tree \
          hardlink restoration); without it every archive stores duplicated payload \
-         in full (niubash#470)"
+         in full (native-shell#470)"
     );
     // The alignment must happen BEFORE the zip is written, and the
     // hardlink-native archives must be produced by the same script run.
@@ -137,10 +137,10 @@ fn workflow_verifies_archive_round_trip_before_upload() {
 fn workflow_uploads_and_hashes_both_companions() {
     let text = release_workflow();
     for needle in [
-        "dist/niubash-v${{ steps.release.outputs.version }}-win-${{ matrix.arch }}.tar.gz",
-        "dist/niubash-v${{ steps.release.outputs.version }}-win-${{ matrix.arch }}.7z",
-        "dist/niubash-win-${{ matrix.arch }}.tar.gz",
-        "dist/niubash-win-${{ matrix.arch }}.7z",
+        "dist/native-shell-v${{ steps.release.outputs.version }}-win-${{ matrix.arch }}.tar.gz",
+        "dist/native-shell-v${{ steps.release.outputs.version }}-win-${{ matrix.arch }}.7z",
+        "dist/native-shell-win-${{ matrix.arch }}.tar.gz",
+        "dist/native-shell-win-${{ matrix.arch }}.7z",
     ] {
         assert!(
             text.contains(needle),
@@ -150,7 +150,7 @@ fn workflow_uploads_and_hashes_both_companions() {
     }
     assert!(
         text.contains("-o -name '*.7z'"),
-        "SHA256SUMS must cover the .7z payload (niubash#311: every shipped \
+        "SHA256SUMS must cover the .7z payload (native-shell#311: every shipped \
          artifact is hashed)"
     );
     assert!(
@@ -165,7 +165,7 @@ fn release_body_recommends_tar_gz_and_discloses_the_7z_limitation() {
     assert!(
         text.contains("prefer `*.tar.gz` — it is hardlink-native"),
         "the release body must steer users to the hardlink-native tar.gz \
-         (download size + on-disk footprint) — niubash#470"
+         (download size + on-disk footprint) — native-shell#470"
     );
     assert!(
         text.contains("degrades gracefully to independent byte-identical copies"),

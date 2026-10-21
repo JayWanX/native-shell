@@ -1,6 +1,6 @@
 //! Terminal driver for the interactive-mode regression target.
 //!
-//! [`NiuSession`] spawns the niu binary under a pseudo terminal (ConPTY on
+//! [`NativeShellSession`] spawns the native-shell binary under a pseudo terminal (ConPTY on
 //! Windows, a Unix pty elsewhere) with a deterministic environment:
 //!
 //! - fresh `HOME`/`USERPROFILE`/`LOCALAPPDATA`/`APPDATA`/`TEMP` inside a
@@ -9,9 +9,9 @@
 //!   exists);
 //! - a fixed rc file that pins `PS1`/`PS2` to ASCII sentinels (`P1> ` /
 //!   `P2> `), so assertions match the *shape* of prompt transitions instead
-//!   of theme-colored prompt bytes (niubash's BashPrompt backend renders the
+//!   of theme-colored prompt bytes (native-shell's BashPrompt backend renders the
 //!   expanded `PS1`/`PS2` from the shell environment);
-//! - a minimal `PATH` (System32 + Windows only) and fixed `TERM`/`NIU_LANG`,
+//! - a minimal `PATH` (System32 + Windows only) and fixed `TERM`/`NATIVE_SHELL_LANG`,
 //!   so tests only exercise builtins plus the few externals they name.
 //!
 //! Backend note: the driver is built directly on `portable-pty` 0.9. The
@@ -19,15 +19,15 @@
 //! its `conpty` 0.5.1 backend failed to attach the child to the pseudo
 //! console on Windows 10 19044 — a `cmd /C echo` control run wrote its
 //! output into the *parent's* console while the pty streams stayed empty —
-//! while the same niu binary rendered correctly under a Python pywinpty
+//! while the same native-shell binary rendered correctly under a Python pywinpty
 //! ConPTY. `portable-pty` drives ConPTY correctly on the same host, so every
 //! case runs through it, on both Windows and Unix. The expect-style layer
 //! (substring expect with per-call timeout, transcript capture) lives here
 //! instead of in a crate.
 //!
-//! Gating: when pty creation fails on this host and `NIU_INTERACTIVE_TESTS`
+//! Gating: when pty creation fails on this host and `NATIVE_SHELL_INTERACTIVE_TESTS`
 //! is unset, tests skip via [`require_pty_or_skip`] (they need a real pseudo
-//! terminal). With `NIU_INTERACTIVE_TESTS=1` (the CI setting) the failure is
+//! terminal). With `NATIVE_SHELL_INTERACTIVE_TESTS=1` (the CI setting) the failure is
 //! hard, so a broken environment cannot silently pass.
 
 // Each integration test target compiles this module into its own binary and
@@ -68,7 +68,7 @@ pub const HEAVY_TIMEOUT: Duration = Duration::from_secs(30);
 /// a real terminal answers — conhost forwards the client's cursor-position
 /// request as `ESC[6n` and blocks the client until the reply arrives
 /// (observed on Windows 10 19044; pywinpty's agent replies the same way).
-/// Without the reply niu hangs before printing its first banner.
+/// Without the reply native-shell hangs before printing its first banner.
 struct TerminalResponder {
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     /// Cursor tracking used to answer `ESC[6n` with a plausible position.
@@ -211,8 +211,8 @@ fn next_query(stream: &[u8], row: u16, col: u16) -> Option<(usize, Vec<u8>)> {
     }
 }
 
-/// A niu process driving a pseudo terminal.
-pub struct NiuSession {
+/// A native-shell process driving a pseudo terminal.
+pub struct NativeShellSession {
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     output: Arc<OutputBuffer>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
@@ -227,9 +227,9 @@ pub struct NiuSession {
     seen: Mutex<Vec<u8>>,
 }
 
-impl Drop for NiuSession {
+impl Drop for NativeShellSession {
     fn drop(&mut self) {
-        // Belt and braces: never leave a spawned niu.exe behind, even when a
+        // Belt and braces: never leave a spawned native-shell.exe behind, even when a
         // test forgot to consume the exit status. Bounded waits only — a
         // child wedged inside a console syscall must not wedge the test.
         let _ = self.killer.kill();
@@ -247,18 +247,22 @@ impl Drop for NiuSession {
 /// Deterministic rc used by most tests: ASCII prompt sentinels, no default
 /// plugin packs, history expansion on (bash default in interactive shells).
 pub fn default_rc() -> String {
-    "PS1='P1> '\nPS2='P2> '\nNIU_DISABLE_DEFAULT_PLUGINS=1\n".to_string()
+    "PS1='P1> '\nPS2='P2> '\nNATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n".to_string()
 }
 
-pub fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+pub fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
@@ -274,11 +278,11 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
     ))
 }
 
-/// Build the niu command with a from-scratch environment for determinism.
+/// Build the native-shell command with a from-scratch environment for determinism.
 /// `args` runs a CLI subcommand (empty = the interactive shell); `path_dirs`
 /// replaces the default System32-only PATH (extra tools a driven subcommand
 /// needs, e.g. git for the wizard's collection install).
-fn niu_command(
+fn native_shell_command(
     binary: &Path,
     home: &Path,
     start: &Path,
@@ -309,7 +313,7 @@ fn niu_command(
     command.env("TEMP", home.join("tmp"));
     command.env("TMP", home.join("tmp"));
     command.env("TERM", "xterm");
-    command.env("NIU_LANG", "en");
+    command.env("NATIVE_SHELL_LANG", "en");
     command.env("RUST_LOG", "off");
     command.env("RUST_BACKTRACE", "0");
     for (key, value) in extra_env {
@@ -327,7 +331,7 @@ fn try_spawn(
     extra_env: &[(String, String)],
     size: (u16, u16),
     timeout: Duration,
-) -> Option<NiuSession> {
+) -> Option<NativeShellSession> {
     try_spawn_inner(prefix, Some(rc), &[], extra_env, &[], size, timeout)
 }
 
@@ -344,11 +348,11 @@ fn try_spawn_inner(
     path_dirs: &[PathBuf],
     size: (u16, u16),
     timeout: Duration,
-) -> Option<NiuSession> {
+) -> Option<NativeShellSession> {
     let root = unique_temp_dir(prefix);
     try_spawn_in_root(
         root,
-        niu_binary().as_path(),
+        native_shell_binary().as_path(),
         rc,
         args,
         extra_env,
@@ -358,11 +362,11 @@ fn try_spawn_inner(
     )
 }
 
-/// The spawn core over a root the caller manages: the niubash#180 journey
-/// runs `niu setup` as a child of the live session, so the wizard child and
+/// The spawn core over a root the caller manages: the native-shell#180 journey
+/// runs `native-shell setup` as a child of the live session, so the wizard child and
 /// the parent REPL must share one HOME (the caller stages rc, sources, and
 /// trust state into `root/home` before spawning). The root is still removed
-/// on drop. `binary` is the executable the session runs (the niu binary,
+/// on drop. `binary` is the executable the session runs (the native-shell binary,
 /// or a copy staged under an invocation face).
 #[allow(clippy::too_many_arguments)]
 fn try_spawn_in_root(
@@ -374,13 +378,13 @@ fn try_spawn_in_root(
     path_dirs: &[PathBuf],
     size: (u16, u16),
     timeout: Duration,
-) -> Option<NiuSession> {
+) -> Option<NativeShellSession> {
     let home = root.join("home");
     let start = root.join("start");
     std::fs::create_dir_all(home.join("tmp")).ok()?;
     std::fs::create_dir_all(&start).ok()?;
     if let Some(rc) = rc {
-        std::fs::write(home.join(".niubashrc"), rc).ok()?;
+        std::fs::write(home.join(".native-shellrc"), rc).ok()?;
     }
 
     let pty_system = portable_pty::native_pty_system();
@@ -395,7 +399,7 @@ fn try_spawn_in_root(
     let master = pair.master;
     let slave = pair.slave;
 
-    let command = niu_command(binary, &home, &start, extra_env, args, path_dirs);
+    let command = native_shell_command(binary, &home, &start, extra_env, args, path_dirs);
     let child = slave.spawn_command(command).ok()?;
     // The parent holds only the master side; dropping the slave closes the
     // fd/handle that would otherwise keep the pty alive after the child exits.
@@ -429,7 +433,7 @@ fn try_spawn_in_root(
     std::mem::forget(pump);
 
     let killer = child.clone_killer();
-    Some(NiuSession {
+    Some(NativeShellSession {
         writer,
         output,
         child: Arc::new(Mutex::new(child)),
@@ -445,12 +449,12 @@ fn try_spawn_in_root(
 
 /// Whether interactive tests were explicitly forced on (CI setting).
 pub fn tests_forced() -> bool {
-    std::env::var_os("NIU_INTERACTIVE_TESTS").is_some_and(|v| v != "0")
+    std::env::var_os("NATIVE_SHELL_INTERACTIVE_TESTS").is_some_and(|v| v != "0")
 }
 
 /// Gate for each test: probe (once per test process) that a pseudo terminal
 /// can be opened on this host. Prints a skip notice and returns `false` when
-/// it cannot (tests then return early); with `NIU_INTERACTIVE_TESTS=1` the
+/// it cannot (tests then return early); with `NATIVE_SHELL_INTERACTIVE_TESTS=1` the
 /// probe fails hard so CI cannot silently skip.
 pub fn require_pty_or_skip(context: &str) -> bool {
     // GitHub-hosted runners expose a ConPTY whose session model and timing
@@ -458,7 +462,7 @@ pub fn require_pty_or_skip(context: &str) -> bool {
     // passing locally (observed 2026-09-28: continuation_* and alias live
     // cases green on dev machines, red on windows-latest). The suites are
     // the regression net for real consoles — run them on desktops (or a
-    // self-hosted runner forcing NIU_INTERACTIVE_TESTS=1); skip on hosted
+    // self-hosted runner forcing NATIVE_SHELL_INTERACTIVE_TESTS=1); skip on hosted
     // CI instead of shipping noise.
     if std::env::var_os("CI").is_some() && !tests_forced() {
         eprintln!(
@@ -474,7 +478,7 @@ pub fn require_pty_or_skip(context: &str) -> bool {
     }
     if tests_forced() {
         panic!(
-            "NIU_INTERACTIVE_TESTS=1 but no pseudo terminal is available ({context}); \
+            "NATIVE_SHELL_INTERACTIVE_TESTS=1 but no pseudo terminal is available ({context}); \
              interactive tests cannot run"
         );
     }
@@ -482,11 +486,11 @@ pub fn require_pty_or_skip(context: &str) -> bool {
     false
 }
 
-impl NiuSession {
+impl NativeShellSession {
     /// Spawn with the deterministic rc and default settings. Call
     /// [`require_pty_or_skip`] first — after a successful probe a spawn
     /// failure is a real error and panics.
-    pub fn spawn(prefix: &str) -> NiuSession {
+    pub fn spawn(prefix: &str) -> NativeShellSession {
         Self::spawn_custom(prefix, &default_rc(), &[], (120, 30), DEFAULT_TIMEOUT)
     }
 
@@ -497,16 +501,16 @@ impl NiuSession {
         extra_env: &[(String, String)],
         size: (u16, u16),
         timeout: Duration,
-    ) -> NiuSession {
+    ) -> NativeShellSession {
         try_spawn(prefix, rc, extra_env, size, timeout).unwrap_or_else(|| {
             panic!(
-                "niu session {prefix:?} could not be spawned under a pseudo terminal \
+                "native-shell session {prefix:?} could not be spawned under a pseudo terminal \
                  after a successful probe"
             )
         })
     }
 
-    /// Spawn `niu <args>` (a CLI subcommand such as `setup`) under a pseudo
+    /// Spawn `native-shell <args>` (a CLI subcommand such as `setup`) under a pseudo
     /// terminal with NO rc file — fresh-home flows — and `path_dirs` as the
     /// full PATH (the wizard journey needs git for the collection install).
     /// Call [`require_pty_or_skip`] first, like `spawn_custom`. Used by the
@@ -519,11 +523,11 @@ impl NiuSession {
         path_dirs: &[PathBuf],
         size: (u16, u16),
         timeout: Duration,
-    ) -> NiuSession {
+    ) -> NativeShellSession {
         try_spawn_inner(prefix, None, args, extra_env, path_dirs, size, timeout).unwrap_or_else(
             || {
                 panic!(
-                    "niu {args:?} could not be spawned under a pseudo terminal \
+                    "native-shell {args:?} could not be spawned under a pseudo terminal \
                      after a successful probe"
                 )
             },
@@ -532,7 +536,7 @@ impl NiuSession {
 
     /// Spawn the interactive shell with extra CLI arguments (e.g.
     /// `--noediting`) under a pseudo terminal, with `rc` staged as the
-    /// session's startup rc (like [`spawn_custom`]). Used by niubash#191 to
+    /// session's startup rc (like [`spawn_custom`]). Used by native-shell#191 to
     /// drive the `--noediting` REPL loop, which the plain-spawn target
     /// cannot reach.
     pub fn spawn_custom_with_args(
@@ -542,20 +546,20 @@ impl NiuSession {
         extra_env: &[(String, String)],
         size: (u16, u16),
         timeout: Duration,
-    ) -> NiuSession {
+    ) -> NativeShellSession {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         try_spawn_inner(prefix, Some(rc), &args, extra_env, &[], size, timeout).unwrap_or_else(
             || {
                 panic!(
-                    "niu session {prefix:?} with {args:?} could not be spawned under a \
+                    "native-shell session {prefix:?} with {args:?} could not be spawned under a \
                      pseudo terminal after a successful probe"
                 )
             },
         )
     }
 
-    /// Spawn the shell under an alternate invocation face (niubash#400): the
-    /// niu binary is copied next to the sandbox as `<face>.exe` — outside the
+    /// Spawn the shell under an alternate invocation face (native-shell#400): the
+    /// native-shell binary is copied next to the sandbox as `<face>.exe` — outside the
     /// HOME so the face never leaks into the shell's own fixtures — and that
     /// copy is the session's executable, so argv[0]'s basename carries the
     /// face stem exactly like a deployed `rbash` hardlink/symlink. `rc` is
@@ -568,11 +572,11 @@ impl NiuSession {
         extra_env: &[(String, String)],
         size: (u16, u16),
         timeout: Duration,
-    ) -> NiuSession {
+    ) -> NativeShellSession {
         let root = unique_temp_dir(prefix);
         let binary = root.join(format!("{face}.exe"));
         std::fs::create_dir_all(&root).ok();
-        std::fs::copy(niu_binary(), &binary)
+        std::fs::copy(native_shell_binary(), &binary)
             .unwrap_or_else(|e| panic!("could not stage the {face} face copy: {e}"));
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         try_spawn_in_root(
@@ -587,14 +591,14 @@ impl NiuSession {
         )
         .unwrap_or_else(|| {
             panic!(
-                "niu session as {face:?} with {args:?} could not be spawned under a \
+                "native-shell session as {face:?} with {args:?} could not be spawned under a \
                  pseudo terminal after a successful probe"
             )
         })
     }
 
     /// Spawn the interactive shell over a home the test staged beforehand
-    /// (niubash#180 journey: the `niu setup` child the session spawns must
+    /// (native-shell#180 journey: the `native-shell setup` child the session spawns must
     /// share that exact HOME, so the driver must not mint its own sandbox).
     /// The root is removed on drop, like every session's. Dead code in this
     /// target; used by the smoke target's journey leg.
@@ -606,10 +610,10 @@ impl NiuSession {
         path_dirs: &[PathBuf],
         size: (u16, u16),
         timeout: Duration,
-    ) -> NiuSession {
+    ) -> NativeShellSession {
         try_spawn_in_root(
             root.to_path_buf(),
-            niu_binary().as_path(),
+            native_shell_binary().as_path(),
             Some(rc),
             &[],
             extra_env,
@@ -619,14 +623,14 @@ impl NiuSession {
         )
         .unwrap_or_else(|| {
             panic!(
-                "niu session over {root:?} could not be spawned under a pseudo \
+                "native-shell session over {root:?} could not be spawned under a pseudo \
                  terminal after a successful probe"
             )
         })
     }
 
     /// [`spawn_face_with_args`] over a root the caller stages first: the
-    /// niubash#400 startup-file equivalence cases must drop a BASH_ENV file
+    /// native-shell#400 startup-file equivalence cases must drop a BASH_ENV file
     /// or a login profile into the same home the face session runs over,
     /// before the process exists.
     pub fn spawn_face_in_root(
@@ -637,10 +641,10 @@ impl NiuSession {
         extra_env: &[(String, String)],
         size: (u16, u16),
         timeout: Duration,
-    ) -> NiuSession {
+    ) -> NativeShellSession {
         let binary = root.join(format!("{face}.exe"));
         std::fs::create_dir_all(&root).ok();
-        std::fs::copy(niu_binary(), &binary)
+        std::fs::copy(native_shell_binary(), &binary)
             .unwrap_or_else(|e| panic!("could not stage the {face} face copy: {e}"));
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         try_spawn_in_root(
@@ -655,15 +659,15 @@ impl NiuSession {
         )
         .unwrap_or_else(|| {
             panic!(
-                "niu session as {face:?} with {args:?} could not be spawned under a \
+                "native-shell session as {face:?} with {args:?} could not be spawned under a \
                  pseudo terminal after a successful probe"
             )
         })
     }
 
-    /// Spawn `niu <args>` over a home the test staged beforehand, like
+    /// Spawn `native-shell <args>` over a home the test staged beforehand, like
     /// [`spawn_shared_home`] with the argv the login/startup tests need:
-    /// the niubash#399 cases stage `.bash_profile`/`.bash_login`/`.profile`
+    /// the native-shell#399 cases stage `.bash_profile`/`.bash_login`/`.profile`
     /// into `root/home` before the process exists, then run `-l` command or
     /// script faces over that exact home.
     pub fn spawn_shared_home_with_args(
@@ -673,11 +677,11 @@ impl NiuSession {
         extra_env: &[(String, String)],
         size: (u16, u16),
         timeout: Duration,
-    ) -> NiuSession {
+    ) -> NativeShellSession {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         try_spawn_in_root(
             root.to_path_buf(),
-            niu_binary().as_path(),
+            native_shell_binary().as_path(),
             Some(rc),
             &args,
             extra_env,
@@ -687,7 +691,7 @@ impl NiuSession {
         )
         .unwrap_or_else(|| {
             panic!(
-                "niu session {args:?} over {root:?} could not be spawned under a \
+                "native-shell session {args:?} over {root:?} could not be spawned under a \
                  pseudo terminal after a successful probe"
             )
         })
@@ -695,7 +699,7 @@ impl NiuSession {
 
     /// Wait for the startup banner and the first prompt.
     pub fn wait_ready(&mut self) {
-        self.expect("Niubash");
+        self.expect("Native Shell");
         self.expect_prompt();
     }
 
@@ -825,7 +829,7 @@ impl NiuSession {
                 .lock()
                 .unwrap()
                 .try_wait()
-                .unwrap_or_else(|e| panic!("wait for niu exit failed: {e}"));
+                .unwrap_or_else(|e| panic!("wait for native-shell exit failed: {e}"));
             if let Some(status) = exited {
                 return status.exit_code();
             }

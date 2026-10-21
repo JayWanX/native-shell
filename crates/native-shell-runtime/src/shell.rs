@@ -1,0 +1,6808 @@
+//! Shell state and execution entry point
+//!
+//! Wraps a `rubash::Executor` and provides the interactive shell machinery
+//! (prompt, history, completion). All shell language semantics are delegated
+//! to rubash; this layer only adds the Windows-facing UX.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+
+use reedline::Reedline;
+use rubash::{
+    decode_to_visible_text, executor::Executor, lexer::tokenize, parser::parse, Ast, Token,
+    TokenKind,
+};
+
+use crate::completion::{CompletionState, NativeShellCompleter};
+use crate::config::{
+    load as load_config, AutosuggestConfig, CommandNotFoundHint, EditorMode, HookConfig,
+    MenuConfig, NativeWidgetBinding, NativeWidgetConfig, SyntaxHighlightConfig,
+};
+use crate::path_utils::{shell_home_dir, shell_path_to_host_path};
+use crate::prompt::{BashPrompt, NativeShellPrompt, PromptBackend};
+use crate::prompt_segments::{
+    SegmentId, SegmentPreset, SegmentPrompt, SegmentPromptAdapter, SegmentPromptConfig,
+};
+
+use crate::winuxcmd;
+
+const COMPATIBLE_SHELL_PATH_ENV: &str = "NATIVE_SHELL_COMPATIBLE_SHELL_PATH";
+#[allow(dead_code)]
+#[allow(dead_code)]
+#[allow(dead_code)]
+const NATIVE_SHELL_RC_FILE: &str = ".native-shellrc";
+/// NativeShell-native non-interactive environment file variable. Takes precedence
+/// over `BASH_ENV` so an agent shell can point at a dedicated init file.
+const NATIVE_SHELL_ENV_VAR: &str = "NATIVE_SHELL_ENV";
+/// GNU bash non-interactive environment file variable. Sourced by default for
+/// non-interactive shells; kept for bash compatibility (OpenCode and other
+/// agents already use BASH_ENV).
+const BASH_ENV_VAR: &str = "BASH_ENV";
+
+/// Editor outcome produced by a shell-function widget.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WidgetOutcome {
+    /// Replacement buffer text; `None` keeps the buffer unchanged. An empty
+    /// string is a valid replacement (it clears the line).
+    pub buffer: Option<String>,
+    /// Byte offset for the cursor inside the (possibly new) buffer; ignored
+    /// when absent.
+    pub cursor: Option<usize>,
+    /// Submit the buffer after applying the outcome.
+    pub accept: bool,
+}
+
+thread_local! {
+    /// Interactive-REPL bridge letting the completer run shell functions in
+    /// the engine during completion. reedline completers must be `Send`, so
+    /// the shell is reached through this main-thread registry instead of a
+    /// completer field. Installed by `build_line_editor`, main thread only.
+    static COMPLETION_BRIDGE: RefCell<Option<Rc<RefCell<Shell>>>> =
+        const { RefCell::new(None) };
+}
+
+/// Install the interactive shell bridge for shell-function completions
+/// (`NATIVE_SHELL_COMPDEFS`). Replaces any previous bridge for this thread.
+pub fn install_completion_bridge(shell: &Rc<RefCell<Shell>>) {
+    COMPLETION_BRIDGE.with(|cell| {
+        *cell.borrow_mut() = Some(shell.clone());
+    });
+}
+
+/// Run `f` with mutable access to the bridged shell, or `None` when no
+/// bridge is installed on this thread.
+pub(crate) fn with_completion_bridge<R>(f: impl FnOnce(&mut Shell) -> R) -> Option<R> {
+    let rc = COMPLETION_BRIDGE.with(|cell| cell.borrow().as_ref().cloned())?;
+    let mut shell = rc.borrow_mut();
+    let result = f(&mut shell);
+    drop(shell);
+    Some(result)
+}
+
+/// Top-level shell state.
+pub struct Shell {
+    pub executor: Executor,
+    pub completion_state: Arc<Mutex<CompletionState>>,
+    pub prompt: PromptBackend,
+    /// Product floor prompt (defaults-as-floor, design §14.5): the
+    /// config-derived native prompt that renders only while the prompt slot
+    /// is unclaimed. A claim is a non-empty PS1 in the executor environment
+    /// — set by the user's own rc, an enabled external framework
+    /// (oh-my-bash theme, `starship init bash`), or a runtime command.
+    /// `sync_bash_prompt_from_env` swaps in the bash-compatible channel on
+    /// claim and restores this floor on release; the floor itself never
+    /// writes PS1, so it can never fight an active claim.
+    floor_prompt: PromptBackend,
+    /// Windows factory-default "Git Bash compatible" prompt is active:
+    /// every prompt rebuild re-renders it from the current directory until
+    /// a PS1/theme claim displaces it (the claim check lives in
+    /// `prompt_for_display`). Never set for one-shot shells.
+    /// off-Windows the field is write-only (the refresh site is cfg'd out)
+    /// — the allow keeps the -D warnings unix lanes clean.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    gitbash_prompt_active: bool,
+    pub home_dir: PathBuf,
+    pub shell_root: Option<PathBuf>,
+    pub history_path: PathBuf,
+    pub history_max_size: usize,
+    pub history_ignore_space_prefixed: bool,
+    /// Handle to the hosted history provider, retained so a host can run
+    /// the session-end write explicitly (see
+    /// [`Shell::flush_session_history`]). The standard one-shot funnel does
+    /// NOT call this: since #281 its rc-0 exits return from main normally,
+    /// so the provider's own Drop flush runs — this exists for embedding
+    /// hosts that terminate through `std::process::exit` on paths the
+    /// funnel does not own. `None` in test constructions that never touch
+    /// history.
+    history_provider: Option<Rc<RefCell<crate::history::RubashHistoryProvider>>>,
+    pub history_mode: crate::config::HistoryMode,
+    pub menu_config: MenuConfig,
+    pub editor_mode: EditorMode,
+    /// Command-not-found package-search hint policy (native-shell#249): off by
+    /// default — a typo prints only the GNU one-liner;
+    /// `native-shell config set command-not-found-hint wpm` opts in to a wpm-only
+    /// near-miss suggestion.
+    pub command_not_found_hint: CommandNotFoundHint,
+    /// Last observed engine `set -o emacs` / `set -o vi` flag pair, used by
+    /// [`Shell::refresh_edit_mode`] to recover which of the two the user
+    /// flipped last (GNU's editing-mode is one shared state; the engine
+    /// stores the two options as independent flags). `None` until the first
+    /// observation.
+    edit_flags_seen: Option<(bool, bool)>,
+    pub autosuggest: AutosuggestConfig,
+    pub syntax_highlighting: SyntaxHighlightConfig,
+    pub native_widgets: NativeWidgetConfig,
+    pub native_widget_bindings: Vec<NativeWidgetBinding>,
+    /// User-declared widget bindings parsed from `NATIVE_SHELL_BINDKEYS` in the
+    /// startup rc. Applied regardless of the native-widget pack gate.
+    pub user_widget_bindings: Vec<NativeWidgetBinding>,
+    /// Engine-registered `bind` bindings (registry snapshot taken after
+    /// rc sourcing / at the last keymap rebuild). The reedline keymaps
+    /// mirror these; `bind -x` entries trigger through the `__native_shell_bindx`
+    /// sentinel and run via [`Shell::run_bind_x_command`].
+    pub engine_bindings: Vec<rubash::shell::bind_registry::BindEntry>,
+    /// Registry generation at snapshot time; compared against
+    /// `executor.bind_registry_generation()` between prompts so a runtime
+    /// `bind` call rebuilds the mirrored keymaps (GNU takes effect
+    /// immediately; reedline keymaps are baked at editor build time).
+    pub engine_bind_generation: u64,
+    /// User-declared completion functions parsed from `NATIVE_SHELL_COMPDEFS` in the
+    /// startup rc: `(command, function)` pairs.
+    pub compdefs: Vec<(String, String)>,
+    /// Config-layer completion directories (`FullConfig::completion_dirs`),
+    /// recorded at construction so the post-rc `load_user_compdefs` reload
+    /// (NATIVE_SHELL_COMPDEFS directory entries, issue #306) rebuilds the union
+    /// instead of dropping the config surface.
+    config_completion_dirs: Vec<PathBuf>,
+    pub hooks: HookConfig,
+    pub aliases: HashMap<String, String>,
+    pub last_interactive_command: Option<String>,
+    pub last_interactive_exit_code: Option<i32>,
+    pub line_editor: Option<Reedline>,
+    process_stdin_pipeline_bridge: bool,
+    bash_prompt_command_running: bool,
+    interactive_lines_read: usize,
+    // True once this shell enters the interactive REPL. Easter eggs are
+    // routed only from here so `native-shell -c`, script files, and piped stdin stay
+    // quiet and deterministic.
+    pub interactive: bool,
+    // --norc: do not source the interactive startup file.
+    pub no_rc: bool,
+    // --noprofile: do not run login-profile startup.
+    pub no_profile: bool,
+    // --rcfile / --init-file: alternate startup file.
+    pub rc_file: Option<PathBuf>,
+    // --noediting: disable readline-style line editing in the REPL.
+    pub no_editing: bool,
+    startup_invocation: Option<rubash::invocation::ShellInvocation>,
+    // native-shell#400: `Shell::new` found the rbash invocation face (argv[0]
+    // basename or the shim-forwarded NATIVE_SHELL_INVOKED_AS). Only the mark lives
+    // here; `finish_startup` turns it into `set -o restricted` at the same
+    // point the `-r`/`--restricted` flag form activates — after the startup
+    // files (rubash invocation.rs ShellInvocation::finish_startup) — so a
+    // BASH_ENV / profile / ENV chain sources unrestricted exactly like the
+    // flag form and GNU.
+    invoked_as_rbash: bool,
+    // native-shell#402: set by `execute_script_inner` when a script the host
+    // ran ended in a top-level `exit` (the engine's `ExitCode` unwind, GNU
+    // jump_to_top_level EXITPROG). The startup-file sourcer consumes it so an
+    // `exit` in the rc terminates the invocation with that status instead of
+    // being flattened to a plain status that lets the command line run.
+    script_exit_jump: bool,
+    // One-shot fast path (`Shell::new_one_shot`): the shell serves a single
+    // non-interactive command, so REPL-only state is never initialized and
+    // the prompt backend stays a bare placeholder. Bash renders no prompt and
+    // reads no completion state when non-interactive; the history provider
+    // and managed aliases still stay (both pinned by contract tests for -c).
+    pub one_shot: bool,
+}
+
+pub struct StdinCurrentShellChild {
+    script_name: String,
+    script_path: PathBuf,
+    positional_params: Vec<String>,
+}
+
+/// The `$0` a fresh shell starts with. GNU shell.c set_shell_name uses the
+/// invocation name: when the process was reached through a shell shim the
+/// shim forwards its argv[0] stem in NATIVE_SHELL_INVOKED_AS, so `sh -c 'echo $0'`
+/// prints `sh` (or `-sh` for a login-marked name), not native-shell — and since
+/// rubash#598 the same forward carries the bash/rbash faces, so
+/// `bash -c 'echo $0'` prints `bash`. Without a shim, argv[0] supplies
+/// the face. Other invocations keep the historical `native-shell` default.
+fn default_script_name() -> String {
+    let forwarded = std::env::var("NATIVE_SHELL_INVOKED_AS").ok().or_else(|| {
+        std::env::args_os()
+            .next()
+            .map(|arg| arg.to_string_lossy().into_owned())
+    });
+    default_script_name_from(forwarded)
+}
+
+/// Consume the shim-forwarded invocation name out of the process
+/// environment, removing it in the same breath: it describes how THIS
+/// process was invoked, not a setting children should inherit. Without the
+/// removal a nested `sh -c 'native-shell ...'` would hand the plain-niu child the
+/// `sh` contract (POSIX mode, `$0` = sh) that GNU keys off argv[0] alone.
+fn invoked_as_from_env() -> Option<String> {
+    let invoked_as = std::env::var("NATIVE_SHELL_INVOKED_AS").ok()?;
+    std::env::remove_var("NATIVE_SHELL_INVOKED_AS");
+    Some(invoked_as)
+}
+
+fn default_script_name_from(raw: Option<String>) -> String {
+    let Some(raw) = raw else {
+        return "native-shell".to_string();
+    };
+    let basename = raw.rsplit(['/', '\\']).next().unwrap_or(&raw);
+    let lowered = basename.to_ascii_lowercase();
+    let stem = lowered.strip_suffix(".exe").unwrap_or(&lowered);
+    let unmarked = stem.strip_prefix('-').unwrap_or(stem);
+    // The four faces the shim forwards (rubash#598): sh/ash key the POSIX
+    // contract, bash/rbash only need `$0` to read the invocation name
+    // (GNU shell.c set_shell_name binds dollar_vars[0] to argv[0] for
+    // every face; shell.c:1258-1299 keys rbash off it). Everything else
+    // stays the plain-niu default.
+    if matches!(unmarked, "sh" | "ash" | "bash" | "rbash") {
+        stem.to_string()
+    } else {
+        "native-shell".to_string()
+    }
+}
+
+impl Shell {
+    /// Construct a fresh shell: load config, install Ctrl+C handler, inject
+    /// winuxcmd onto PATH, set up completion state and history.
+    pub fn new() -> anyhow::Result<Self> {
+        // `native-shell` is the sole public executable. Keep `$0` aligned with the
+        // user-facing command; explicit script and `-c` names still override
+        // `native-shell` is the sole public executable. Keep `$0` aligned with the
+        // user-facing command; explicit script and `-c` names still override
+        // this value at their call sites. When the process was reached
+        // through the sh.exe shim (the shim forwards its argv[0] stem via
+        // NATIVE_SHELL_INVOKED_AS), GNU shell.c set_shell_name shows the invocation
+        // name instead: `sh -c 'echo $0'` prints `sh`, never native-shell. The
+        // one-shot `-c` path (new_one_shot) carries the same name: the shim
+        // contract keys off the invocation, not off interactivity.
+        Self::new_with_script_name(Some(default_script_name().as_str()), false)
+    }
+
+    /// Construct a shell for scripts arriving on process stdin.
+    pub fn new_for_stdin_script() -> anyhow::Result<Self> {
+        Self::new_with_script_name(None, false)
+    }
+
+    /// Construct a minimal shell for non-interactive one-shot execution
+    /// (`native-shell -c`, agent and CI harnesses).
+    ///
+    /// Skips everything only the interactive REPL reads — the prompt/theme
+    /// backend, the completion directory scan, and the final completion
+    /// snapshot. Bash itself renders no prompt and expands no completions
+    /// when non-interactive, so the one-shot surface matches those
+    /// semantics; managed aliases stay, while the history provider is
+    /// installed only on interactive entry. The shim-forwarded invocation
+    /// name applies here too: `sh -c ...` is a one-shot `sh`, and GNU
+    /// shell.c set_shell_name keys the `$0`/POSIX contract off the
+    /// invocation name, not off interactivity.
+    pub fn new_one_shot() -> anyhow::Result<Self> {
+        Self::new_with_script_name(Some(default_script_name().as_str()), true)
+    }
+
+    fn new_with_script_name(script_name: Option<&str>, one_shot: bool) -> anyhow::Result<Self> {
+        // Consume the shim-forwarded invocation name before anything else
+        // reads it: it must not leak into child processes. The `$0` default
+        // above peeked at the same value (removal happens after that peek),
+        // and the shell-name block below reuses `invoked_as` rather than
+        // re-reading the now-cleared environment.
+        let invoked_as = invoked_as_from_env();
+        // 1. Load runtime defaults and environment-backed state.
+        let mut config = load_config();
+        config.history = config.history.with_env_overrides();
+        // native-shell#249: resolve the opt-in hint policy once at startup
+        // (config.toml, overridden by NATIVE_SHELL_COMMAND_NOT_FOUND_HINT).
+        let command_not_found_hint = crate::config::resolve_command_not_found_hint();
+        crate::startup_trace::tick("config loaded");
+
+        // 2. Select the WinuxCmd installation and use its real directory tree
+        // before constructing the executor.
+        let home_dir = shell_home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let selected_winuxcmd_path = if config.winuxcmd_enabled {
+            match winuxcmd::prepare_winuxcmd_with_override(None) {
+                Ok(path) => Some(path),
+                Err(e) => {
+                    log::debug!("winuxcmd not on PATH: {}", e);
+                    None
+                }
+            }
+        } else {
+            log::debug!("winuxcmd PATH injection disabled by config");
+            None
+        };
+        crate::startup_trace::tick("winuxcmd selected");
+        let shell_root = prepare_shell_root(selected_winuxcmd_path.as_deref())?;
+        crate::startup_trace::tick("shell root prepared");
+
+        // 3. Build rubash Executor after host path selection.
+        let shell_was_missing = std::env::var_os("SHELL").is_none();
+        let default_shell_path = if cfg!(windows) && shell_was_missing {
+            std::env::current_exe()
+                .ok()
+                .map(|exe| exe.to_string_lossy().replace('\\', "/"))
+        } else {
+            None
+        };
+        // NATIVE_SHELL_BIN_PATH_STYLE / WINUXSH_SHELL_PATH_STYLE are no longer set
+        // here: rubash#556 (P0 #537) retired the engine-side readers, so the
+        // vars are inert and only misinformed child processes. The engine now
+        // renders $PWD/`pwd` in the POSIX persona form unconditionally; native
+        // spelling is a spawn-boundary concern the host handles below.
+        if let Some(shell_path) = &default_shell_path {
+            std::env::set_var("SHELL", shell_path);
+        }
+        let mut executor = Executor::new();
+        crate::startup_trace::tick("executor created");
+        // Script-mode history data plane stays with the engine: set -H,
+        // fc, and the history builtin must behave in scripts exactly as
+        // they do under rubash/GNU (errors10.sub: `history abcde` -> rc 2).
+        // Reedline is the interactive history owner; enter_interactive()
+        // turns the engine's machinery back off on the REPL path so
+        // HISTFILE cannot create a second, competing history stream.
+        // NativeShell delegates Windows elevation to external providers such as the
+        // WPM gsudo package. The experimental Rubash builtin is opt-in only.
+        if std::env::var("NATIVE_SHELL_ENABLE_RUBASH_SUDO").as_deref() != Ok("1") {
+            executor.set_builtin_disabled("sudo", true);
+        }
+        let shell_name = invoked_as.or_else(|| std::env::args().next());
+        let mut invoked_as_rbash = false;
+        if let Some(shell_name) = shell_name {
+            let invoked_name = shell_name
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(&shell_name)
+                .trim_end_matches(".exe")
+                .to_ascii_lowercase();
+            executor.set_env("__RUBASH_SHELL_NAME", &invoked_name);
+            // GNU shell.c set_shell_name: a leading `-' on argv[0] marks a
+            // login shell independent of --login/-l; the stripped name drives
+            // the POSIX-mode contract below.
+            let unmarked_name = invoked_name.strip_prefix('-').unwrap_or(&invoked_name);
+            if unmarked_name.len() < invoked_name.len() {
+                executor.set_env("__RUBASH_LOGIN_SHELL", "1");
+                // Same pair the engine's mark_login_shell funnels; kept
+                // inline (no new engine API) so this builds against the
+                // pinned rubash rev as well as the local patch.
+                executor.set_shopt_option("login_shell", true);
+            }
+            if matches!(unmarked_name, "sh" | "ash") {
+                executor.set_env("__RUBASH_POSIX_MODE", "1");
+                executor.set_shell_option("posix", true);
+            }
+            // native-shell#400: a shell invoked under the name `rbash' starts
+            // restricted (GNU shell.c:1258-1299 shell_is_restricted /
+            // maybe_make_restricted key the face off the argv[0] basename,
+            // after the `-' login marker is stripped). Only the MARK is taken
+            // here: the option itself is written in `finish_startup`, the
+            // same point the `-r`/`--restricted` flag form activates (rubash
+            // invocation.rs `ShellInvocation::finish_startup`, "after the
+            // host finishes startup files") — the startup files must see the
+            // unrestricted shell so a BASH_ENV/profile/ENV chain sources
+            // exactly like the flag form and GNU.
+            invoked_as_rbash = unmarked_name == "rbash";
+        }
+        // Starship is initialized through its Bash integration even when
+        // NativeShell is invoked through the sh/bash command shims.
+        executor.set_env("STARSHIP_SHELL", "bash");
+        if let Some(shell_path) = &default_shell_path {
+            executor.set_env("SHELL", shell_path);
+        }
+        // Bash sets $BASH to the full pathname used to execute the current
+        // instance (bash(1), BASH variable); scripts probe it to detect bash.
+        // Forward-slash spelling matches rubash's own standalone main.rs.
+        if let Ok(exe) = std::env::current_exe() {
+            executor.export_env("BASH", &exe.to_string_lossy().replace('\\', "/"));
+        }
+        // GNU bash defaults expand_aliases on only for interactive shells
+        // (shell.c init_interactive()/init_interactive_script()); -c,
+        // script-file, and stdin runs keep the engine default (off).
+        // enter_interactive() enables it for the REPL entry points.
+        executor.set_shopt_option("expand_aliases", false);
+        // P1 spawn takeover: leave the engine's external-file builtins (cat,
+        // /bin/cat, mkdir, ...) at the rubash default (enabled) so script
+        // suites under a POSIX PATH (=/usr/bin:/bin) resolve commands through
+        // the engine's own external_command machinery exactly like rubash;
+        // disabling it here used to force every such spawn through the
+        // host command-not-found handler (rc=127).
+        if let Some(root) = &shell_root {
+            executor.set_shell_root(root);
+        }
+        if let Some(winuxcmd_path) = &selected_winuxcmd_path {
+            executor.set_winuxcmd_path(winuxcmd_path);
+        }
+        if let Some(shell_path) = compatible_shell_path_from_env() {
+            executor.set_compatible_shell_path(shell_path);
+        }
+        if let Some(script_name) = script_name {
+            executor.set_env("__RUBASH_SCRIPT_NAME", script_name);
+            executor.set_env("BASH_ARGV0", script_name);
+        }
+        executor.set_env("NATIVE_SHELL_PROMPT_SYMBOL", &config.shell.prompt_symbol);
+        sync_executor_path_from_process_path(&mut executor);
+
+        crate::startup_trace::tick("executor env ready");
+
+        // 5. Apply managed aliases so explicit machine state remains
+        // authoritative when names collide.
+        let mut aliases = HashMap::new();
+        for (name, value) in &config.aliases {
+            if apply_alias(&mut executor, name, value) {
+                aliases.insert(name.clone(), value.clone());
+            } else {
+                log::warn!("Skipping invalid alias from config: {}", name);
+            }
+        }
+
+        crate::startup_trace::tick("aliases");
+
+        // 6. Prompt + theme. The template engine is the default backend;
+        // the segment engine stays available for explicit configs. One-shot
+        // shells never render a prompt: use the cheapest backend instead of
+        // compiling the template or the segment engine.
+        // Factory default (owner adjudication 2026-10-12): on Windows an
+        // unstyled shell renders the built-in "Git Bash compatible" prompt
+        // (src/git_prompt.rs — green user@host, yellow cwd, cyan branch,
+        // no git child process). Explicit styles win; PS1/theme claims
+        // still displace it per prompt (see prompt_for_display).
+        #[cfg(windows)]
+        let factory_style = "gitbash";
+        #[cfg(not(windows))]
+        let factory_style = "template";
+        let prompt_style = config
+            .shell
+            .prompt_style
+            .as_deref()
+            .unwrap_or(factory_style);
+        let prompt: PromptBackend = if one_shot {
+            // One-shot shells never render a prompt. Keep the backend
+            // terminal-free: BashPrompt::new probes terminal width during
+            // construction and can spawn `tput` twice on non-tty Unix
+            // invocations (native-shell#351).
+            PromptBackend::Template(NativeShellPrompt::new(Some(String::new()), None))
+        } else if prompt_style == "gitbash" {
+            #[cfg(windows)]
+            {
+                PromptBackend::Bash(BashPrompt::new(
+                    crate::git_prompt::render(
+                        &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                    ),
+                    String::new(),
+                ))
+            }
+            #[cfg(not(windows))]
+            {
+                // A config that names "gitbash" off-Windows falls back to the
+                // template floor: the theme is a Windows-only surface (owner
+                // adjudication) and src/git_prompt.rs does not compile there.
+                PromptBackend::Template(NativeShellPrompt::new(None, None))
+            }
+        } else if prompt_style == "segments" {
+            let preset_name = config.shell.segment_preset.as_deref().unwrap_or("classic");
+            let preset = SegmentPreset::from_name(preset_name).unwrap_or(SegmentPreset::Classic);
+            let mut seg_config =
+                SegmentPromptConfig::from_preset(preset, &config.shell.prompt_symbol);
+            if let Some(ref left) = config.shell.left_prompt_elements {
+                seg_config.left_elements = left
+                    .iter()
+                    .filter_map(|s| SegmentId::from_name(s))
+                    .collect();
+            }
+            if let Some(ref right) = config.shell.right_prompt_elements {
+                seg_config.right_elements = right
+                    .iter()
+                    .filter_map(|s| SegmentId::from_name(s))
+                    .collect();
+            }
+            PromptBackend::Segments(SegmentPromptAdapter::new(SegmentPrompt::new(seg_config)))
+        } else {
+            let prompt_format = config.shell.prompt_format.clone();
+            let right_prompt_format = config.shell.right_prompt_format.clone();
+            let template_prompt = NativeShellPrompt::new_with_symbol(
+                prompt_format,
+                right_prompt_format,
+                config.shell.prompt_indicators.clone(),
+                config.shell.prompt_symbol.clone(),
+            );
+            PromptBackend::Template(template_prompt)
+        };
+
+        crate::startup_trace::tick("prompt backend");
+
+        // 7. User-local state files.
+        normalize_executor_home_env(&mut executor, &home_dir);
+        ensure_windows_profile_env(&mut executor, &home_dir);
+        ensure_prompt_terminal_env(&mut executor);
+        let history_path = config
+            .history
+            .path
+            .clone()
+            .unwrap_or_else(|| home_dir.join(".native-shell_history"));
+        // 8. Completion state.
+        let mut initial_completion_state = CompletionState::new(
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        );
+        initial_completion_state.behavior = config.completion_behavior;
+        let completion_state = Arc::new(Mutex::new(initial_completion_state));
+
+        crate::startup_trace::tick("completion state");
+
+        // 9. Load completion dirs from config (inline, not in thread).
+        // One-shot shells skip the scan: nothing reads it without a REPL.
+        if !one_shot {
+            let mut s = completion_state.lock().unwrap();
+            s.load_completion_dirs(&config.completion_dirs);
+        }
+
+        let native_widgets = config.native_widgets.clone();
+
+        let gitbash_prompt_active = cfg!(windows) && !one_shot && prompt_style == "gitbash";
+        let mut shell = Self {
+            executor,
+            completion_state,
+            prompt: prompt.clone(),
+            gitbash_prompt_active,
+            floor_prompt: prompt,
+            home_dir,
+            shell_root,
+            history_path,
+            history_max_size: config.history.max_size,
+            history_ignore_space_prefixed: config.history.ignore_space_prefixed,
+            history_provider: None,
+            history_mode: config.history.mode,
+            menu_config: config.menus.with_env_overrides(),
+            editor_mode: config.editor.edit_mode,
+            command_not_found_hint,
+            edit_flags_seen: None,
+            autosuggest: config.autosuggest.with_env_overrides(),
+            syntax_highlighting: config.syntax_highlighting.with_env_overrides(),
+            native_widgets,
+            native_widget_bindings: Vec::new(),
+            user_widget_bindings: Vec::new(),
+            engine_bindings: Vec::new(),
+            engine_bind_generation: 0,
+            compdefs: Vec::new(),
+            config_completion_dirs: config.completion_dirs.clone(),
+            hooks: config.hooks,
+            aliases,
+            last_interactive_command: None,
+            last_interactive_exit_code: None,
+            line_editor: None,
+            process_stdin_pipeline_bridge: false,
+            bash_prompt_command_running: false,
+            interactive_lines_read: 0,
+            interactive: false,
+            no_rc: false,
+            no_profile: false,
+            rc_file: None,
+            no_editing: false,
+            startup_invocation: None,
+            invoked_as_rbash,
+            script_exit_jump: false,
+            one_shot,
+        };
+        crate::startup_trace::tick("completion + widgets");
+        shell.sync_executor_pwd_from_process_cwd();
+        if !one_shot {
+            shell.update_completion_state();
+        }
+        crate::startup_trace::tick("Shell::new done");
+        Ok(shell)
+    }
+
+    /// Whether the PS1 currently in the executor environment is a foreign
+    /// Git Bash session value inherited from the process environment (see
+    /// `enter_interactive`). Detection is a class check over the session
+    /// machinery (`is_foreign_git_bash_ps1`), applied only before any user
+    /// startup file has run, so the value here is provenance-guaranteed to
+    /// be the inherited one.
+    pub fn discard_foreign_inherited_prompt(&mut self) {
+        if let Some(value) = self.executor.get_env("PS1") {
+            if !value.is_empty() && crate::prompt::is_foreign_git_bash_ps1(value) {
+                self.executor.unset_env("PS1");
+            }
+        }
+    }
+
+    pub fn enable_process_stdin_pipeline_bridge(&mut self) {
+        self.process_stdin_pipeline_bridge = true;
+    }
+
+    pub fn set_script_name(&mut self, script_name: &str) {
+        self.executor.set_env("__RUBASH_SCRIPT_NAME", script_name);
+        self.executor.set_env("BASH_ARGV0", script_name);
+    }
+
+    pub fn stdin_current_shell_child(&self, command: &str) -> Option<StdinCurrentShellChild> {
+        let tokens = tokenize(command);
+        if tokens.is_empty() {
+            return None;
+        }
+        let ast = parse(&tokens);
+        let [cmd] = ast.commands.as_slice() else {
+            return None;
+        };
+        if !is_plain_simple_command(cmd) || command_has_redirects(cmd) || cmd.words.len() < 2 {
+            return None;
+        }
+        let Some(command_name) = cmd.words.first() else {
+            return None;
+        };
+        let is_this_shell = matches!(command_name.as_str(), "$THIS_SH" | "${THIS_SH}")
+            || self
+                .executor
+                .get_env("THIS_SH")
+                .is_some_and(|this_sh| same_shell_dir(this_sh, command_name));
+        if !is_this_shell {
+            return None;
+        }
+
+        let script_name = decode_to_visible_text(&cmd.words[1]);
+        let script_path = self.executor.resolve_shell_path(&script_name);
+        if !script_path.is_file() {
+            return None;
+        }
+
+        Some(StdinCurrentShellChild {
+            script_name,
+            script_path,
+            positional_params: decoded_words(&cmd.words[1..]),
+        })
+    }
+
+    pub fn execute_stdin_current_shell_child(
+        &mut self,
+        child: StdinCurrentShellChild,
+        stdin_line: &str,
+    ) -> anyhow::Result<i32> {
+        let script = std::fs::read_to_string(&child.script_path)?;
+
+        let saved_script_name = self
+            .executor
+            .get_env("__RUBASH_SCRIPT_NAME")
+            .map(str::to_owned);
+        let saved_bash_argv0 = self.executor.get_env("BASH_ARGV0").map(str::to_owned);
+        let saved_function_stdin = self
+            .executor
+            .get_env("__RUBASH_FUNCTION_STDIN")
+            .map(str::to_owned);
+        let saved_function_stdin_offset = self
+            .executor
+            .get_env("__RUBASH_FUNCTION_STDIN_OFFSET")
+            .map(str::to_owned);
+
+        self.set_script_name(&child.script_name);
+        self.executor.set_env("__RUBASH_FUNCTION_STDIN", stdin_line);
+        self.executor.set_env("__RUBASH_FUNCTION_STDIN_OFFSET", "0");
+        self.executor.set_positional_params(child.positional_params);
+
+        let code = self.execute_script(&script)?;
+
+        restore_executor_env(
+            &mut self.executor,
+            "__RUBASH_SCRIPT_NAME",
+            saved_script_name,
+        );
+        restore_executor_env(&mut self.executor, "BASH_ARGV0", saved_bash_argv0);
+        restore_executor_env(
+            &mut self.executor,
+            "__RUBASH_FUNCTION_STDIN",
+            saved_function_stdin,
+        );
+        restore_executor_env(
+            &mut self.executor,
+            "__RUBASH_FUNCTION_STDIN_OFFSET",
+            saved_function_stdin_offset,
+        );
+
+        Ok(code)
+    }
+
+    /// Mark this shell as interactive.
+    ///
+    /// Two consequences: easter eggs become routable, and rubash diagnostics
+    /// are prefixed with the shell name (native-shell) without a line segment, which
+    /// is what bash does for errors at an interactive prompt (GNU error.c
+    /// report_prolog: interactive shells print only get_name_for_error()).
+    /// The name goes to __RUBASH_SHELL_NAME — NOT __RUBASH_SCRIPT_NAME,
+    /// which owns the script-path/$0 slot; polluting it here used to make
+    /// interactive diagnostics read "native-shell: line 1: ..." like a -c run.
+    pub fn enter_interactive(&mut self) {
+        self.interactive = true;
+        if self.history_provider.is_none() {
+            let provider = Rc::new(RefCell::new(
+                crate::history::RubashHistoryProvider::with_file(
+                    self.history_max_size,
+                    self.history_path.clone(),
+                    self.history_mode,
+                ),
+            ));
+            self.executor.set_history_provider(provider.clone());
+            self.history_provider = Some(provider);
+        }
+        self.executor.set_env("__RUBASH_SHELL_NAME", "native-shell");
+        // JayWanX/native-shell#117: a PS1 inherited from the process environment
+        // (Git for Windows exports its session PS1 into every child) carries
+        // machinery that only exists inside that Git Bash session — the
+        // `__git_ps1` function, `$MSYSTEM`, the bracketed OSC title skeleton.
+        // Discard it before the startup files run so (a) the shell's own
+        // theme renders, and (b) the machinery is never expanded into a
+        // per-prompt "command not found" error. Runs before any rc so a PS1
+        // the user sets in their own startup file keeps full effect; `native-shell -c`
+        // and script mode never pass through here, so env-var visibility for
+        // non-interactive children stays GNU-identical.
+        self.discard_foreign_inherited_prompt();
+        // `$-` must contain `i` while startup files run: GNU sets
+        // forced_interactive before run_startup_files (shell.c:672; flags.c:174
+        // renders it in `$-`), so rc-level `case $- in *i*)` guards
+        // (oh-my-bash, starship init, nvm) pass inside ~/.native-shellrc. The
+        // engine reads this marker in shell_option_flags (prompt_expansion.rs
+        // `'i'` table arm); without it the marker only existed on the rubash
+        // `-i` argv path, which the native-shell REPL (no argv flags) never took.
+        self.executor.set_env("__RUBASH_INTERACTIVE", "1");
+        // GNU init_interactive (shell.c): interactive shells default
+        // expand_aliases on so ~/.native-shellrc aliases expand without a
+        // user shopt line. Non-interactive entry points never call
+        // this, keeping the GNU off default for scripts and -c.
+        let expand_aliases = self
+            .startup_invocation
+            .as_ref()
+            .and_then(|invocation| {
+                invocation
+                    .shopt_flags
+                    .iter()
+                    .rev()
+                    .find_map(|(name, enabled)| (name == "expand_aliases").then_some(*enabled))
+            })
+            .unwrap_or(true);
+        self.executor
+            .set_shopt_option("expand_aliases", expand_aliases);
+        // Reedline owns interactive history (see the construction-site note):
+        // disable the engine's Bash history machinery only on the REPL path
+        // so HISTFILE cannot create a second, competing history stream.
+        self.executor.set_shell_option("history", false);
+        self.executor.unset_env("HISTFILE");
+    }
+
+    /// Route a one-command AST to an easter egg when this shell is
+    /// interactive. Returns the egg's exit code, or `None` so the caller keeps
+    /// ordinary command resolution.
+    fn easter_egg_exit(&self, commands: &[rubash::parser::CommandNode]) -> Option<i32> {
+        if !self.interactive || commands.len() != 1 {
+            return None;
+        }
+        let words = decoded_words(&commands[0].words);
+        let Some(head) = words.first() else {
+            return None;
+        };
+        if !crate::easter_eggs::is_registered(head) {
+            return None;
+        }
+        crate::easter_eggs::dispatch(true, &words).ok().flatten()
+    }
+
+    /// Execute a single input line via rubash. Returns the exit code.
+    pub fn execute_line(&mut self, line: &str) -> anyhow::Result<i32> {
+        self.execute_line_with_options(line, false, 0)
+    }
+
+    /// Read alias-bearing interactive input through the engine's grouped reader.
+    /// Each submission is a fresh read boundary, even when its line number is one.
+    fn execute_interactive_reader_batch(
+        &mut self,
+        script: &str,
+        tokens: &[Token],
+        line_offset: usize,
+    ) -> Option<i32> {
+        if !self.interactive || !self.executor.alias_expansion_enabled() {
+            return None;
+        }
+        let needs_reader = tokens.iter().any(|token| {
+            matches!(
+                token.kind,
+                TokenKind::Semicolon
+                    | TokenKind::And
+                    | TokenKind::Or
+                    | TokenKind::Background
+                    | TokenKind::Keyword
+            ) || self.aliases.contains_key(&token.value)
+        });
+        if !needs_reader {
+            return None;
+        }
+        let code = rubash::script_driver::run_script_with_history_at_line_offset(
+            &mut self.executor,
+            script,
+            line_offset,
+            None,
+        );
+        self.sync_process_cwd_from_executor_pwd();
+        self.sync_process_path_from_executor_path();
+        self.sync_alias_mirror_from_executor();
+        Some(code)
+    }
+
+    fn execute_line_with_options(
+        &mut self,
+        line: &str,
+        interactive_terminal_colors: bool,
+        line_offset: usize,
+    ) -> anyhow::Result<i32> {
+        let line = if interactive_terminal_colors {
+            line
+        } else {
+            line.trim()
+        };
+        if line.is_empty() {
+            return Ok(0);
+        }
+
+        let line = normalize_native_windows_path_literals(line);
+        let mut tokens = tokenize(&line);
+        if tokens.is_empty() {
+            return Ok(0);
+        }
+        if let Some(code) = self.execute_interactive_reader_batch(&line, &tokens, line_offset) {
+            return Ok(code);
+        }
+        for token in &mut tokens {
+            token.position += line_offset;
+            token.column += line_offset;
+            token.logical_line += line_offset;
+        }
+        rewrite_winuxcmd_command_shims(&mut tokens, interactive_terminal_colors);
+
+        // parse() returns Ast directly (not Result) in rubash.
+        let mut ast = parse(&tokens);
+        normalize_bare_windows_drive_commands(&mut ast);
+        normalize_cd_windows_drive_args(&mut ast);
+        normalize_winuxcmd_slash_drive_args(&mut ast);
+
+        let mut printed_command_not_found_hints = false;
+        let code = if let Some(exit) = self.easter_egg_exit(&ast.commands) {
+            exit
+        } else if let Some(execution) = self.execute_host_synced_simple_ast(&ast) {
+            match execution {
+                Ok(code) => code,
+                Err(rubash::executor::ExecuteError::ExitCode(code)) => code,
+                Err(rubash::executor::ExecuteError::Return(code)) => code,
+                Err(rubash::executor::ExecuteError::ExpansionFailure(code)) => code,
+                Err(rubash::executor::ExecuteError::FatalFunctionError(code)) => code,
+                Err(rubash::executor::ExecuteError::CommandNotFound(cmd)) => {
+                    eprintln!("native-shell: {}: command not found", cmd);
+                    self.print_command_not_found_hints(&cmd);
+                    printed_command_not_found_hints = true;
+                    127
+                }
+                Err(e) => {
+                    if !is_broken_pipe_execute_error(&e) {
+                        eprintln!("native-shell: {}", e);
+                    }
+                    1
+                }
+            }
+        } else {
+            match self.executor.execute_ast(&ast) {
+                Ok(()) => self.executor.last_exit_code(),
+                Err(rubash::executor::ExecuteError::ExitCode(code)) => code,
+                Err(rubash::executor::ExecuteError::Return(code)) => code,
+                Err(rubash::executor::ExecuteError::ExpansionFailure(code)) => code,
+                Err(rubash::executor::ExecuteError::FatalFunctionError(code)) => code,
+                Err(rubash::executor::ExecuteError::CommandNotFound(cmd)) => {
+                    eprintln!("native-shell: {}: command not found", cmd);
+                    self.print_command_not_found_hints(&cmd);
+                    printed_command_not_found_hints = true;
+                    127
+                }
+                Err(e) => {
+                    if !is_broken_pipe_execute_error(&e) {
+                        eprintln!("native-shell: {}", e);
+                    }
+                    1
+                }
+            }
+        };
+
+        if code == 127 && !printed_command_not_found_hints {
+            self.print_command_not_found_hints_if_missing(&ast);
+        }
+
+        self.sync_process_cwd_from_executor_pwd();
+        self.sync_process_path_from_executor_path();
+        self.sync_alias_mirror_from_executor();
+        Ok(code)
+    }
+
+    /// Execute a line as an interactive REPL command, including native hook
+    /// points for prompt, command, and directory-change lifecycle behavior.
+    pub fn execute_interactive_line(&mut self, line: &str) -> anyhow::Result<i32> {
+        let old_pwd = self.executor.get_env("PWD").map(str::to_owned);
+        self.run_preexec_hooks(line);
+        let line_offset = self.interactive_lines_read;
+        self.interactive_lines_read += line.split_inclusive('\n').count().max(1);
+        let code = self.execute_line_with_options(line, true, line_offset)?;
+        self.run_postcmd_hooks(code);
+        self.run_zshaddhistory_hooks(line);
+        self.remember_interactive_command(line, code);
+        let new_pwd = self.executor.get_env("PWD").map(str::to_owned);
+        if let (Some(old_pwd), Some(new_pwd)) = (old_pwd, new_pwd) {
+            self.run_chpwd_hooks_if_changed(&old_pwd, &new_pwd);
+        }
+        self.update_completion_state();
+        Ok(code)
+    }
+
+    /// Execute a complete multi-line interactive input block via rubash script
+    /// execution while preserving REPL lifecycle hooks.
+    pub fn execute_interactive_script(&mut self, script: &str) -> anyhow::Result<i32> {
+        let old_pwd = self.executor.get_env("PWD").map(str::to_owned);
+        self.run_preexec_hooks(script);
+        let line_offset = self.interactive_lines_read;
+        self.interactive_lines_read += script.split_inclusive('\n').count().max(1);
+        let code = self.execute_script_with_options(script, true, line_offset)?;
+        self.remember_interactive_command(script, code);
+        let new_pwd = self.executor.get_env("PWD").map(str::to_owned);
+        if let (Some(old_pwd), Some(new_pwd)) = (old_pwd, new_pwd) {
+            self.run_chpwd_hooks_if_changed(&old_pwd, &new_pwd);
+        }
+        self.update_completion_state();
+        Ok(code)
+    }
+
+    pub fn apply_invocation_before_startup(
+        &mut self,
+        invocation: &rubash::invocation::ShellInvocation,
+    ) -> Result<(), String> {
+        invocation.apply_to_executor_before_startup(&mut self.executor)?;
+        self.startup_invocation = Some(invocation.clone());
+        Ok(())
+    }
+
+    fn finish_startup(&mut self) {
+        if let Some(invocation) = self.startup_invocation.take() {
+            invocation.finish_startup(&mut self.executor);
+        }
+        // native-shell#400: the rbash face activates HERE — the same point the
+        // `-r`/`--restricted` flag write lands (the engine's
+        // ShellInvocation::finish_startup, "after the host finishes startup
+        // files") and after every startup file has been sourced. Activating
+        // in `Shell::new` instead would arm the restricted `.`/slash gates
+        // before the chain runs: a BASH_ENV file or the whole login profile
+        // chain would be refused (`.: <path>: restricted`) where the flag
+        // form and GNU load them fine. `set_shell_option` is idempotent, so
+        // the extra `finish_startup` passes on the REPL paths are harmless.
+        if self.invoked_as_rbash {
+            self.executor.set_shell_option("restricted", true);
+        }
+    }
+
+    /// Source the user's REPL startup file once before the first prompt.
+    ///
+    /// `~/.native-shellrc` is the only automatic interactive rc entry point.
+    /// Without it, native defaults remain active; no other rc is searched.
+    /// The rc is ordinary shell code: the built-in plugin/theme
+    /// stack is retired (native-shell#145), so NATIVE_SHELL_PLUGINS / NATIVE_SHELL_THEME lines in
+    /// an old rc are inert assignments the host no longer reads. Returns
+    /// `Some(status)` when the rc ended with a top-level `exit`
+    /// (native-shell#402); the caller must then end the invocation with that
+    /// status instead of drawing a prompt or running the command line.
+    pub fn run_startup_rc(&mut self) -> Option<i32> {
+        let exit = self.run_startup_files(true);
+        self.finish_startup();
+        exit
+    }
+
+    /// native-shell#180 session side: a finished `native-shell setup` run (a child
+    /// process — the wizard cannot reach this session's executor state)
+    /// leaves the one-shot marker `~/.native-shell/setup-apply-pending`; when
+    /// the live REPL draws its next prompt it consumes the marker and
+    /// re-sources the startup rc in-process — the exact equivalent of the
+    /// `source ~/.native-shellrc` the finish screen names. No prompt machinery
+    /// is duplicated here: the next `run_precmd_hooks` executes the fresh
+    /// `PROMPT_COMMAND` and `sync_bash_prompt_from_env` re-reads `PS1`, so
+    /// the new theme renders on that same prompt. The marker is consumed
+    /// first (`setup_wizard::take_apply_pending_marker`), so a broken rc
+    /// degrades to the honest warning instead of looping the REPL, and a
+    /// hand-edited rc alone never triggers a re-source — only the wizard's
+    /// own handoff does.
+    pub fn apply_setup_config_if_pending(&mut self) {
+        if !crate::setup_wizard::take_apply_pending_marker(&self.home_dir) {
+            return;
+        }
+        let failed = || eprintln!("{}", crate::setup_wizard::session_apply_failed_notice());
+        let Some(path) = self.startup_rc_path() else {
+            failed();
+            return;
+        };
+        if !path.is_file() {
+            failed();
+            return;
+        }
+        ensure_prompt_terminal_env(&mut self.executor);
+        // native-shell#359: a finished `native-shell setup` may have published a new
+        // generated-loader generation; re-source it with the same decision
+        // logic before the rc re-apply (the wizard's rc carries no managed
+        // markers, so a clean machine resolves to Load — the same re-source
+        // semantics the rc itself has always had here). Same ordering as
+        // run_startup_files: loader first, then the NATIVE_SHELL_REPL_STARTUP
+        // marker, then the rc.
+        let _ = self.load_generated_plugin_loader(Some(&path));
+        self.executor.set_env("NATIVE_SHELL_REPL_STARTUP", "1");
+        let outcome = self.source_file_into_current_shell(&path);
+        let _ = self.execute_script("unset NATIVE_SHELL_REPL_STARTUP");
+        match outcome {
+            // GNU maybe_execute_file discipline (evalfile.c:339, the same
+            // contract source_startup_file implements): a failed or
+            // nonzero-exiting re-source warns but never aborts the shell —
+            // the session keeps running, with the old state where the new
+            // rc did not take.
+            Ok(0) => {
+                self.sync_process_path_from_executor_path();
+                self.update_completion_state();
+                println!("{}", crate::setup_wizard::session_apply_notice());
+            }
+            Ok(code) => {
+                log::warn!(
+                    "{} exited with status {} during the setup re-apply",
+                    path.display(),
+                    code
+                );
+                eprintln!("{}", crate::setup_wizard::session_apply_failed_notice());
+            }
+            Err(err) => {
+                log::warn!(
+                    "{} failed during the setup re-apply: {}",
+                    path.display(),
+                    err
+                );
+                eprintln!("{}", crate::setup_wizard::session_apply_failed_notice());
+            }
+        }
+    }
+
+    /// Interactive startup files for a non-REPL interactive dispatch
+    /// (`native-shell -i -c 'cmd'`, `native-shell -i script`). GNU shell.c: `-i` sets
+    /// forced_interactive during option parsing, so run_startup_files
+    /// (shell.c:1147) takes the interactive branch — rc file, not BASH_ENV —
+    /// without any of the REPL-only markers. Returns `Some(status)` when the
+    /// rc ended with a top-level `exit` (native-shell#402); the caller must then
+    /// terminate instead of running the command line.
+    pub fn run_interactive_startup_rc(&mut self) -> Option<i32> {
+        let exit = self.run_startup_files(false);
+        self.finish_startup();
+        exit
+    }
+
+    /// True when this session is a login shell: `--login`/`-l` (the engine's
+    /// `apply_to_executor` records the flag) or an argv[0] whose basename
+    /// starts with `-' (shell.c set_shell_name; Shell::new records the same
+    /// marker). The login profile chain then replaces the interactive-RC
+    /// branch of the startup path (native-shell#399); the env-file gates are
+    /// independent of it (see `source_non_interactive_env`).
+    pub fn login_shell_active(&self) -> bool {
+        self.executor.get_env("__RUBASH_LOGIN_SHELL").as_deref() == Some("1")
+    }
+
+    /// The login profile chain (GNU shell.c:1836-1880
+    /// run_login_profile_files, the same order the engine's
+    /// `invocation::login_profile_files` implements): /etc/profile —
+    /// resolved through the shell root on Windows, so the winuxcmd tree's
+    /// `etc` directory answers when one ships — then the FIRST EXISTING of
+    /// ~/.bash_profile, ~/.bash_login, ~/.profile. A missing candidate is
+    /// skipped silently (open_startup_file's failed fopen is not an error).
+    fn login_profile_paths(&self) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        let system_profile = self.executor.resolve_shell_path("/etc/profile");
+        if system_profile.is_file() {
+            files.push(system_profile);
+        }
+        for name in [".bash_profile", ".bash_login", ".profile"] {
+            let candidate = self.home_dir.join(name);
+            if candidate.is_file() {
+                files.push(candidate);
+                break;
+            }
+        }
+        files
+    }
+
+    /// Source the login profile chain (see [`Self::login_profile_paths`]),
+    /// honouring `--noprofile`. Returns `Some(status)` when a profile ended
+    /// with a top-level `exit` (the native-shell#402 unwind, native-shell#399). The
+    /// chain replaces only the rc branch of the startup path; the env-file
+    /// gates run independently of login (see the callers).
+    fn source_login_profile_files(&mut self) -> Option<i32> {
+        if self.no_profile {
+            return None;
+        }
+        for path in self.login_profile_paths() {
+            if let Some(status) = self.source_startup_file(&path) {
+                return Some(status);
+            }
+        }
+        None
+    }
+
+    fn run_startup_files(&mut self, repl: bool) -> Option<i32> {
+        // native-shell#180 baseline: this session sources the current rc right
+        // now, so a marker left by a setup that ran before this session
+        // started is stale by definition — consume it here so only a setup
+        // that runs while the session is live triggers the next-prompt
+        // re-apply (apply_setup_config_if_pending).
+        crate::setup_wizard::clear_stale_apply_pending_marker(&self.home_dir);
+        normalize_executor_home_env(&mut self.executor, &self.home_dir);
+        ensure_windows_profile_env(&mut self.executor, &self.home_dir);
+        ensure_prompt_terminal_env(&mut self.executor);
+        // GNU shell.c:1833 run_startup_files: the login profile chain is
+        // checked first and replaces the interactive-RC alternative — a
+        // login shell sources /etc/profile and the first user profile
+        // whether or not it is interactive, and --rcfile (a bashrc_file
+        // concept) is never consulted on it. native-shell#399: an `exit` in a
+        // profile ends the invocation with the profile's status before any
+        // prompt or command line, like every other startup file
+        // (native-shell#402).
+        let login = self.login_shell_active();
+        if login {
+            if repl {
+                self.executor.set_env("NATIVE_SHELL_REPL_STARTUP", "1");
+            }
+            let exit = self.source_login_profile_files();
+            if let Some(status) = exit {
+                // native-shell#402 discipline: the jump's status must survive the
+                // marker cleanup, and none of the remaining startup steps run.
+                if repl {
+                    self.executor.unset_env("NATIVE_SHELL_REPL_STARTUP");
+                }
+                return Some(status);
+            }
+            if repl {
+                let _ = self.execute_script("unset NATIVE_SHELL_REPL_STARTUP");
+            }
+        }
+        // GNU shell.c:1241-1246 (bash --posix) and shell.c:1238-1239 (invoked
+        // as sh, which Shell::new turns into posix mode): the interactive
+        // startup file is `$ENV`, not the bash rc file, and an unset `$ENV`
+        // sources nothing. The $ENV gate is INDEPENDENT of login state —
+        // `sh -l -i -c` sources the profile chain and $ENV alike
+        // (native-shell#412 review of the #399 PR). --rcfile is a bashrc_file
+        // concept and is ignored in this branch. An `exit` in the file ends
+        // the invocation with its status (native-shell#399).
+        if self.posix_mode_active() {
+            let exit = self.execute_env_file("ENV");
+            if let Some(status) = exit {
+                // native-shell#422: an ENV `exit` is a startup-file jump like any
+                // other (native-shell#402) — return the status before the login
+                // tail runs. Letting the tail through made `sh -l -i` emit
+                // greeting output AFTER the ENV file had already ended the
+                // invocation; GNU (WSL bash 5.3.0 oracle: `sh -l -i`, $ENV =
+                // "echo ENV-RAN; exit 7") terminates silently with rc 7 and
+                // never renders the first prompt (the control run without
+                // the exit does). The same early return the profile and rc
+                // exit paths above take.
+                return Some(status);
+            }
+            if login {
+                self.update_completion_state();
+                if repl {
+                    self.finish_startup();
+                    self.run_greeting_hooks();
+                }
+            }
+            return None;
+        }
+        if login {
+            // The profile chain replaces the rc branch only (shell.c:1833);
+            // the env files above are not part of that exchange.
+            self.update_completion_state();
+            if repl {
+                self.finish_startup();
+                self.run_greeting_hooks();
+            }
+            return None;
+        }
+        if self.no_rc {
+            return None;
+        }
+        let rc_path = self.startup_rc_path().filter(|path| path.is_file());
+        // native-shell#359: the generated plugin loader is the host-owned,
+        // read-only activation channel. It sources BEFORE the user rc so
+        // user overrides (PS1/alias/function) win, and only when the rc
+        // text carries no superseded managed-block marker (the
+        // double-execution guard — an old block in the rc is the live path,
+        // and loading both would execute the plugin set twice) and the
+        // rollback switch (NATIVE_SHELL_PLUGIN_LOADER=off) allows loading. The step
+        // is zero-write by construction: it reads bytes and sources a file
+        // native-shell generated under an explicit verb.
+        if let Some(status) = self.load_generated_plugin_loader(rc_path.as_deref()) {
+            return Some(status);
+        }
+        let Some(path) = rc_path else {
+            return None;
+        };
+
+        if repl {
+            self.executor.set_env("NATIVE_SHELL_REPL_STARTUP", "1");
+        }
+        let exit = self.source_startup_file(&path);
+        if let Some(status) = exit {
+            // native-shell#402: the rc ended with `exit` — the invocation
+            // terminates with that status and none of the remaining startup
+            // steps (completion sync, greeting) or the caller's command line
+            // run (GNU jump_to_top_level unwinds reader_loop). Unset the
+            // marker directly so the cleanup cannot overwrite the jump's
+            // status.
+            if repl {
+                self.executor.unset_env("NATIVE_SHELL_REPL_STARTUP");
+            }
+            return Some(status);
+        }
+        if repl {
+            let _ = self.execute_script("unset NATIVE_SHELL_REPL_STARTUP");
+        }
+
+        self.update_completion_state();
+        if repl {
+            self.finish_startup();
+            self.run_greeting_hooks();
+        }
+        None
+    }
+
+    /// The generated plugin loader step of the rc startup branch
+    /// (native-shell#359): decide read-only whether the host loads
+    /// `~/.native-shell/generated/plugins.nsh` this startup, source it before
+    /// the user rc when allowed, and serve the one-time migration hint
+    /// when the rc still carries a superseded managed block. Returns
+    /// `Some(status)` only when the loader ended with a top-level `exit`
+    /// (the same native-shell#402 unwind as any startup file).
+    fn load_generated_plugin_loader(&mut self, rc_path: Option<&Path>) -> Option<i32> {
+        let rc_text = rc_path.and_then(|path| std::fs::read_to_string(path).ok());
+        let loader_text = crate::plugins::loader::read_loader_text();
+        match crate::plugins::loader::startup_decision(rc_text.as_deref(), loader_text.as_deref()) {
+            crate::plugins::loader::StartupDecision::Missing
+            | crate::plugins::loader::StartupDecision::OptedOut => None,
+            crate::plugins::loader::StartupDecision::SupersededBlockPresent => {
+                // The old managed block in the user rc is the live
+                // activation path; the loader stays off (double-execution
+                // guard). One-time read-only hint (design §4 mitigation):
+                // the marker write is config-dir internal and best-effort,
+                // never blocking, and only ever happens in this
+                // legacy-block situation — the clean-home startup matrix
+                // stays byte-for-byte untouched.
+                if crate::plugins::loader::should_show_legacy_hint() {
+                    eprintln!(
+                        "native-shell: your rc still carries an old managed plugin block, so the \
+                         generated plugin loader stays off; review the migration with:  \
+                         native-shell plugin migrate-rc"
+                    );
+                }
+                None
+            }
+            crate::plugins::loader::StartupDecision::Load => {
+                let path = crate::plugins::loader::loader_path();
+                self.source_startup_file(&path)
+            }
+        }
+    }
+
+    /// Source one startup file with GNU maybe_execute_file semantics:
+    /// failures warn but never abort the shell (evalfile.c:339). Returns
+    /// `Some(status)` only when the file ended with a top-level `exit`
+    /// (native-shell#402) — an ordinary nonzero status is logged and ignored,
+    /// exactly as GNU keeps reading after a failing command.
+    fn source_startup_file(&mut self, path: &Path) -> Option<i32> {
+        let code = match self.source_file_into_current_shell(path) {
+            Ok(code) => code,
+            Err(err) => {
+                log::warn!("{} failed: {}", path.display(), err);
+                1
+            }
+        };
+        self.sync_process_path_from_executor_path();
+        // native-shell#402: an `exit` executed while the startup file is sourced
+        // terminates the invoking shell with that status (GNU
+        // jump_to_top_level unwinds reader_loop), so hand it to the caller
+        // to end the invocation; a plain failing command is not a jump and
+        // only warns.
+        if self.script_exit_jump {
+            self.script_exit_jump = false;
+            return Some(code);
+        }
+        if code != 0 {
+            log::warn!("{} exited with status {}", path.display(), code);
+        }
+        None
+    }
+
+    /// True when this shell runs in POSIX mode. All three sources flip it
+    /// before startup files run: invoked as sh/ash (Shell::new),
+    /// `--posix`, and `-o posix` (ShellInvocation::apply_to_executor).
+    fn posix_mode_active(&self) -> bool {
+        self.executor.get_env("__RUBASH_POSIX_MODE").as_deref() == Some("1")
+    }
+
+    /// GNU shell.c:1103 execute_env_file: an unset or empty variable sources
+    /// nothing; otherwise the value is expanded and the file executed with
+    /// FEVAL_ENOENTOK (a missing file is silently skipped, evalfile.c:120).
+    /// Returns `Some(status)` when the file ended with a top-level `exit`
+    /// (native-shell#399: GNU ends the shell with that status — an `exit` in a
+    /// posix `$ENV` file under `-i -c` terminates the invocation).
+    fn execute_env_file(&mut self, name: &str) -> Option<i32> {
+        // GNU get_string_value reads the shell variable table, which at
+        // startup-file time is the inherited environment; prefer the
+        // executor table so an earlier startup file could export it.
+        let raw = self
+            .executor
+            .get_env(name)
+            .map(str::to_owned)
+            .or_else(|| std::env::var(name).ok())
+            .filter(|value| !value.trim().is_empty());
+        let Some(raw) = raw else {
+            return None;
+        };
+
+        normalize_executor_home_env(&mut self.executor, &self.home_dir);
+        let path = self.resolve_non_interactive_env_path(&raw);
+        if !path.exists() {
+            // GNU evalfile.c:120: ENOENT with FEVAL_ENOENTOK is silent.
+            return None;
+        }
+        if !path.is_file() {
+            eprintln!("native-shell: {}: Is a directory", path.display());
+            return None;
+        }
+        let exit = self.source_startup_file(&path);
+        self.update_completion_state();
+        exit
+    }
+
+    /// Source the non-interactive startup files. GNU shell.c:722
+    /// run_startup_files: a login shell sources the login profile chain
+    /// first (native-shell#399), whether or not a command string follows. The
+    /// BASH_ENV / NATIVE_SHELL_ENV gate below is INDEPENDENT of login —
+    /// shell.c:1214-1220 keys on interactivity and posix mode, never on
+    /// login state, so `bash -l -c` sources the profile chain AND the env
+    /// file (native-shell#412 review of the #399 PR). Returns `Some(status)`
+    /// when a startup file ended with a top-level `exit` (the native-shell#402
+    /// unwind): the caller must end the invocation with that status instead
+    /// of running its command line or script — GNU ends the shell for a
+    /// profile `exit` and for a BASH_ENV `exit` alike.
+    ///
+    /// The env-file branch mirrors GNU bash's BASH_ENV behavior
+    /// (shell.c:1214-1220): a non-interactive, non-posix, bash-mode shell
+    /// sources the file named by the environment variable before running
+    /// its command or script. POSIX mode and sh-invoked shells source no
+    /// environment file at all — `$ENV` is interactive-only under POSIX
+    /// (shell.c:1244). NativeShell adds a dedicated NATIVE_SHELL_ENV variable that takes
+    /// precedence over BASH_ENV in every mode, so an agent shell can point
+    /// at a dedicated init file without touching the bash-compatible name.
+    ///
+    /// GNU's sshd/rshd special case (shell.c:1156-1180, `-c` over ssh
+    /// sourcing the bashrc file) does not apply: its `SSH_CLIENT`/
+    /// `SSH2_CLIENT` half is compiled out in the reference build
+    /// (`config-top.h:108`, `SSH_SOURCE_BASHRC` commented out, so
+    /// `run_by_ssh = 0`), and its other half needs isnetconn(stdin) — a
+    /// socket on stdin, which a Windows spawn never hands the shell.
+    /// Verified against the WSL GNU Bash 5.3.0 baseline: `SSH_CLIENT=...`
+    /// `bash -c` sources `$BASH_ENV`, not `~/.bashrc`.
+    ///
+    /// Neither variable set is a no-op, preserving the zero-load fast path
+    /// that keeps `native-shell -c` fast and deterministic. Only the user's single init
+    /// file is sourced: no plugins, prompts, or completion machinery is loaded,
+    /// so interactive-only content stays out of the one-shot execution path.
+    pub fn source_non_interactive_env(&mut self) -> Option<i32> {
+        let mut exit = if self.login_shell_active() {
+            self.source_login_profile_files()
+        } else {
+            None
+        };
+        if exit.is_none() {
+            exit = self.source_non_interactive_startup_file();
+        }
+        self.finish_startup();
+        exit
+    }
+
+    fn source_non_interactive_startup_file(&mut self) -> Option<i32> {
+        let native_shell_raw = std::env::var(NATIVE_SHELL_ENV_VAR)
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        // GNU shell.c:1216 gates BASH_ENV on posixly_correct == 0 and
+        // act_like_sh == 0; NATIVE_SHELL_ENV stays available as the native-shell extension
+        // (agents invoke `native-shell -c`, never the sh shim).
+        let bash_raw = if self.posix_mode_active() {
+            None
+        } else {
+            std::env::var(BASH_ENV_VAR)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        };
+        let Some(raw) = native_shell_raw.or(bash_raw) else {
+            return None;
+        };
+
+        normalize_executor_home_env(&mut self.executor, &self.home_dir);
+        let path = self.resolve_non_interactive_env_path(&raw);
+        if !path.exists() {
+            // GNU maybe_execute_file passes FEVAL_ENOENTOK (evalfile.c:345):
+            // a missing BASH_ENV file is skipped silently, keeping `-c`
+            // stdout/stderr byte-stable for one-shot agents.
+            return None;
+        }
+        if !path.is_file() {
+            eprintln!("native-shell: {}: Is a directory", path.display());
+            return None;
+        }
+        // native-shell#399: an `exit` in the env file is a jump like any other
+        // startup file's (GNU ends the shell with its status); propagate it
+        // so the invoker terminates before the command line runs.
+        let exit = self.source_startup_file(&path);
+        self.update_completion_state();
+        exit
+    }
+
+    /// Resolve a non-interactive environment file path from the raw value of
+    /// NATIVE_SHELL_ENV or BASH_ENV. A leading ~ expands against the shell home
+    /// directory; the remainder goes through the executor's path resolver so
+    /// /c/..., C:/..., and native backslash spellings all work.
+    fn resolve_non_interactive_env_path(&self, raw: &str) -> PathBuf {
+        let expanded = if raw == "~" {
+            self.home_dir.clone()
+        } else if let Some(rest) = raw.strip_prefix("~/") {
+            self.home_dir.join(rest)
+        } else {
+            PathBuf::from(shell_path_to_host_path(raw))
+        };
+        self.executor
+            .resolve_shell_path(&expanded.to_string_lossy())
+    }
+
+    fn startup_rc_path(&self) -> Option<PathBuf> {
+        if let Some(file) = &self.rc_file {
+            return Some(file.clone());
+        }
+        let primary = self.home_dir.join(NATIVE_SHELL_RC_FILE);
+        if primary.is_file() {
+            return Some(primary);
+        }
+        None
+    }
+
+    /// Whether the prompt slot is currently claimed (defaults-as-floor,
+    /// design §14.5). The claim token is a non-empty `PS1` — the same token
+    /// GNU bash renders (`parse.y:6150 prompt_again` reads PS1 fresh every
+    /// render), so whoever sets PS1 last owns the prompt: the user's rc, an
+    /// enabled external framework, or a runtime command. `PROMPT_COMMAND`
+    /// is deliberately NOT a claim: it is a pre-prompt hook (the engine
+    /// executes it regardless of the prompt string), and hook-only users —
+    /// oh-my-bash's `history` plugin, title setters — must not displace the
+    /// product floor. A hook that intends to own the prompt sets PS1 itself
+    /// (starship's `starship_precmd` does exactly that), and because
+    /// `run_precmd_hooks` runs the hook before syncing, the claim is already
+    /// visible when the backend is chosen.
+    fn prompt_slot_claimed(&self) -> bool {
+        self.executor
+            .get_env("PS1")
+            .is_some_and(|value| !value.is_empty())
+    }
+
+    /// Execute `PROMPT_COMMAND` through the engine and report whether the
+    /// run ended in a TOP-LEVEL EXIT JUMP (native-shell#191): the engine re-arms
+    /// `exit_jump_pending` when the PC text raised one (rubash#433,
+    /// evalstring.c:396-403 + :618-619 — parse_and_execute catches
+    /// EXITPROG/ERREXIT at its own setjmp and RE-RAISES after the `out:`
+    /// cleanup), exactly like GNU's jump unwinding execute_variable_command
+    /// into reader_loop. The caller (the REPL's pre-prompt hook) must consume
+    /// the jump and end the session instead of rendering another prompt. The
+    /// returned status lives in `last_exit_code`: parse.y:7313/:7315's
+    /// normal-return restore is skipped when the jump unwinds, so `exit 5`
+    /// keeps rc 5. A plain failing PC or a parse error re-arms nothing: the
+    /// caller restores the pre-PC `$?` and prompts again.
+    fn run_bash_prompt_command(&mut self, last_exit_code: i32) -> bool {
+        if self.bash_prompt_command_running {
+            return false;
+        }
+
+        self.bash_prompt_command_running = true;
+        ensure_prompt_terminal_env(&mut self.executor);
+        self.executor.set_last_exit_code(last_exit_code);
+        // The engine owns the GNU semantics (eval.c:305
+        // execute_prompt_command): indexed-array elements in order,
+        // associative arrays refused, scalar string once. The host only
+        // triggers the pre-prompt hook; PROMPT_COMMAND itself may be an
+        // array under bash >= 5.1 (oh-my-bash installs one), which the
+        // engine dispatches without the host re-implementing it.
+        self.executor.execute_prompt_command();
+        let exit_jump = self.executor.take_exit_jump_pending();
+        if !exit_jump {
+            // Normal return: the pre-PC `$?` is restored (the engine already
+            // rolled its own snapshot back; this keeps the host view in
+            // sync). On the jump path the restore is skipped — the jump's
+            // status IS the session status (parse.y:3021's restore line is
+            // longjmped past in GNU).
+            self.executor.set_last_exit_code(last_exit_code);
+        }
+        self.bash_prompt_command_running = false;
+        exit_jump
+    }
+
+    /// The prompt the next REPL read should render. On the Windows factory
+    /// default ("gitbash") this re-renders from the current directory every
+    /// call — the branch/dirty segment follows `cd` without any PS1 claim.
+    /// A PS1/theme claim (prompt_slot_claimed) always wins: the claim path
+    /// rewrites `self.prompt`, so the flag check alone is not enough — an
+    /// active flag with a live claim renders the claimed prompt untouched.
+    pub(crate) fn prompt_for_display(&mut self) -> PromptBackend {
+        #[cfg(windows)]
+        if self.gitbash_prompt_active && !self.prompt_slot_claimed() {
+            let left = crate::git_prompt::render(
+                &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            );
+            self.prompt = PromptBackend::Bash(BashPrompt::new(left, String::new()));
+        }
+        self.prompt.clone()
+    }
+
+    fn sync_bash_prompt_from_env(&mut self) {
+        if self.prompt_slot_claimed() {
+            let ps1 = self.executor.get_env("PS1").unwrap_or("\\$ ").to_string();
+            let ps2 = self.executor.get_env("PS2").unwrap_or("> ").to_string();
+            let left = self.executor.expand_prompt_string_mut(&ps1);
+            let multiline = self.executor.expand_prompt_string_mut(&ps2);
+            self.prompt = PromptBackend::Bash(BashPrompt::new(left, multiline));
+        } else if !matches!(
+            self.prompt,
+            PromptBackend::Template(_) | PromptBackend::Segments(_)
+        ) {
+            // Claim released (PS1 unset/emptied — framework disabled, theme
+            // switched off, plain `unset PS1`): the product floor renders
+            // again. GNU renders an empty prompt in this case (parse.y:6150
+            // maps a missing PS1 to ""); native-shell's contract is stronger —
+            // the native floor is the floor (§14.5), so releasing the slot
+            // restores it instead of freezing the last claimed face.
+            self.prompt = self.floor_prompt.clone();
+        }
+    }
+
+    fn run_bash_ps0_preexec(&mut self) {
+        let Some(ps0) = self
+            .executor
+            .get_env("PS0")
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        let last_exit_code = self.executor.last_exit_code();
+        self.executor.set_env("PS0", &ps0);
+        let rendered = self.executor.expand_prompt_string_mut(&ps0);
+        // GNU writes the decoded PS0 to stderr (eval.c:164-176 fprintf),
+        // never stdout: `2>/dev/null` drops the bytes, `2>&1` captures them,
+        // and redirected stdout stays clean (JayWanX/native-shell#190).
+        if !rendered.is_empty() {
+            shell_channel_write(ShellChannel::Stderr, rendered.as_bytes());
+        }
+        self.executor.set_last_exit_code(last_exit_code);
+    }
+
+    /// native-shell#170 theme-preview channel: run the interactive pre-prompt
+    /// pipeline once — the native hooks plus `PROMPT_COMMAND` through the
+    /// engine's `execute_prompt_command` (exactly [`Shell::run_precmd_hooks`])
+    /// — then print the rendered PS1 between the preview markers. The
+    /// expansion is the same `expand_prompt_string_mut` call
+    /// `sync_bash_prompt_from_env` makes for every interactive prompt, so a
+    /// gallery preview shows the face the session would actually draw.
+    ///
+    /// Gated by `plugins::theme_preview::PRINT_RENDERED_PS1_ENV` on a
+    /// `native-shell -c` child (`src/main.rs` -c route): the theme-gallery preview
+    /// sources the theme's managed block in a throwaway child and reads the
+    /// marked bytes. When no PS1 is claimed — the block failed, or the theme
+    /// set no prompt — nothing is printed and the parent degrades the
+    /// preview; a claimed-but-foreign PS1 cannot occur because the preview
+    /// child strips PS1/PROMPT_COMMAND from its environment.
+    pub fn print_rendered_prompt_for_preview(&mut self) {
+        self.run_precmd_hooks();
+        let Some(ps1) = self
+            .executor
+            .get_env("PS1")
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        let rendered = self.executor.expand_prompt_string_mut(&ps1);
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        let _ = out.write_all(crate::plugins::theme_preview::PS1_BEGIN_MARKER.as_bytes());
+        let _ = out.write_all(b"\n");
+        let _ = out.write_all(rendered.as_bytes());
+        let _ = out.write_all(b"\n");
+        let _ = out.write_all(crate::plugins::theme_preview::PS1_END_MARKER.as_bytes());
+        let _ = out.write_all(b"\n");
+        let _ = out.flush();
+    }
+
+    fn source_file_into_current_shell(&mut self, path: &Path) -> anyhow::Result<i32> {
+        let shell_path = host_path_to_shell_path(&path.to_string_lossy());
+        // native-shell#402: clear before sourcing so only this file's own
+        // top-level `exit` (recorded by `execute_script_inner`) is observed
+        // by the caller below. The `. <path>` command is one simple command
+        // with no history/alias/heredoc content of its own, so the grouped
+        // readers are bypassed: they would flatten the `exit` into a plain
+        // status before it can be seen.
+        self.script_exit_jump = false;
+        self.execute_script_inner(&format!(". {}", shell_quote(&shell_path)), false, 0, false)
+    }
+
+    /// Run native hooks before rendering the next prompt.
+    ///
+    /// Returns whether the run ended in a top-level EXIT JUMP (native-shell#191):
+    /// `PROMPT_COMMAND` raised `exit`/an errexit unwind, the engine re-armed
+    /// the jump (rubash#433), and the driving REPL must end the session with
+    /// `last_exit_code` instead of rendering another prompt — GNU's
+    /// jump_to_top_level unwinds reader_loop directly (evalstring.c:618-619).
+    /// `false` (the common case) means the session continues.
+    pub fn run_precmd_hooks(&mut self) -> bool {
+        let last_exit_code = self.executor.last_exit_code();
+        let hooks = self.hooks.precmd.clone();
+        let last_exit_code_string = last_exit_code.to_string();
+        // Set in process env so segment prompt can read it via std::env::var.
+        std::env::set_var("NATIVE_SHELL_LAST_EXIT_CODE", &last_exit_code_string);
+        let context = [("NATIVE_SHELL_LAST_EXIT_CODE", last_exit_code_string)];
+        self.run_hook_scripts(&hooks, &context);
+        let pc_exit_jump = self.run_bash_prompt_command(last_exit_code);
+        if pc_exit_jump {
+            // The unwind skips everything a normal pre-prompt pass would
+            // still do (prompt re-sync, title hooks): GNU longjmps out of
+            // execute_variable_command into the reader's top level.
+            return true;
+        }
+        self.sync_bash_prompt_from_env();
+        let title = self.resolve_title_value();
+        self.run_title_hooks(&title);
+        false
+    }
+
+    /// Compute the current title for `run_title_hooks`.
+    ///
+    /// Resolution order: `NATIVE_SHELL_TITLE` env var (set by plugins or users) wins,
+    /// then the current `PWD` path, then a plain dot. Title hooks may use this
+    /// value to write a terminal title via OSC escape sequences.
+    fn resolve_title_value(&self) -> String {
+        if let Some(title) = self.executor.get_env("NATIVE_SHELL_TITLE") {
+            if !title.is_empty() {
+                return title.to_string();
+            }
+        }
+        self.executor
+            .get_env("PWD")
+            .map(str::to_owned)
+            .unwrap_or_else(|| ".".to_string())
+    }
+
+    /// Load user widget bindings from the `NATIVE_SHELL_BINDKEYS` variable declared in
+    /// the startup rc. Each line is `keyspec:widget`; unknown widget names
+    /// become shell-function widgets at trigger time. Called after the rc has
+    /// been sourced and before the line editor is built.
+    pub fn load_user_widget_bindings(&mut self) {
+        let value = self
+            .executor
+            .get_env("NATIVE_SHELL_BINDKEYS")
+            .map(str::to_owned)
+            .unwrap_or_default();
+        self.user_widget_bindings = crate::repl::parse_user_bindkeys(&value);
+    }
+
+    /// Re-resolve the live editing mode from the engine's `set -o emacs` /
+    /// `set -o vi` flags. Returns `Some(new_mode)` when the effective mode
+    /// changed (the REPL rebuilds the line editor for it), `None` otherwise.
+    ///
+    /// GNU semantics being modeled: `set -o emacs` and `set -o vi` are both
+    /// routed to one editing-mode state — bash's o_options table
+    /// (builtins/set.def:200, set.def:235) gives both entries
+    /// `set_edit_mode` (builtins/set.def:424), which calls
+    /// `rl_variable_bind("editing-mode", ...)` (set.def:427); readline binds
+    /// that variable to `sv_editmode` (lib/readline/bind.c:2001), which
+    /// swaps the active keymap immediately (bind.c:2092
+    /// `_rl_keymap = vi_insertion_keymap` / bind.c:2104
+    /// `emacs_standard_keymap`). The switch is therefore live and
+    /// mid-session: it takes effect at the next prompt, and the last
+    /// `set -o` wins. Neither option is listed in SHELLOPTS
+    /// (rubash set/options.rs `shellopts_includes_option` mirrors GNU's
+    /// exclusion), so the flags live in the engine env under
+    /// `__RUBASH_SETOPT_<name>` (rubash set/options.rs `shell_option_key`).
+    ///
+    /// Because the engine keeps the two flags independent while GNU keeps
+    /// one state, the last writer is recovered by diffing against the
+    /// previously observed pair, and the resolved state is written back
+    /// exclusively (the winner's flag on, the other off) — without that
+    /// normalization the pair would freeze at both-on after
+    /// `set -o emacs` (vi stays flagged on), and a later `set -o vi` could
+    /// never be observed as a change. The write goes through the sanctioned
+    /// `Executor::set_shell_option` (the same mutator the `set` builtin
+    /// uses); emacs/vi are excluded from SHELLOPTS, so the write touches
+    /// only the two option keys and makes `set -o` listings exclusive the
+    /// way GNU reports them. A pair where both flags turned on in one
+    /// inter-prompt gap (`set -o emacs; set -o vi` on a single command
+    /// line) is unrecoverable and resolves to vi — the canonical bashrc
+    /// idiom ends there, and re-asserting emacs is one explicit command
+    /// away. GNU's `set +o <active mode>` disables line editing entirely
+    /// (set.def:433-441 `no_line_editing`); that path is not wired here yet
+    /// — a disable-only flip keeps the current mode instead (documented
+    /// follow-up, native-shell#184).
+    ///
+    /// inputrc dependency (native-shell#185's lane): GNU also seeds the editing
+    /// mode from readline's `set editing-mode` in INPUTRC (~/.inputrc,
+    /// bound.c:2992), which this product does not read yet. Until that
+    /// surface lands, the startup mode comes from the engine flags alone;
+    /// when #185 adds an inputrc reader, its result must feed the same
+    /// initial observation (the `None` branch below) rather than a second
+    /// resolver.
+    pub fn refresh_edit_mode(&mut self) -> Option<EditorMode> {
+        // Value check mirrors rubash set/options.rs shell_option_enabled:
+        // the key holds "1"/"0" and a missing key falls back to the option
+        // default (both emacs and vi default to off).
+        let emacs_on = self.executor.get_env("__RUBASH_SETOPT_emacs") == Some("1");
+        let vi_on = self.executor.get_env("__RUBASH_SETOPT_vi") == Some("1");
+        let now = (emacs_on, vi_on);
+        let resolved = match self.edit_flags_seen.replace(now) {
+            // First observation (startup, after the rc has run): the bashrc
+            // idiom is `set -o vi`; an emacs-only flag or the all-off
+            // default keeps the configured mode.
+            None => {
+                if vi_on {
+                    EditorMode::Vi
+                } else if emacs_on {
+                    EditorMode::Emacs
+                } else {
+                    return None;
+                }
+            }
+            Some(previous) if previous == now => return None,
+            Some((emacs_was, vi_was)) => {
+                match (emacs_on && !emacs_was, vi_on && !vi_was) {
+                    // Only disables (or no-op `set +o` on the inactive
+                    // option) — no new writer, keep the current mode.
+                    (false, false) => return None,
+                    (true, false) => EditorMode::Emacs,
+                    (false, true) => EditorMode::Vi,
+                    // Both flags flipped within one gap: order unknowable,
+                    // resolved toward vi (see the doc comment above).
+                    (true, true) => EditorMode::Vi,
+                }
+            }
+        };
+        self.normalize_edit_mode(resolved);
+        if resolved == self.editor_mode {
+            None
+        } else {
+            self.editor_mode = resolved;
+            Some(resolved)
+        }
+    }
+
+    /// Write `mode` back to the engine flags exclusively (GNU models emacs
+    /// and vi as views of one editing-mode state, so exactly one is on) and
+    /// sync the observed-pair cache to the written state.
+    fn normalize_edit_mode(&mut self, mode: EditorMode) {
+        let pair = match mode {
+            EditorMode::Emacs => (true, false),
+            EditorMode::Vi => (false, true),
+        };
+        self.executor.set_shell_option("emacs", pair.0);
+        self.executor.set_shell_option("vi", pair.1);
+        self.edit_flags_seen = Some(pair);
+    }
+
+    /// Snapshot the engine's `bind` registry for the line editor
+    /// (native-shell#185). Called after the rc has been sourced and before the
+    /// line editor is built, and again whenever the registry generation
+    /// moved so a runtime `bind` call mirrors into the next prompt.
+    pub fn load_engine_bindings(&mut self) {
+        self.engine_bindings = self.executor.bind_registry_snapshot();
+        self.engine_bind_generation = self.executor.bind_registry_generation();
+    }
+
+    /// Run an engine `bind -x` command for a keypress and produce the
+    /// editor outcome (native-shell#185).
+    ///
+    /// The engine implements GNU's protocol (bashline.c:4593
+    /// bash_execute_unix_command): the command runs with
+    /// READLINE_LINE/READLINE_POINT/READLINE_MARK set (read back and
+    /// unbound afterwards); a changed READLINE_LINE replaces the buffer
+    /// (maybe_make_readline_line, bashline.c:2808) and READLINE_POINT —
+    /// a CHARACTER offset, possibly the pre-change one when the command
+    /// did not set it — lands the cursor, clamped to the buffer.
+    ///
+    /// `cursor_byte` is the reedline insertion point (byte offset) in
+    /// `buffer`; read-back offsets convert back to byte offsets. A
+    /// `bind -x` keypress never submits the line (GNU returns to
+    /// editing), so `accept` is always false.
+    pub fn run_bind_x_command(
+        &mut self,
+        index: usize,
+        buffer: &str,
+        cursor_byte: usize,
+    ) -> WidgetOutcome {
+        let Some(entry) = self.engine_bindings.get(index) else {
+            return WidgetOutcome::default();
+        };
+        let rubash::shell::bind_registry::BindKind::Execute { command } = &entry.kind else {
+            return WidgetOutcome::default();
+        };
+        let command = command.clone();
+        let safe_cursor = buffer
+            .char_indices()
+            .map(|(offset, _)| offset)
+            .filter(|offset| *offset <= cursor_byte)
+            .max()
+            .unwrap_or(0);
+        let old_point = buffer[..safe_cursor].chars().count();
+        let outcome = self
+            .executor
+            .run_bind_x_command(&command, buffer, old_point, old_point);
+
+        // Read-back semantics (bashline.c:4692-4703).
+        let Some(new_line) = outcome.line else {
+            // Command unset READLINE_LINE: keep the editor as it stood.
+            return WidgetOutcome::default();
+        };
+        let line_changed = new_line != buffer;
+        let base = if line_changed { &new_line } else { buffer };
+        // An unchanged READLINE_POINT holds the point we set before the
+        // command ran, which is exactly GNU's final cursor after
+        // maybe_make_readline_line + the point override.
+        let point_chars = outcome.point.unwrap_or(old_point);
+        let clamped = point_chars.min(base.chars().count());
+        let cursor_byte = crate::repl::char_offset_to_byte(base, clamped);
+        WidgetOutcome {
+            buffer: line_changed.then_some(new_line),
+            cursor: Some(cursor_byte),
+            accept: false,
+        }
+    }
+
+    /// True when the named widget function exists in the shell engine.
+    pub fn widget_function_available(&self, name: &str) -> bool {
+        self.executor.has_function(name)
+    }
+
+    /// Load user completion declarations from the `NATIVE_SHELL_COMPDEFS` variable
+    /// declared in the startup rc. Each line is `command:function`, or —
+    /// since issue #306 — a path to an existing directory holding
+    /// completion-definition files: `<cmd>.toml` (the same schema as the
+    /// embedded applet definitions) and `<cmd>.bash` (statically parsed, the
+    /// file body is never executed). Directory lines are resolved first so a
+    /// Windows drive-letter path (`D:/defs`) is never misread as a
+    /// `command:function` pair; declared directories are loaded into the
+    /// completion state together with the config-layer directories.
+    pub fn load_user_compdefs(&mut self) {
+        let value = self
+            .executor
+            .get_env("NATIVE_SHELL_COMPDEFS")
+            .map(str::to_owned)
+            .unwrap_or_default();
+        let mut compdefs = Vec::new();
+        let mut compdef_dirs: Vec<PathBuf> = Vec::new();
+        for entry in value.lines().map(str::trim) {
+            if entry.is_empty() || entry.starts_with('#') {
+                continue;
+            }
+            let candidate = self.resolve_non_interactive_env_path(entry);
+            if candidate.is_dir() {
+                compdef_dirs.push(candidate);
+                continue;
+            }
+            if let Some((command, function)) = entry.split_once(':') {
+                let command = command.trim();
+                let function = function.trim();
+                if command.is_empty() || function.is_empty() {
+                    continue;
+                }
+                compdefs.push((command.to_string(), function.to_string()));
+            }
+        }
+        self.compdefs = compdefs;
+        if !compdef_dirs.is_empty() {
+            let mut dirs = self.config_completion_dirs.clone();
+            dirs.extend(compdef_dirs);
+            if let Ok(mut state) = self.completion_state.lock() {
+                state.load_completion_dirs(&dirs);
+            }
+        }
+    }
+
+    /// Run a shell-function completion (`compdef`) and collect its
+    /// candidates.
+    ///
+    /// The function sees the command line through `NATIVE_SHELL_COMP_WORDS` (space
+    /// joined) and `NATIVE_SHELL_COMP_CWORD` (bash COMP_CWORD semantics). It writes
+    /// back `NATIVE_SHELL_COMP_RESULT` with one candidate per line, shaped
+    /// `value` or `value<TAB>description`. Compdef functions must not print
+    /// to stdout: completion runs while the line editor owns the terminal.
+    /// Output variables are unset again before returning.
+    pub fn run_compdef_function(
+        &mut self,
+        function: &str,
+        words: &[String],
+        cword: usize,
+    ) -> Vec<(String, Option<String>)> {
+        let joined = words.join(" ");
+        if let Err(err) = self.executor.call_function_with_env(
+            function,
+            std::iter::empty::<String>(),
+            [
+                ("NATIVE_SHELL_COMP_WORDS", joined.as_str()),
+                ("NATIVE_SHELL_COMP_CWORD", cword.to_string().as_str()),
+            ],
+        ) {
+            log::warn!("completion function '{}' failed: {}", function, err);
+        }
+
+        let result = self
+            .executor
+            .get_env("NATIVE_SHELL_COMP_RESULT")
+            .map(str::to_owned);
+        let _ = self.execute_script(
+            "unset NATIVE_SHELL_COMP_WORDS NATIVE_SHELL_COMP_CWORD NATIVE_SHELL_COMP_RESULT",
+        );
+
+        result
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| match line.split_once('\t') {
+                Some((value, description)) => (
+                    value.trim().to_string(),
+                    Some(description.trim().to_string()),
+                ),
+                None => (line.to_string(), None),
+            })
+            .collect()
+    }
+
+    /// Run a shell-function widget and collect its editor outcome.
+    ///
+    /// The function sees the current editor state through `NATIVE_SHELL_WIDGET_BUFFER`
+    /// and `NATIVE_SHELL_WIDGET_CURSOR`. It may write back `NATIVE_SHELL_WIDGET_RESULT` (a
+    /// replacement buffer; setting it to the empty string clears the line),
+    /// `NATIVE_SHELL_WIDGET_CURSOR_RESULT` (byte offset in the new buffer), and
+    /// `NATIVE_SHELL_WIDGET_ACCEPT=1` (submit the buffer afterwards). All widget
+    /// variables are unset again before returning.
+    pub fn run_widget_function(
+        &mut self,
+        function: &str,
+        buffer: &str,
+        cursor: usize,
+    ) -> WidgetOutcome {
+        if let Err(err) = self.executor.call_function_with_env(
+            function,
+            std::iter::empty::<String>(),
+            [
+                ("NATIVE_SHELL_WIDGET_BUFFER", buffer),
+                ("NATIVE_SHELL_WIDGET_CURSOR", cursor.to_string().as_str()),
+            ],
+        ) {
+            log::warn!("widget function '{}' failed: {}", function, err);
+        }
+
+        let result = self
+            .executor
+            .get_env("NATIVE_SHELL_WIDGET_RESULT")
+            .map(str::to_owned);
+        let accept = self
+            .executor
+            .get_env("NATIVE_SHELL_WIDGET_ACCEPT")
+            .map(str::to_owned);
+        let cursor_result = self
+            .executor
+            .get_env("NATIVE_SHELL_WIDGET_CURSOR_RESULT")
+            .and_then(|value| value.trim().parse::<usize>().ok());
+
+        let _ = self
+            .execute_script("unset NATIVE_SHELL_WIDGET_RESULT NATIVE_SHELL_WIDGET_ACCEPT NATIVE_SHELL_WIDGET_CURSOR_RESULT");
+
+        WidgetOutcome {
+            buffer: result,
+            cursor: cursor_result,
+            accept: accept.as_deref() == Some("1"),
+        }
+    }
+
+    /// Run native hooks immediately before the user's interactive command.
+    pub fn run_preexec_hooks(&mut self, command: &str) {
+        let command = command.trim();
+        if command.is_empty() {
+            return;
+        }
+        let hooks = self.hooks.preexec.clone();
+        let context = [("NATIVE_SHELL_PREEXEC_COMMAND", command.to_string())];
+        self.run_hook_scripts(&hooks, &context);
+        self.run_bash_ps0_preexec();
+    }
+
+    /// Run native hooks when the interactive command changed directories.
+    pub fn run_chpwd_hooks_if_changed(&mut self, old_pwd: &str, new_pwd: &str) {
+        if same_shell_dir(old_pwd, new_pwd) {
+            return;
+        }
+        let hooks = self.hooks.chpwd.clone();
+        let context = [
+            ("NATIVE_SHELL_OLDPWD", old_pwd.to_string()),
+            ("NATIVE_SHELL_PWD", new_pwd.to_string()),
+        ];
+        self.run_hook_scripts(&hooks, &context);
+    }
+
+    /// Run postcmd hooks after command execution.
+    pub fn run_postcmd_hooks(&mut self, exit_code: i32) {
+        let hooks = self.hooks.postcmd.clone();
+        let exit_code_string = exit_code.to_string();
+        let context = [("NATIVE_SHELL_LAST_EXIT_CODE", exit_code_string)];
+        self.run_hook_scripts(&hooks, &context);
+    }
+
+    /// Run zshaddhistory hooks after command is added to history.
+    pub fn run_zshaddhistory_hooks(&mut self, command: &str) {
+        let hooks = self.hooks.zshaddhistory.clone();
+        let context = [("NATIVE_SHELL_HISTORY_COMMAND", command.to_string())];
+        self.run_hook_scripts(&hooks, &context);
+    }
+
+    /// Run zshexit hooks when shell exits.
+    pub fn run_zshexit_hooks(&mut self) {
+        let hooks = self.hooks.zshexit.clone();
+        self.run_hook_scripts(&hooks, &[]);
+    }
+
+    /// Run greeting hooks at startup.
+    pub fn run_greeting_hooks(&mut self) {
+        let hooks = self.hooks.greeting.clone();
+        self.run_hook_scripts(&hooks, &[]);
+    }
+
+    /// Run title hooks to set terminal title.
+    pub fn run_title_hooks(&mut self, title: &str) {
+        let hooks = self.hooks.title.clone();
+        let context = [("NATIVE_SHELL_TITLE", title.to_string())];
+        self.run_hook_scripts(&hooks, &context);
+    }
+
+    fn print_command_not_found_hints_if_missing(&self, ast: &Ast) {
+        let Some(command) = single_command_word(ast) else {
+            return;
+        };
+        let command = decode_to_visible_text(command);
+        if resolve_native_command_path(&command).is_some() {
+            return;
+        }
+
+        self.print_command_not_found_hints(&command);
+    }
+
+    fn print_command_not_found_hints(&self, command: &str) {
+        for line in native_command_not_found_hint_lines_with_policy(
+            command,
+            |candidate| resolve_native_command_path(candidate).is_some(),
+            self.command_not_found_hint,
+        ) {
+            // Routed through the shell channel (not a bare eprintln!) so
+            // the cfg(test) capture seam observes hint emission.
+            shell_channel_write(ShellChannel::Stderr, format!("{line}\n").as_bytes());
+        }
+    }
+
+    fn sync_alias_mirror_from_executor(&mut self) {
+        self.aliases = self.executor.aliases_snapshot();
+    }
+
+    fn remember_interactive_command(&mut self, line: &str, code: i32) {
+        let line = line.trim();
+        if line.is_empty() || first_command_word(line).is_some_and(|word| word == "fuck") {
+            return;
+        }
+        self.last_interactive_command = Some(line.to_string());
+        self.last_interactive_exit_code = Some(code);
+    }
+
+    fn run_hook_scripts(&mut self, hooks: &[String], context: &[(&str, String)]) {
+        if hooks.is_empty() {
+            return;
+        }
+
+        for (name, value) in context {
+            self.executor.set_env(name, value);
+        }
+
+        for hook in hooks {
+            match self.execute_script(hook) {
+                Ok(0) => {}
+                Ok(code) => log::warn!("native hook exited with status {}", code),
+                Err(err) => log::warn!("native hook failed: {}", err),
+            }
+        }
+
+        if !context.is_empty() {
+            let unset = format!(
+                "unset {}",
+                context
+                    .iter()
+                    .map(|(name, _)| *name)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            let _ = self.execute_script(&unset);
+        }
+    }
+
+    /// Update the shared completion state from the current env + cwd.
+    pub fn update_completion_state(&self) {
+        // One-shot shells have no REPL that reads completion state; the full
+        // env clone + function snapshot would be pure startup overhead.
+        if self.one_shot {
+            return;
+        }
+        if let Ok(mut state) = self.completion_state.lock() {
+            state.current_dir = self
+                .executor_pwd_host_path()
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_else(|| state.current_dir.clone());
+            state.env_vars = self.executor.env_vars_snapshot();
+            state.aliases = self.aliases.keys().cloned().collect();
+            state.functions = self.executor.functions_snapshot().into_iter().collect();
+        }
+    }
+
+    /// Return completion candidates using the same completer state as the REPL.
+    ///
+    /// This is primarily a deterministic probe surface for binary tests and
+    /// agent diagnostics; it avoids trying to drive reedline through a TTY.
+    pub fn completion_probe(&self, input: &str, cursor_pos: usize) -> Vec<String> {
+        self.update_completion_state();
+        let mut completer = NativeShellCompleter::new(self.completion_state.clone());
+        let cursor_pos = cursor_pos.min(input.len());
+        completer
+            .complete(input, cursor_pos)
+            .into_iter()
+            .map(|suggestion| suggestion.value)
+            .collect()
+    }
+
+    /// The directory this shell considers current: the engine `PWD` when it
+    /// resolves to an existing host directory, else the process cwd.
+    ///
+    /// `execute_script` syncs the process cwd to the shell's final `PWD`
+    /// before returning, and an EXIT trap's `cd` only updates `PWD`, so
+    /// `PWD` is the truth for "where did this invocation end" — the value
+    /// the `--cwd-state` host contract records.
+    pub fn current_host_cwd(&self) -> PathBuf {
+        self.executor_pwd_host_path()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+    }
+
+    fn executor_pwd_host_path(&self) -> Option<PathBuf> {
+        let pwd = self.executor.get_env("PWD")?;
+        let host_path = self.executor.resolve_shell_path(pwd);
+        host_path.is_dir().then_some(host_path)
+    }
+
+    /// The engine-canonical persona rendering of a host path, used everywhere
+    /// the host (re)stamps the executor's `PWD`: rubash#556 (P0 #537) made the
+    /// engine render `$PWD`/`pwd` in the POSIX persona form (`/c/...`)
+    /// unconditionally, so a host-side stamp in native drive form would bend
+    /// shell-visible PWD back into the retired style and make the form depend
+    /// on which route (simple sequence vs compound line) executed last. The
+    /// root mapping still applies first so isolated-root layouts keep their
+    /// `/...` spelling; native drive spelling stays a spawn-boundary concern
+    /// (process cwd, child argv, PATH translation).
+    fn persona_pwd_from_host_path(&self, host_path: &str) -> String {
+        rubash::executor::shell_pwd_display_path(&host_path_to_shell_path_with_root(
+            host_path,
+            self.shell_root.as_deref(),
+        ))
+    }
+
+    fn sync_executor_pwd_from_process_cwd(&mut self) {
+        let Ok(cwd) = std::env::current_dir() else {
+            return;
+        };
+        let normalized_pwd = self.persona_pwd_from_host_path(&cwd.to_string_lossy());
+        self.executor.set_env("PWD", &normalized_pwd);
+    }
+
+    fn sync_process_path_from_executor_path(&mut self) {
+        let Some(path) = self.executor.get_env("PATH") else {
+            return;
+        };
+        let env = self.executor.env_vars_snapshot();
+        let process_path = process_path_from_shell_path_list(path, Some(&env));
+        std::env::set_var("PATH", &process_path);
+        if cfg!(windows) && process_path != path {
+            self.executor.set_env("PATH", &process_path);
+        }
+    }
+
+    fn sync_process_cwd_from_executor_pwd(&mut self) {
+        let pwd = match self.executor.get_env("PWD") {
+            Some(p) => p.to_string(),
+            None => {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let pwd = self.persona_pwd_from_host_path(&cwd.to_string_lossy());
+                self.executor.set_env("PWD", &pwd);
+                return;
+            }
+        };
+        let host_pwd = self.executor.resolve_shell_path(&pwd);
+        let target = host_pwd.clone();
+        if !target.is_dir() {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let pwd = self.persona_pwd_from_host_path(&cwd.to_string_lossy());
+            self.executor.set_env("PWD", &pwd);
+            return;
+        }
+        if std::env::set_current_dir(&target).is_err() {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let pwd = self.persona_pwd_from_host_path(&cwd.to_string_lossy());
+            self.executor.set_env("PWD", &pwd);
+            return;
+        }
+        let normalized_pwd = self.persona_pwd_from_host_path(&host_pwd.to_string_lossy());
+        self.executor.set_env("PWD", &normalized_pwd);
+        if let Some(old_pwd) = self.executor.get_env("OLDPWD").map(str::to_owned) {
+            let normalized_old_pwd = normalize_shell_visible_path(&old_pwd);
+            if normalized_old_pwd != old_pwd {
+                self.executor.set_env("OLDPWD", &normalized_old_pwd);
+            }
+        }
+    }
+
+    /// Last exit code from rubash executor.
+    pub fn last_exit_code(&self) -> i32 {
+        self.executor.last_exit_code()
+    }
+
+    /// Run shell process teardown semantics that live in rubash's binary entry.
+    pub fn finish_with_exit_trap(&mut self, status: i32) -> anyhow::Result<i32> {
+        self.run_zshexit_hooks();
+        match self.executor.run_exit_trap_with_status(status) {
+            Ok(code) => Ok(code),
+            Err(rubash::executor::ExecuteError::ExitCode(code)) => Ok(code),
+            Err(e) => {
+                if !is_broken_pipe_execute_error(&e) {
+                    eprintln!("native-shell: {}", e);
+                }
+                Ok(1)
+            }
+        }
+    }
+
+    /// Run the session-end history write on demand (GNU exit_shell ->
+    /// write_history, bashhist.c).
+    ///
+    /// The standard exit paths do NOT need this: the one-shot funnel's rc-0
+    /// exits return from main normally (#281), so the provider's Drop flush
+    /// runs, and interactive sessions unwind the same way. This exists for
+    /// embedding hosts that terminate through `std::process::exit` on a
+    /// path the funnel does not own — a hard exit skips Drop, so the write
+    /// must be made explicitly. Best-effort exactly like every
+    /// history-file write: never fails, never reaches stderr.
+    pub fn flush_session_history(&self) {
+        let Some(handle) = self.history_provider.as_ref() else {
+            return;
+        };
+        if let Ok(mut provider) = handle.try_borrow_mut() {
+            provider.flush_at_session_end();
+        }
+    }
+
+    /// Execute an entire script (multi-line) via rubash full AST execution.
+    ///
+    /// Unlike `execute_line` which tokenizes/parses/executes each line
+    /// independently, this method tokenizes the whole script at once.
+    /// This enables heredocs, line continuations (backslash-newline),
+    /// and multi-line compound commands (if/for/while across lines).
+    pub fn execute_script(&mut self, script: &str) -> anyhow::Result<i32> {
+        self.execute_script_with_options(script, false, 0)
+    }
+
+    /// Execute a script whose physical lines continue an input stream that
+    /// started `line_offset` lines earlier. The host stdin-script reader
+    /// (main.rs run_stdin_script) gathers complete batches and executes them
+    /// one at a time; GNU's reader_loop keeps ONE physical line counter
+    /// across the whole stream, so a diagnostic in the third gathered batch
+    /// still reports `line 3`, never a per-batch `line 1`
+    /// (JayWanX/native-shell#431).
+    pub fn execute_script_at_line_offset(
+        &mut self,
+        script: &str,
+        line_offset: usize,
+    ) -> anyhow::Result<i32> {
+        self.execute_script_with_options(script, false, line_offset)
+    }
+
+    fn execute_script_with_options(
+        &mut self,
+        script: &str,
+        interactive_terminal_colors: bool,
+        line_offset: usize,
+    ) -> anyhow::Result<i32> {
+        self.execute_script_inner(script, interactive_terminal_colors, line_offset, true)
+    }
+
+    /// The body of [`execute_script_with_options`]. `allow_grouped_readers`
+    /// is false only for the startup-file `. <path>` source (native-shell#402):
+    /// the engine's grouped readers flatten a top-level `exit` into a plain
+    /// status before the caller can observe it, so the source path forces the
+    /// tokenize+parse+execute_ast route, whose `ExitCode` unwind is recorded
+    /// in `script_exit_jump`.
+    fn execute_script_inner(
+        &mut self,
+        script: &str,
+        interactive_terminal_colors: bool,
+        line_offset: usize,
+        allow_grouped_readers: bool,
+    ) -> anyhow::Result<i32> {
+        let script = if interactive_terminal_colors {
+            script
+        } else {
+            script.trim()
+        };
+        if script.is_empty() {
+            return Ok(0);
+        }
+
+        // P2: keep the engine's history data plane active for scripts so
+        // `set -H`/`set -o history`, fc, and the history builtin behave as
+        // under rubash/GNU. The interactive path still disables it in
+        // enter_interactive() (reedline owns REPL history).
+        //
+        // Scripts that turn history expansion or aliases on must run through
+        // the engine's GNU line-group reader (script_driver
+        // run_script_with_history: per-group `!!`/`!str` expansion and
+        // recording), the same routing as rubash's main.rs — tokenize+parse
+        // +execute_ast would lose pre_process_line semantics entirely.
+        let script = normalize_native_windows_path_literals(script);
+        // JayWanX/native-shell#160: GNU parses every command string and script
+        // through the read-parse-execute loop, and an unterminated quote /
+        // backtick / `${` / `$(` / heredoc delimiter is a READ-TIME EOF
+        // diagnostic (parse.y:5419-5437 read_token_word -> yyerror
+        // "unexpected EOF while looking for matching X", exit status 2,
+        // error.c:324) — `bash -c 'echo "x'` prints the diagnostic and
+        // exits 2 without running anything. The tokenize+parse fast path
+        // below folds an unclosed quote into the word and executed
+        // `echo "x` as `echo x` with rc=0, silently. Fast-path admission
+        // is inverted to a whitelist (AGENTS no-whack-a-mole move 2): only
+        // provably-closed input keeps the local route; read-time EOF
+        // shapes fall through to the engine's real driver. The gate below
+        // is the engine's own run_source_impl gate, verbatim (script_
+        // driver.rs:2017-2076): the heredoc-delimiter arm runs first and
+        // unconditionally; the generic unclosed arm excludes `<<`-bearing
+        // text (heredoc bodies are literal data, and a closed delimiter
+        // after `<< "q` … is judged by arm 1 only). Both predicates are
+        // owned by the engine (script_driver / lexer), so this adds no
+        // second scanner — a false positive merely runs the engine's
+        // normal driver. Interactive input keeps the REPL continuation
+        // route — GNU interactive shells prompt PS2 instead of failing the
+        // read (the engine gate mirrors this with `!interactive`).
+        let parse_posix = self.executor.get_env("__RUBASH_POSIX_MODE").as_deref() == Some("1");
+        if allow_grouped_readers
+            && !self.interactive
+            && (rubash::script_driver::heredoc_delimiter_unclosed_quote(&script).is_some()
+                || (rubash::lexer::has_unclosed_input_syntax_posix(&script, parse_posix)
+                    && !script.contains("<<")))
+        {
+            let code = rubash::script_driver::run_source_with_line_offset(
+                &mut self.executor,
+                &script,
+                false,
+                0,
+                None,
+                None,
+            );
+            self.sync_process_cwd_from_executor_pwd();
+            self.sync_process_path_from_executor_path();
+            self.sync_alias_mirror_from_executor();
+            return Ok(code);
+        }
+        if allow_grouped_readers
+            && !self.interactive
+            && (rubash::script_driver::script_uses_history(&script)
+                || rubash::script_driver::script_uses_aliases(
+                    &script,
+                    // rubash#414: parse-time alias state established before
+                    // the reader starts (CLI -O expand_aliases / posix mode)
+                    // must route through the line-group driver; the executor's
+                    // own live flag is the truth source (same argument rubash
+                    // main.rs passes at its script site).
+                    self.executor.alias_expansion_enabled(),
+                ))
+        {
+            let code =
+                rubash::script_driver::run_script_with_history(&mut self.executor, &script, None);
+            self.sync_process_cwd_from_executor_pwd();
+            self.sync_process_path_from_executor_path();
+            self.sync_alias_mirror_from_executor();
+            return Ok(code);
+        }
+        let mut tokens = tokenize(&script);
+        if tokens.is_empty() {
+            return Ok(0);
+        }
+        // rubash#365: the interactive leg (REPL multi-line paste, and any
+        // interactive multi-command batch) needs GNU's read-time alias
+        // semantics for the same reasons as the line route above; the
+        // non-interactive legs above already use this driver for
+        // alias/history-bearing scripts.
+        if allow_grouped_readers {
+            if let Some(code) = self.execute_interactive_reader_batch(&script, &tokens, line_offset)
+            {
+                return Ok(code);
+            }
+        }
+        for token in &mut tokens {
+            token.position += line_offset;
+            token.column += line_offset;
+            token.logical_line += line_offset;
+        }
+        rewrite_winuxcmd_command_shims(&mut tokens, interactive_terminal_colors);
+
+        // JayWanX/native-shell#431: the engine's readers parse with the stray-close
+        // guard armed (script_driver run_source_impl arms
+        // ParseLoopOptions::stray_close_is_error — GNU parse.y rejects a `)'
+        // or case terminator reaching command position with `syntax error near
+        // unexpected token'); the default parse() keeps the pre-guard
+        // leniency, silently dropping the stray token and running the rest of
+        // the input. That leniency is how every host route that lands here
+        // (`-c`, `--encoded-command`, script file, piped/redirected stdin —
+        // anything but the engine's own stdin driver behind `-s`) executed
+        // `native-shell -c '(printf a; printf b);)'` with rc 0 where GNU bash 5.3.0
+        // exits 2 without running anything (WSL oracle, all four forms). Arm
+        // the same guard for the non-interactive fast path, threading the
+        // source text so the offending line echoes verbatim (GNU parse.y
+        // y.error; token reconstruction cannot recover the original spacing —
+        // the default path printed `` `echo a ;;' `` for input `echo a;;`).
+        // Interactive keeps the default parse: its reader-batch route above
+        // already hands semicolon/paren-bearing input to the engine, and its
+        // diagnostics take the interactive shape. When the armed parse trips,
+        // skip the host execution entirely and let the engine's group-wise
+        // driver run the input — that reproduces GNU's read-parse-execute
+        // split byte-for-byte (a `;`+newline-terminated list before the stray
+        // token still runs, then the diagnostic aborts with status 2), which
+        // a whole-string parse-then-execute cannot. Same admission shape as
+        // the unclosed-quote fall-through above: a false positive merely runs
+        // the engine's normal driver.
+        let mut ast = if self.interactive {
+            parse(&tokens)
+        } else {
+            let armed = rubash::parser::parse_with_options(
+                &tokens,
+                rubash::parser::ParseLoopOptions {
+                    stray_close_is_error: true,
+                    source_text: Some(script.clone().into()),
+                    diagnostic_text: None,
+                    source_line_offset: line_offset,
+                },
+            );
+            if allow_grouped_readers
+                && armed
+                    .commands
+                    .iter()
+                    .any(|command| Self::command_has_parse_error_marker(command))
+            {
+                let code = rubash::script_driver::run_source_with_line_offset(
+                    &mut self.executor,
+                    &script,
+                    false,
+                    line_offset,
+                    None,
+                    None,
+                );
+                self.sync_process_cwd_from_executor_pwd();
+                self.sync_process_path_from_executor_path();
+                self.sync_alias_mirror_from_executor();
+                return Ok(code);
+            }
+            armed
+        };
+        normalize_bare_windows_drive_commands(&mut ast);
+        normalize_cd_windows_drive_args(&mut ast);
+        normalize_winuxcmd_slash_drive_args(&mut ast);
+        self.inject_process_stdin_for_rewritten_pipeline(&mut ast)?;
+
+        let execution = if let Some(exit) = self.easter_egg_exit(&ast.commands) {
+            Ok(exit)
+        } else {
+            self.execute_host_synced_simple_ast(&ast)
+                .unwrap_or_else(|| match self.executor.execute_ast(&ast) {
+                    Ok(()) => Ok(self.executor.last_exit_code()),
+                    Err(err) => Err(err),
+                })
+        };
+
+        let code = match execution {
+            Ok(code) => code,
+            Err(rubash::executor::ExecuteError::ExitCode(code)) => {
+                // native-shell#402: the script unwound with a top-level `exit`
+                // (GNU jump_to_top_level EXITPROG; the engine uses the same
+                // `ExitCode` classification for the errexit ERREXIT unwind —
+                // GNU terminates for both), so record it. The startup-file
+                // sourcer ends the invocation with this status instead of
+                // reading it as an ordinary command result.
+                self.script_exit_jump = true;
+                code
+            }
+            Err(rubash::executor::ExecuteError::Return(code)) => code,
+            Err(rubash::executor::ExecuteError::ExpansionFailure(code)) => code,
+            Err(rubash::executor::ExecuteError::FatalFunctionError(code)) => code,
+            Err(rubash::executor::ExecuteError::CommandNotFound(cmd)) => {
+                eprintln!("native-shell: {}: command not found", cmd);
+                127
+            }
+            Err(e) => {
+                if !is_broken_pipe_execute_error(&e) {
+                    eprintln!("native-shell: {}", e);
+                }
+                1
+            }
+        };
+
+        self.sync_process_cwd_from_executor_pwd();
+        self.sync_process_path_from_executor_path();
+        self.sync_alias_mirror_from_executor();
+        Ok(code)
+    }
+
+    /// Whether a parse-loop command node carries one of the parser's error
+    /// markers (`__RUBASH_PARSE_ERROR*`). Top-level scan only: the stray-close
+    /// guard and every hoisting path in rubash's parse loop push their error
+    /// node at the list's top level, and that top-level delta is exactly what
+    /// arming the guard adds over the default parse (compound bodies keep
+    /// their own leniency — rubash's run_inline_section saves/restores the
+    /// flag). Mirrors the marker set script_driver's
+    /// command_tree_has_parse_error reads (rubash-internal there).
+    fn command_has_parse_error_marker(command: &rubash::parser::CommandNode) -> bool {
+        command
+            .assignments
+            .iter()
+            .any(|(name, _)| name.starts_with("__RUBASH_PARSE_ERROR"))
+    }
+
+    fn inject_process_stdin_for_rewritten_pipeline(&mut self, ast: &mut Ast) -> anyhow::Result<()> {
+        if !self.process_stdin_pipeline_bridge
+            || self.executor.get_env("__RUBASH_INHERIT_PROCESS_STDIN") != Some("1")
+        {
+            return Ok(());
+        }
+
+        let Some(stage) = process_stdin_pipeline_bridge_stage(ast) else {
+            return Ok(());
+        };
+
+        let mut input = String::new();
+        std::io::stdin().read_to_string(&mut input)?;
+        if input.is_empty() {
+            return Ok(());
+        }
+
+        stage.heredoc = Some(input);
+        stage.heredoc_delimiter = Some("NATIVE_SHELL_PROCESS_STDIN".to_string());
+        Ok(())
+    }
+    fn execute_host_synced_simple_ast(
+        &mut self,
+        ast: &Ast,
+    ) -> Option<Result<i32, rubash::executor::ExecuteError>> {
+        if !is_host_synced_simple_sequence(ast) {
+            return None;
+        }
+
+        for command in &ast.commands {
+            match self.executor.execute_command(command) {
+                Ok(()) => {
+                    self.sync_process_cwd_from_executor_pwd();
+                    self.sync_process_path_from_executor_path();
+                }
+                Err(rubash::executor::ExecuteError::ExitCode(code)) => return Some(Ok(code)),
+                Err(rubash::executor::ExecuteError::Return(code)) => return Some(Ok(code)),
+                Err(err) => return Some(Err(err)),
+            }
+        }
+
+        Some(Ok(self.executor.last_exit_code()))
+    }
+}
+
+fn restore_executor_env(executor: &mut Executor, name: &str, value: Option<String>) {
+    match value {
+        Some(value) => executor.set_env(name, &value),
+        None => executor.unset_env(name),
+    }
+}
+
+fn same_shell_dir(left: &str, right: &str) -> bool {
+    let left = normalize_shell_dir_for_compare(left);
+    let right = normalize_shell_dir_for_compare(right);
+    if cfg!(windows) {
+        left.eq_ignore_ascii_case(&right)
+    } else {
+        left == right
+    }
+}
+
+fn normalize_cd_windows_drive_args(ast: &mut Ast) {
+    if !cfg!(windows) {
+        return;
+    }
+
+    for command in &mut ast.commands {
+        normalize_cd_windows_drive_command(command);
+    }
+}
+
+fn normalize_cd_windows_drive_command(command: &mut rubash::parser::CommandNode) {
+    if let Some(and_or_list) = &mut command.and_or_list {
+        for command in &mut and_or_list.commands {
+            normalize_cd_windows_drive_command(command);
+        }
+    }
+
+    if !command
+        .words
+        .first()
+        .is_some_and(|word| word.eq_ignore_ascii_case("cd"))
+    {
+        return;
+    }
+
+    for word in command.words.iter_mut().skip(1) {
+        if let Some(normalized) = cd_tilde_path_to_slash_drive(word)
+            .or_else(|| windows_drive_path_to_slash_drive(word))
+            .or_else(|| slash_drive_path_to_windows_native(word))
+        {
+            *word = normalized;
+        }
+    }
+}
+
+fn normalize_bare_windows_drive_commands(ast: &mut Ast) {
+    if !cfg!(windows) {
+        return;
+    }
+
+    for command in &mut ast.commands {
+        normalize_bare_windows_drive_command(command);
+    }
+}
+
+fn normalize_bare_windows_drive_command(command: &mut rubash::parser::CommandNode) {
+    if let Some(and_or_list) = &mut command.and_or_list {
+        for command in &mut and_or_list.commands {
+            normalize_bare_windows_drive_command(command);
+        }
+    }
+
+    if !is_bare_windows_drive_command_shape(command)
+        || command_has_redirects(command)
+        || !command.assignments.is_empty()
+        || !command.compound_assignments.is_empty()
+        || !command.array_element_assignments.is_empty()
+    {
+        return;
+    }
+
+    let Some(drive_root) = bare_windows_drive_command_root(command) else {
+        return;
+    };
+
+    command.words = vec!["cd".to_string(), drive_root];
+    command.word_kinds = vec![TokenKind::Word, TokenKind::Word];
+    command.word_metadata = command
+        .words
+        .iter()
+        .enumerate()
+        .map(|(index, word)| {
+            rubash::parser::WordMetadata::literal(index, word.clone(), word.clone())
+        })
+        .collect();
+}
+
+fn is_bare_windows_drive_command_shape(command: &rubash::parser::CommandNode) -> bool {
+    command.pipe.is_none()
+        && !command.background
+        && !command.inverted
+        && command.pipeline_command.is_none()
+        && command.and_or_list.is_none()
+        && command.time_command.is_none()
+        && command.background_command.is_none()
+        && command.inverted_command.is_none()
+        && !command.subshell
+        && !command.subshell_end
+        && command.for_command.is_none()
+        && command.arithmetic_command.is_none()
+        && command.if_command.is_none()
+        && command.loop_command.is_none()
+        && command.conditional_command.is_none()
+        && command.subshell_command.is_none()
+        && command.case_command.is_none()
+        && command.select_command.is_none()
+        && command.function_command.is_none()
+        && command.brace_group.is_none()
+        && command.coproc_command.is_none()
+}
+
+fn bare_windows_drive_command_root(command: &rubash::parser::CommandNode) -> Option<String> {
+    let [word] = command.words.as_slice() else {
+        return None;
+    };
+    if command
+        .word_metadata
+        .first()
+        .is_some_and(|metadata| !metadata.word_quotes.is_empty() || metadata.raw.as_str() != word)
+    {
+        return None;
+    }
+
+    let bytes = word.as_bytes();
+    if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        Some(format!("{}:/", (bytes[0] as char).to_ascii_uppercase()))
+    } else {
+        None
+    }
+}
+
+fn cd_tilde_path_to_slash_drive(value: &str) -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+
+    let rest = if value == "~" {
+        ""
+    } else {
+        value.strip_prefix("~/")?
+    };
+
+    let home = std::env::var("HOME")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("USERPROFILE")
+                .ok()
+                .filter(|value| !value.is_empty())
+        })?;
+    let home = windows_drive_path_to_slash_drive(&home).unwrap_or_else(|| home.replace('\\', "/"));
+    if rest.is_empty() {
+        Some(home)
+    } else {
+        Some(format!("{}/{}", home.trim_end_matches('/'), rest))
+    }
+}
+
+fn is_host_synced_simple_sequence(ast: &Ast) -> bool {
+    if !cfg!(windows) || !ast.commands.iter().any(is_cd_command) {
+        return false;
+    }
+
+    ast.commands.iter().all(is_host_synced_simple_command)
+}
+
+fn is_host_synced_simple_command(command: &rubash::parser::CommandNode) -> bool {
+    is_plain_simple_command(command)
+        && !command
+            .words
+            .first()
+            .is_some_and(|word| word == "set" || word == "trap")
+}
+
+fn is_plain_simple_command(command: &rubash::parser::CommandNode) -> bool {
+    command.pipe.is_none()
+        && !command.background
+        && command.and_or.is_none()
+        && !command.inverted
+        && command.pipeline_command.is_none()
+        && command.and_or_list.is_none()
+        && command.time_command.is_none()
+        && command.background_command.is_none()
+        && command.inverted_command.is_none()
+        && !command.subshell
+        && !command.subshell_end
+        && command.for_command.is_none()
+        && command.arithmetic_command.is_none()
+        && command.if_command.is_none()
+        && command.loop_command.is_none()
+        && command.conditional_command.is_none()
+        && command.subshell_command.is_none()
+        && command.case_command.is_none()
+        && command.select_command.is_none()
+        && command.function_command.is_none()
+        && command.brace_group.is_none()
+        && command.coproc_command.is_none()
+}
+
+fn command_has_redirects(command: &rubash::parser::CommandNode) -> bool {
+    !command.redirects.is_empty()
+        || command.redirect_in.is_some()
+        || command.redirect_out.is_some()
+        || command.append.is_some()
+        || command.redirect_err.is_some()
+        || command.redirect_err_append.is_some()
+        || command.heredoc.is_some()
+        || command.heredoc_delimiter.is_some()
+        || !command.heredoc_redirects.is_empty()
+        || command.here_string.is_some()
+}
+
+fn process_stdin_pipeline_bridge_stage(ast: &mut Ast) -> Option<&mut rubash::parser::CommandNode> {
+    if ast.commands.len() != 1 {
+        return None;
+    }
+
+    let pipeline = ast.commands[0].pipeline_command.as_mut()?;
+    let first = pipeline.stages.first_mut()?;
+    if command_has_redirects(first) {
+        return None;
+    }
+
+    let command_name = first.words.first()?;
+    let command_name = command_name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(command_name);
+    matches!(
+        command_name.to_ascii_lowercase().as_str(),
+        "awk.exe"
+            | "cat.exe"
+            | "grep.exe"
+            | "head.exe"
+            | "sed.exe"
+            | "sort.exe"
+            | "tail.exe"
+            | "tr.exe"
+            | "uniq.exe"
+            | "wc.exe"
+    )
+    .then_some(first)
+}
+
+#[cfg(test)]
+fn native_shell_builtin_words(command: &rubash::parser::CommandNode) -> Option<(&str, &[String])> {
+    let _ = command;
+    None
+}
+
+fn is_cd_command(command: &rubash::parser::CommandNode) -> bool {
+    command
+        .words
+        .first()
+        .is_some_and(|word| word.eq_ignore_ascii_case("cd"))
+}
+
+fn rewrite_winuxcmd_command_shims(tokens: &mut Vec<Token>, interactive_terminal_colors: bool) {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let mut command_start = 0;
+    while command_start < tokens.len() {
+        let command_end = find_command_separator(tokens, command_start).unwrap_or(tokens.len());
+        let separator = tokens.get(command_end).map(|token| &token.kind);
+        let terminal_output = !matches!(separator, Some(TokenKind::Background));
+        rewrite_winuxcmd_command_shims_in_command(
+            tokens,
+            command_start,
+            command_end,
+            interactive_terminal_colors && terminal_output,
+        );
+        if command_end == tokens.len() {
+            break;
+        }
+        command_start = command_end + 1;
+    }
+}
+
+fn find_command_separator(tokens: &[Token], start: usize) -> Option<usize> {
+    tokens
+        .iter()
+        .enumerate()
+        .skip(start)
+        .find_map(|(index, token)| {
+            matches!(
+                token.kind,
+                TokenKind::Semicolon
+                    | TokenKind::And
+                    | TokenKind::Or
+                    | TokenKind::Background
+                    | TokenKind::Eof
+            )
+            .then_some(index)
+        })
+}
+
+fn rewrite_winuxcmd_command_shims_in_command(
+    tokens: &mut Vec<Token>,
+    start: usize,
+    end: usize,
+    interactive_terminal_colors: bool,
+) {
+    let mut stage_start = start;
+    while stage_start < end {
+        let stage_end = find_pipeline_separator(tokens, stage_start, end).unwrap_or(end);
+        let add_terminal_grep_color = interactive_terminal_colors
+            && stage_end == end
+            && stage_outputs_to_terminal(tokens, stage_start, stage_end);
+        rewrite_winuxcmd_command_shims_in_stage(
+            tokens,
+            stage_start,
+            stage_end,
+            add_terminal_grep_color,
+        );
+        stage_start = stage_end + 1;
+    }
+}
+
+fn find_pipeline_separator(tokens: &[Token], start: usize, end: usize) -> Option<usize> {
+    tokens[start..end]
+        .iter()
+        .position(|token| matches!(token.kind, TokenKind::Pipe | TokenKind::PipeErr))
+        .map(|offset| start + offset)
+}
+
+fn stage_outputs_to_terminal(tokens: &[Token], start: usize, end: usize) -> bool {
+    !tokens[start..end]
+        .iter()
+        .any(|token| matches!(token.kind, TokenKind::RedirectOut | TokenKind::Append))
+}
+
+fn rewrite_winuxcmd_command_shims_in_stage(
+    tokens: &mut Vec<Token>,
+    start: usize,
+    end: usize,
+    add_terminal_grep_color: bool,
+) {
+    let Some(command_index) = simple_command_word_index(tokens, start, end) else {
+        return;
+    };
+
+    match winuxcmd_command_shim(&tokens[command_index]) {
+        Some(WinuxCmdShim::Exe { target }) => {
+            tokens[command_index].value = target.to_string();
+            tokens[command_index].raw = target.to_string();
+        }
+        None => return,
+    }
+
+    if add_terminal_grep_color
+        && grep_command_name(&tokens[command_index])
+        && !grep_stage_has_color_option(tokens, command_index + 1, end)
+    {
+        tokens.insert(
+            command_index + 1,
+            Token::new(
+                TokenKind::Word,
+                "--color=always",
+                tokens[command_index].position,
+            ),
+        );
+    }
+}
+
+/// Decode rubash transport words to user-visible text for host-side
+/// consumers that read `ast.words`/`token.value` directly (native plugins,
+/// process plugins, script dispatch). The executor decodes carriers at its
+/// own argv boundary; host code must use the public decoder instead of
+/// touching carrier bytes itself.
+fn decoded_words(words: &[String]) -> Vec<String> {
+    words
+        .iter()
+        .map(|word| decode_to_visible_text(word))
+        .collect()
+}
+
+fn simple_command_word_index(tokens: &[Token], start: usize, end: usize) -> Option<usize> {
+    let mut saw_command_prefix = false;
+    for (offset, token) in tokens[start..end].iter().enumerate() {
+        match token.kind {
+            TokenKind::Assignment => continue,
+            TokenKind::Word if token.value == "command" && !saw_command_prefix => {
+                saw_command_prefix = true;
+            }
+            TokenKind::Word if token.value == "builtin" && !saw_command_prefix => return None,
+            TokenKind::Word => return Some(start + offset),
+            _ => {}
+        }
+    }
+    None
+}
+
+enum WinuxCmdShim {
+    Exe { target: &'static str },
+}
+
+fn winuxcmd_command_shim(token: &Token) -> Option<WinuxCmdShim> {
+    if !matches!(token.kind, TokenKind::Word) {
+        return None;
+    }
+
+    for (name, target) in WINUXCMD_EXE_SHIMS {
+        if token.value.eq_ignore_ascii_case(name) && token.raw.eq_ignore_ascii_case(name) {
+            return Some(WinuxCmdShim::Exe { target });
+        }
+    }
+
+    if token.value.eq_ignore_ascii_case("grep.exe") && token.raw.eq_ignore_ascii_case("grep.exe") {
+        return Some(WinuxCmdShim::Exe { target: "grep.exe" });
+    }
+    None
+}
+
+const WINUXCMD_EXE_SHIMS: &[(&str, &str)] = &[("grep", "grep.exe")];
+
+fn grep_command_name(token: &Token) -> bool {
+    token.value.eq_ignore_ascii_case("grep") || token.value.eq_ignore_ascii_case("grep.exe")
+}
+
+fn grep_stage_has_color_option(tokens: &[Token], start: usize, end: usize) -> bool {
+    for token in &tokens[start..end] {
+        if !matches!(
+            token.kind,
+            TokenKind::Word | TokenKind::Variable | TokenKind::Assignment | TokenKind::CommandSubst
+        ) {
+            continue;
+        }
+        let value = token.value.as_str();
+        if value == "--" {
+            break;
+        }
+        if value == "--color"
+            || value == "--colour"
+            || value.starts_with("--color=")
+            || value.starts_with("--colour=")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn normalize_winuxcmd_slash_drive_args(ast: &mut Ast) {
+    if !cfg!(windows) {
+        return;
+    }
+
+    for command in &mut ast.commands {
+        normalize_winuxcmd_slash_drive_command(command);
+    }
+}
+
+fn normalize_winuxcmd_slash_drive_command(command: &mut rubash::parser::CommandNode) {
+    if let Some(and_or_list) = &mut command.and_or_list {
+        for command in &mut and_or_list.commands {
+            normalize_winuxcmd_slash_drive_command(command);
+        }
+    }
+
+    let Some(command_name) = command.words.first().cloned() else {
+        return;
+    };
+    if !is_winuxcmd_path_command(&command_name) {
+        return;
+    }
+
+    let translate = winuxcmd_path_translation_mask(&command_name, &command.words);
+    for (index, word) in command.words.iter_mut().enumerate() {
+        if index == 0 || !translate.get(index).copied().unwrap_or(true) {
+            continue;
+        }
+        if let Some(normalized) = slash_drive_arg_to_windows_native(word) {
+            *word = normalized;
+        }
+    }
+}
+
+fn is_winuxcmd_path_command(command: &str) -> bool {
+    let command = command.to_ascii_lowercase();
+    let command = command.strip_suffix(".exe").unwrap_or(&command);
+    WINUXCMD_PATH_COMMANDS.contains(&command)
+}
+
+const WINUXCMD_PATH_COMMANDS: &[&str] = &[
+    "awk",
+    "b2sum",
+    "base32",
+    "base64",
+    "basename",
+    "basenc",
+    "cat",
+    "chcon",
+    "chgrp",
+    "chmod",
+    "chown",
+    "chroot",
+    "cksum",
+    "cmp",
+    "col",
+    "column",
+    "comm",
+    "cp",
+    "cpio",
+    "csplit",
+    "cut",
+    "cygpath",
+    "d2u",
+    "dd",
+    "df",
+    "diff",
+    "diff3",
+    "dir",
+    "dirname",
+    "dos2unix",
+    "du",
+    "expand",
+    "fd",
+    "file",
+    "find",
+    "fmt",
+    "fold",
+    "grep",
+    "head",
+    "hexdump",
+    "hmac256",
+    "install",
+    "join",
+    "jq",
+    "less",
+    "link",
+    "ln",
+    "lsof",
+    "ls",
+    "md5sum",
+    "mkdir",
+    "mkfifo",
+    "mknod",
+    "mktemp",
+    "more",
+    "mv",
+    "nl",
+    "od",
+    "paste",
+    "patch",
+    "pathchk",
+    "pr",
+    "ptx",
+    "readlink",
+    "realpath",
+    "rev",
+    "rm",
+    "rmdir",
+    "sdiff",
+    "sed",
+    "sha1sum",
+    "sha224sum",
+    "sha256sum",
+    "sha384sum",
+    "sha512sum",
+    "shred",
+    "shuf",
+    "sort",
+    "split",
+    "stat",
+    "strings",
+    "sum",
+    "tac",
+    "tail",
+    "tar",
+    "tee",
+    "tic",
+    "toe",
+    "touch",
+    "tree",
+    "truncate",
+    "tsort",
+    "u2d",
+    "unexpand",
+    "uniq",
+    "unix2dos",
+    "unlink",
+    "vdir",
+    "wc",
+    "xxd",
+];
+
+/// Per-argument mask controlling which WinuxCmd command arguments may be
+/// slash-drive translated. Pattern, regex, or script operands of `grep`,
+/// `sed`, `awk`, and `find` are left untouched so a `/x/`-shaped pattern is
+/// not rewritten into a Windows drive path (JayWanX/native-shell#61).
+fn winuxcmd_path_translation_mask(command_name: &str, words: &[String]) -> Vec<bool> {
+    let mut mask = vec![true; words.len()];
+    if let Some(first) = mask.first_mut() {
+        *first = false;
+    }
+
+    let name = command_name.trim_end_matches(".exe").to_ascii_lowercase();
+    match name.as_str() {
+        "grep" => mask_first_positional_pattern(
+            words,
+            &mut mask,
+            &["-e", "--regexp"],
+            &["-f", "--file"],
+            &[
+                "-m",
+                "--max-count",
+                "-A",
+                "--after-context",
+                "-B",
+                "--before-context",
+                "-C",
+                "--context",
+                "-d",
+                "--devices",
+                "-D",
+                "--directories",
+            ],
+        ),
+        "sed" => mask_first_positional_pattern(
+            words,
+            &mut mask,
+            &["-e", "--expression"],
+            &["-f", "--file"],
+            &[],
+        ),
+        "awk" => mask_first_positional_pattern(words, &mut mask, &[], &["-f", "--file"], &[]),
+        "find" => mask_find_expression(words, &mut mask),
+        // basename/dirname are filesystem-blind string transforms: GNU
+        // dirname.c/basename.c never stat their operand, so a POSIX-shaped
+        // NAME is display text, not a slash-drive path (native-shell#346:
+        // `dirname /a/b` must print `/a`, not the drive-form effect `A:`).
+        // Mask every positional, mirroring rubash's argv_data_primary_positions.
+        "basename" | "dirname" => mask_all_positionals(words, &mut mask),
+        _ => {}
+    }
+    mask
+}
+
+/// Masks every non-switch word: for filesystem-blind string tools
+/// (basename/dirname) each positional — NAME and SUFFIX alike — is data.
+fn mask_all_positionals(words: &[String], mask: &mut [bool]) {
+    for (index, arg) in words.iter().enumerate() {
+        if index == 0 {
+            continue;
+        }
+        if !(arg.len() > 1 && arg.starts_with('-')) {
+            if let Some(slot) = mask.get_mut(index) {
+                *slot = false;
+            }
+        }
+    }
+}
+
+fn short_option_char(opts: &[&str]) -> Option<char> {
+    opts.iter().find_map(|opt| {
+        let bytes = opt.as_bytes();
+        if bytes.len() == 2 && bytes[0] == b'-' && bytes[1].is_ascii_alphabetic() {
+            Some(bytes[1] as char)
+        } else {
+            None
+        }
+    })
+}
+
+/// Marks the first positional operand of a pattern/script command as
+/// non-translatable. `pattern_opts` consume a separate pattern value,
+/// `file_opts` consume a separate file operand, and `value_opts` consume a
+/// numeric or action value; any of the first two suppresses the positional
+/// pattern. Attached `--opt=value` and `-oVALUE` clusters carry the value in
+/// the same token and only gate the positional operand.
+fn mask_first_positional_pattern(
+    words: &[String],
+    mask: &mut [bool],
+    pattern_opts: &[&str],
+    file_opts: &[&str],
+    value_opts: &[&str],
+) {
+    let pattern_short = short_option_char(pattern_opts);
+    let file_short = short_option_char(file_opts);
+
+    let mut pattern_via_option = false;
+    let mut after_dashdash = false;
+    let mut first_positional: Option<usize> = None;
+    let mut i = 1;
+    while i < words.len() {
+        let arg = words[i].as_str();
+        if !after_dashdash && arg == "--" {
+            after_dashdash = true;
+            i += 1;
+            continue;
+        }
+        let is_option = !after_dashdash && arg.starts_with('-') && arg.len() > 1;
+
+        if is_option {
+            if pattern_opts.contains(&arg) {
+                pattern_via_option = true;
+                if let Some(slot) = mask.get_mut(i + 1) {
+                    *slot = false;
+                }
+                i += 2;
+                continue;
+            }
+            if file_opts.contains(&arg) {
+                pattern_via_option = true;
+                i += 2;
+                continue;
+            }
+            if value_opts.contains(&arg) {
+                i += 2;
+                continue;
+            }
+            if let Some(name) = arg
+                .strip_prefix("--")
+                .and_then(|rest| rest.split('=').next())
+            {
+                let long = format!("--{name}");
+                if pattern_opts.contains(&long.as_str()) || file_opts.contains(&long.as_str()) {
+                    pattern_via_option = true;
+                }
+            } else if let Some(cluster) = arg.strip_prefix('-') {
+                if let Some(first) = cluster.chars().next() {
+                    if Some(first) == pattern_short || Some(first) == file_short {
+                        pattern_via_option = true;
+                    }
+                }
+            }
+        } else if first_positional.is_none() {
+            first_positional = Some(i);
+        }
+        i += 1;
+    }
+
+    if !pattern_via_option {
+        if let Some(idx) = first_positional {
+            if let Some(slot) = mask.get_mut(idx) {
+                *slot = false;
+            }
+        }
+    }
+}
+
+/// Marks `find` pattern-primary values (`-name`, `-path`, `-regex`, ...) as
+/// non-translatable. Leading non-option operands are starting paths and stay
+/// translatable.
+fn mask_find_expression(words: &[String], mask: &mut [bool]) {
+    let pattern_primaries = [
+        "-name",
+        "-path",
+        "-regex",
+        "-iregex",
+        "-ipath",
+        "-lname",
+        "-wholename",
+        "-ilname",
+        "-iwholename",
+    ];
+    let mut in_expression = false;
+    let mut i = 1;
+    while i < words.len() {
+        let arg = words[i].as_str();
+        if !in_expression && (arg.starts_with('-') || matches!(arg, "!" | "(" | ")")) {
+            in_expression = true;
+        }
+        if in_expression && pattern_primaries.contains(&arg) {
+            if let Some(slot) = mask.get_mut(i + 1) {
+                *slot = false;
+            }
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+}
+
+fn slash_drive_arg_to_windows_native(value: &str) -> Option<String> {
+    if let Some(path) = slash_drive_path_to_windows_native(value) {
+        return Some(path);
+    }
+
+    let (prefix, path) = value.split_once('=')?;
+    slash_drive_path_to_windows_native(path).map(|path| format!("{prefix}={path}"))
+}
+
+fn slash_drive_path_to_windows_native(value: &str) -> Option<String> {
+    let normalized = value.replace('\\', "/");
+    let bytes = normalized.as_bytes();
+    if bytes.len() >= 2
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && (bytes.len() == 2 || bytes.get(2) == Some(&b'/'))
+    {
+        Some(shell_path_to_host_path(&normalized).replace('\\', "/"))
+    } else {
+        None
+    }
+}
+
+fn windows_drive_path_to_slash_drive(value: &str) -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+
+    let normalized = value.replace('\\', "/");
+    let bytes = normalized.as_bytes();
+    if bytes.len() < 2 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {
+        return None;
+    }
+
+    let drive = (bytes[0] as char).to_ascii_lowercase();
+    if bytes.len() == 2 {
+        return Some(format!("/{drive}/"));
+    }
+    if bytes.get(2) == Some(&b'/') {
+        return Some(format!("/{drive}{}", &normalized[2..]));
+    }
+
+    None
+}
+
+fn normalize_shell_dir_for_compare(value: &str) -> String {
+    let normalized = normalize_shell_visible_path(value)
+        .trim_end_matches(['/', '\\'])
+        .replace('/', "\\");
+    if normalized.is_empty() {
+        value.to_string()
+    } else {
+        normalized
+    }
+}
+
+fn normalize_native_windows_path_literals(input: &str) -> String {
+    if !cfg!(windows) {
+        return input.to_string();
+    }
+
+    let chars: Vec<char> = input.chars().collect();
+    let mut output = String::with_capacity(input.len());
+    let mut changed = false;
+    let mut quote: Option<char> = None;
+    let mut index = 0;
+
+    while index < chars.len() {
+        let ch = chars[index];
+
+        if let Some(quote_char) = quote {
+            output.push(ch);
+            if ch == quote_char {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            output.push(ch);
+            index += 1;
+            continue;
+        }
+
+        if is_native_windows_path_literal_start(&chars, index) {
+            while index < chars.len() && !is_shell_word_boundary(chars[index]) {
+                let path_ch = chars[index];
+                if path_ch == '\\' {
+                    // Double the separator so Rubash's lexer returns one literal
+                    // backslash instead of treating it as a shell escape.
+                    output.push('\\');
+                    output.push('\\');
+                    changed = true;
+                } else {
+                    output.push(path_ch);
+                }
+                index += 1;
+            }
+            continue;
+        }
+
+        output.push(ch);
+        index += 1;
+    }
+
+    if changed {
+        output
+    } else {
+        input.to_string()
+    }
+}
+
+fn is_native_windows_path_literal_start(chars: &[char], index: usize) -> bool {
+    index + 2 < chars.len()
+        && chars[index].is_ascii_alphabetic()
+        && chars[index + 1] == ':'
+        && chars[index + 2] == '\\'
+        && (index == 0 || is_windows_path_literal_boundary(chars[index - 1]))
+}
+
+fn is_windows_path_literal_boundary(ch: char) -> bool {
+    ch.is_ascii_whitespace()
+        || matches!(
+            ch,
+            '=' | '(' | '[' | '{' | ',' | ';' | '|' | '&' | '<' | '>'
+        )
+}
+
+fn is_shell_word_boundary(ch: char) -> bool {
+    ch.is_ascii_whitespace() || matches!(ch, ';' | '|' | '&' | '<' | '>' | '(' | ')' | '\'' | '"')
+}
+
+fn first_command_word(line: &str) -> Option<String> {
+    let line = normalize_native_windows_path_literals(line);
+    let tokens = tokenize(&line);
+    if tokens.is_empty() {
+        return None;
+    }
+    let ast = parse(&tokens);
+    if ast.commands.len() != 1 {
+        return None;
+    }
+    ast.commands[0]
+        .words
+        .first()
+        .map(|word| decode_to_visible_text(word))
+}
+
+fn single_command_word(ast: &Ast) -> Option<&str> {
+    if ast.commands.len() != 1 {
+        return None;
+    }
+    ast.commands[0].words.first().map(String::as_str)
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CommandNotFoundProviderOutput {
+    Suggestions(Vec<String>),
+    Empty,
+    Failed(String),
+}
+/// Test-facing default-policy shape of the hint builder: production always
+/// resolves the policy from `Shell::command_not_found_hint`.
+#[cfg(test)]
+fn native_command_not_found_hint_lines<F>(command: &str, command_exists: F) -> Vec<String>
+where
+    F: FnMut(&str) -> bool,
+{
+    native_command_not_found_hint_lines_with_policy(
+        command,
+        command_exists,
+        crate::config::CommandNotFoundHint::default(),
+    )
+}
+
+/// native-shell#249: the unsolicited "package search hints" block is gone. The
+/// recipe/wpm install hints stay (they fire only for exact, known tool
+/// names — targeted advice, not a typo-triggered advertisement). The
+/// search suggestion itself is opt-in (`native-shell config set
+/// command-not-found-hint wpm`) and names only native-shell's own wpm — never
+/// winget/scoop/choco.
+#[cfg_attr(not(windows), allow(unused_mut))]
+fn native_command_not_found_hint_lines_with_policy<F>(
+    command: &str,
+    mut command_exists: F,
+    hint: crate::config::CommandNotFoundHint,
+) -> Vec<String>
+where
+    F: FnMut(&str) -> bool,
+{
+    let mut lines = Vec::new();
+    if !is_package_search_candidate(command) {
+        return lines;
+    }
+
+    let search = shell_quote(command);
+
+    // Application tools with a compiled-in plugin recipe: native-shell downloads
+    // nothing (download retraction 2026-10-04), so the hint names the
+    // platform's primary package-manager command directly — wpm first on
+    // Windows (owner correction 2026-10-03), the native manager elsewhere.
+    // `native-shell plugin add <recipe>` prints the same, fuller recommendation.
+    if let Some(recipe) = plugin_recipe_for_command(command) {
+        if let Some(install) = crate::plugins::recipes::first_recommendation(recipe) {
+            lines.push(format!(
+                "native-shell: try '{install}' to add {command} (or: native-shell plugin add {recipe})"
+            ));
+        }
+    }
+
+    // The wpm channel survives only for the bundled Unix command layer
+    // (awk/jq/7z/…), and only on Windows — wpm does not exist elsewhere and
+    // the string must not surface in non-Windows builds.
+    #[cfg(windows)]
+    if let Some(package) = wpm_package_for_command(command) {
+        lines.push(format!(
+            "native-shell: try 'wpm install {}' to add {}",
+            package, command
+        ));
+    }
+
+    // native-shell#249: the package search suggestion is opt-in, wpm-only, and
+    // fires only for high-confidence near-misses (see
+    // `is_high_confidence_package_near_miss`). Off by default — GNU bash
+    // parity for the common typo.
+    #[cfg(windows)]
+    if hint == crate::config::CommandNotFoundHint::Wpm
+        && is_high_confidence_package_near_miss(command, &mut command_exists)
+    {
+        lines.push("native-shell: package search hints:".to_string());
+        lines.push(format!("  wpm search --name {}", search));
+    }
+    #[cfg(not(windows))]
+    // wpm does not exist on this platform, so the opt-in channel has
+    // nothing to name: the policy parameter and the existence probe stay
+    // intentionally unused here.
+    let _ = (command_exists, hint, search);
+
+    lines
+}
+
+/// native-shell#249 trigger tightening (opt-in channel only): the typed word is
+/// a high-confidence package near-miss only when dropping its final
+/// character — edit distance ≤ 1 by truncation, the typo shape the issue
+/// names — hits an installed command or a known package command name.
+/// Arbitrary one-off typos ("win") stay hint-less even with the channel
+/// enabled.
+#[cfg(windows)]
+fn is_high_confidence_package_near_miss<F>(command: &str, command_exists: &mut F) -> bool
+where
+    F: FnMut(&str) -> bool,
+{
+    let Some((last_char_index, _)) = command.char_indices().last() else {
+        return false;
+    };
+    let prefix = &command[..last_char_index];
+    if prefix.is_empty() {
+        return false;
+    }
+    command_exists(prefix)
+        || wpm_package_for_command(prefix).is_some()
+        || plugin_recipe_for_command(prefix).is_some()
+}
+
+/// Application tools that own a compiled-in plugin executable-tool recipe:
+/// their install hint names the recipe's package-manager recommendation
+/// (cross-platform — wpm first on Windows, native managers elsewhere).
+/// Keep in sync with `assets/plugins/recipes.toml`: an entry here without a
+/// recipe row would print a dead verb.
+fn plugin_recipe_for_command(command: &str) -> Option<&'static str> {
+    match command {
+        "rg" => Some("ripgrep"),
+        "fd" => Some("fd"),
+        "fzf" => Some("fzf"),
+        "bat" => Some("bat"),
+        "eza" => Some("eza"),
+        "zoxide" => Some("zoxide"),
+        "dust" => Some("dust"),
+        "duf" => Some("duf"),
+        "erd" => Some("erdtree"),
+        "direnv" => Some("direnv"),
+        "starship" => Some("starship"),
+        _ => None,
+    }
+}
+
+/// Bundled Unix command-layer packages wpm still manages (owner ruling
+/// 2026-10-03): the classic Unix toolbox that travels with the winuxcmd
+/// tree — text/data filters, archive and transfer utilities. Application
+/// tools are NOT here; they install through the plugin driver.
+#[cfg(windows)]
+fn wpm_package_for_command(command: &str) -> Option<&'static str> {
+    match command {
+        "awk" => Some("awk"),
+        "gawk" => Some("gawk"),
+        "jq" => Some("jq"),
+        "yq" => Some("yq"),
+        "ncat" => Some("ncat"),
+        "7z" | "7zz" => Some("7zip"),
+        "zstd" | "unzstd" | "zstdcat" => Some("zstd"),
+        "wget" => Some("wget"),
+        "aria2c" => Some("aria2"),
+        "rclone" => Some("rclone"),
+        "busybox" => Some("busybox"),
+        _ => None,
+    }
+}
+
+fn is_package_search_candidate(command: &str) -> bool {
+    !command.is_empty()
+        && !command.contains('/')
+        && !command.contains('\\')
+        && !command.contains(':')
+}
+
+fn is_broken_pipe_execute_error(error: &rubash::executor::ExecuteError) -> bool {
+    match error {
+        rubash::executor::ExecuteError::IoError(error) => is_broken_pipe_io_error(error),
+        _ => {
+            let message = error.to_string();
+            message.contains("os error 232") || message.contains("管道正在被关闭")
+        }
+    }
+}
+
+fn is_broken_pipe_io_error(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::BrokenPipe || error.raw_os_error() == Some(232)
+}
+
+fn normalize_executor_home_env(executor: &mut Executor, home_dir: &Path) {
+    let home = host_path_to_shell_path(&home_dir.to_string_lossy());
+    let current = executor.get_env("HOME").unwrap_or_default();
+    // GNU shell.c/variables.c: HOME comes from the caller's environment.
+    // Normalize only when it is missing or Windows-shaped (backslashes,
+    // slash-drive); an explicitly exported POSIX HOME is the caller's
+    // choice and is honored verbatim (invocation.tests HOME=$TDIR).
+    let should_update = current.trim().is_empty()
+        || current.contains('\\')
+        || (cfg!(windows) && is_slash_drive_path(current));
+    if should_update && !home.is_empty() {
+        executor.set_env("HOME", &home);
+    }
+}
+
+fn ensure_windows_profile_env(executor: &mut Executor, home_dir: &Path) {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let home = shell_path_to_host_path(&home_dir.to_string_lossy()).replace('/', "\\");
+    if home.trim().is_empty() {
+        return;
+    }
+
+    executor.set_env("USERPROFILE", &home);
+    if let Some((drive, path)) = windows_drive_and_home_path(&home) {
+        set_executor_env_if_missing_or_empty(executor, "HOMEDRIVE", &drive);
+        set_executor_env_if_missing_or_empty(executor, "HOMEPATH", &path);
+    }
+    set_executor_env_if_missing_or_empty(
+        executor,
+        "APPDATA",
+        &format!("{}\\AppData\\Roaming", home.trim_end_matches('\\')),
+    );
+    set_executor_env_if_missing_or_empty(
+        executor,
+        "LOCALAPPDATA",
+        &format!("{}\\AppData\\Local", home.trim_end_matches('\\')),
+    );
+}
+
+fn ensure_prompt_terminal_env(executor: &mut Executor) {
+    set_executor_env_if_missing_or_empty(executor, "COLUMNS", "80");
+}
+
+fn set_executor_env_if_missing_or_empty(executor: &mut Executor, name: &str, value: &str) {
+    if executor
+        .get_env(name)
+        .map_or(true, |current| current.trim().is_empty())
+    {
+        executor.export_env(name, value);
+    }
+}
+
+fn windows_drive_and_home_path(path: &str) -> Option<(String, String)> {
+    let bytes = path.as_bytes();
+    if bytes.len() < 3 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {
+        return None;
+    }
+    let drive = path[..2].to_string();
+    let rest = path[2..].trim_start_matches(['\\', '/']);
+    Some((drive, format!("\\{}", rest.replace('/', "\\"))))
+}
+
+fn compatible_shell_path_from_env() -> Option<PathBuf> {
+    let path = std::env::var_os(COMPATIBLE_SHELL_PATH_ENV)?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(path))
+}
+
+fn prepare_shell_root(winuxcmd_path: Option<&Path>) -> anyhow::Result<Option<PathBuf>> {
+    if !cfg!(windows) {
+        return Ok(None);
+    }
+
+    let root = std::env::var_os("NATIVE_SHELL_ROOT")
+        .or_else(|| std::env::var_os("WINUXSH_ROOT")) // deprecated rubash bridge
+        .filter(|value| !value.is_empty())
+        .map(|value| PathBuf::from(shell_path_to_host_path(&value.to_string_lossy())))
+        .or_else(|| winuxcmd_path.map(winuxcmd::installation_root));
+    let Some(root) = root else {
+        return Ok(None);
+    };
+
+    // /tmp is intentionally absent: it is backed by the real Windows temp
+    // directory (JayWanX/native-shell#94), never by the install tree.
+    for relative in ["bin", "usr/bin", "usr/local/bin", "etc", "var", "dev"] {
+        std::fs::create_dir_all(root.join(relative))?;
+    }
+    Ok(Some(root))
+}
+
+fn is_slash_drive_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 2
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && (bytes.len() == 2 || bytes.get(2) == Some(&b'/'))
+}
+
+#[cfg(test)]
+#[cfg(test)]
+fn resolve_shell_path_argument(pwd: &str, arg: &str) -> PathBuf {
+    resolve_shell_path_argument_with_env(pwd, arg, &HashMap::new())
+}
+
+#[cfg(test)]
+fn resolve_shell_path_argument_with_env(
+    pwd: &str,
+    arg: &str,
+    env: &HashMap<String, String>,
+) -> PathBuf {
+    if let Some(path) = resolve_current_user_tilde_path(arg) {
+        return path;
+    }
+
+    let candidate = Executor::resolve_shell_path_from_env(arg, env);
+    let normalized = arg.replace('\\', "/");
+    if candidate.is_absolute() || is_windows_drive_path(&normalized) {
+        return candidate;
+    }
+
+    Executor::resolve_shell_path_from_env(pwd, env).join(candidate)
+}
+
+#[cfg(test)]
+fn resolve_current_user_tilde_path(arg: &str) -> Option<PathBuf> {
+    let rest = if arg == "~" {
+        ""
+    } else {
+        arg.strip_prefix("~/").or_else(|| arg.strip_prefix("~\\"))?
+    };
+    let home = shell_home_dir()?;
+    let home = PathBuf::from(shell_path_to_host_path(home.to_string_lossy().as_ref()));
+    if rest.is_empty() {
+        Some(home)
+    } else {
+        Some(home.join(shell_path_to_host_path(rest)))
+    }
+}
+
+#[cfg(test)]
+fn is_windows_drive_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 3 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn apply_alias(executor: &mut Executor, name: &str, value: &str) -> bool {
+    if !is_alias_name(name) {
+        return false;
+    }
+
+    let source = format!("alias {}={}", name, shell_quote(value));
+    let tokens = tokenize(&source);
+    if tokens.is_empty() {
+        return false;
+    }
+    let ast = parse(&tokens);
+    executor.execute_ast(&ast).is_ok() && executor.last_exit_code() == 0
+}
+
+fn is_alias_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(ch) if ch == '_' || ch.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|ch| ch == '_' || ch == '-' || ch == '!' || ch.is_ascii_alphanumeric())
+}
+
+fn resolve_native_command_path(command: &str) -> Option<PathBuf> {
+    resolve_native_command_path_with_path(command, std::env::var_os("PATH")?)
+}
+
+fn resolve_native_command_path_with_path(
+    command: &str,
+    path: impl AsRef<std::ffi::OsStr>,
+) -> Option<PathBuf> {
+    let command_path = PathBuf::from(command);
+    if command_path.is_file() {
+        return Some(command_path);
+    }
+
+    let has_extension = PathBuf::from(command)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some();
+    let extensions: &[&str] = if has_extension {
+        &[""]
+    } else if cfg!(windows) {
+        &[".exe", ".cmd", ".bat", ""]
+    } else {
+        &[""]
+    };
+
+    for dir in std::env::split_paths(path.as_ref()) {
+        for ext in extensions {
+            let candidate = dir.join(format!("{}{}", command, ext));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
+fn sync_executor_path_from_process_path(executor: &mut Executor) {
+    if let Ok(path) = std::env::var("PATH") {
+        executor.set_env("PATH", &path);
+    }
+}
+
+fn process_path_from_shell_path_list(value: &str, env: Option<&HashMap<String, String>>) -> String {
+    if !cfg!(windows) {
+        return value.to_string();
+    }
+
+    split_shell_path_list(value)
+        .into_iter()
+        .flat_map(|entry| shell_path_entry_to_process_paths(&entry, env))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn split_shell_path_list(value: &str) -> Vec<String> {
+    let bytes = value.as_bytes();
+    let mut entries = Vec::new();
+    let mut entry_start = 0;
+    for (index, byte) in bytes.iter().enumerate() {
+        let is_separator = match byte {
+            b';' => true,
+            b':' => !is_windows_drive_colon(bytes, entry_start, index),
+            _ => false,
+        };
+        if is_separator {
+            if entry_start < index {
+                entries.push(value[entry_start..index].to_string());
+            }
+            entry_start = index + 1;
+        }
+    }
+    if entry_start < value.len() {
+        entries.push(value[entry_start..].to_string());
+    }
+    entries
+}
+
+fn is_windows_drive_colon(bytes: &[u8], entry_start: usize, colon: usize) -> bool {
+    cfg!(windows)
+        && colon == entry_start + 1
+        && bytes[entry_start].is_ascii_alphabetic()
+        && bytes
+            .get(colon + 1)
+            .is_some_and(|next| matches!(next, b'\\' | b'/'))
+}
+
+fn shell_path_entry_to_process_paths(
+    entry: &str,
+    env: Option<&HashMap<String, String>>,
+) -> Vec<String> {
+    if cfg!(windows) {
+        let paths = env
+            .map(|env| Executor::resolve_shell_path_process_entries_from_env(entry, env))
+            .unwrap_or_else(|| vec![PathBuf::from(shell_path_to_host_path(entry))]);
+        paths
+            .into_iter()
+            .map(|path| path.to_string_lossy().replace('/', "\\"))
+            .collect()
+    } else {
+        vec![entry.to_string()]
+    }
+}
+
+fn host_path_to_shell_path_with_root(value: &str, root: Option<&Path>) -> String {
+    let normalized = value.replace('\\', "/");
+    let Some(root) = root else {
+        return host_path_to_shell_path(&normalized);
+    };
+
+    let root = root.to_string_lossy().replace('\\', "/");
+    let root = root.trim_end_matches('/');
+    if normalized.eq_ignore_ascii_case(root) {
+        return "/".to_string();
+    }
+    if normalized.len() > root.len()
+        && normalized.is_char_boundary(root.len())
+        && normalized[..root.len()].eq_ignore_ascii_case(root)
+        && normalized.as_bytes().get(root.len()) == Some(&b'/')
+    {
+        return format!("/{}", &normalized[root.len() + 1..]);
+    }
+    host_path_to_shell_path(&normalized)
+}
+
+fn host_path_to_shell_path(value: &str) -> String {
+    if cfg!(windows) {
+        let normalized = value.replace('\\', "/");
+        let bytes = normalized.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0] == b'/'
+            && bytes[1].is_ascii_alphabetic()
+            && bytes[2] == b'/'
+        {
+            let drive = (bytes[1] as char).to_ascii_uppercase();
+            return format!("{drive}:{}", &normalized[2..]);
+        }
+        return normalized;
+    }
+    value.to_string()
+}
+
+fn normalize_shell_visible_path(value: &str) -> String {
+    if cfg!(windows) {
+        shell_path_to_host_path(value).replace('\\', "/")
+    } else {
+        value.to_string()
+    }
+}
+
+/// Process-standard stream targets for shell emission channels. PS0 is the
+/// first user: it emits on [`ShellChannel::Stderr`] (GNU eval.c:164-176), so
+/// redirected pipelines observe GNU's stream shape (JayWanX/native-shell#190).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShellChannel {
+    /// Reserved stdout-side half of the GNU stream-shape contract; every
+    /// live shell emitter is stderr-only today (PS0, eval.c:164-176), so
+    /// no constructor exists yet. The channel-capture tests assert that
+    /// stderr-only shape against this two-variant enum.
+    #[allow(dead_code)]
+    Stdout,
+    Stderr,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test seam for [`shell_channel_write`]: when armed with `Some`, channel
+    /// writes are recorded here as (channel, payload) instead of reaching the
+    /// real process handles, letting tests assert the stream separation.
+    static CHANNEL_CAPTURE:
+        std::cell::RefCell<Option<Vec<(ShellChannel, Vec<u8>)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Write bytes to the named process-standard stream. Under `cfg(test)` an
+/// armed [`CHANNEL_CAPTURE`] records the write instead of touching the real
+/// handles (the built-in test harness may own/echo those, and PS0's stream
+/// choice — not the handle identity — is the behavior under regression).
+fn shell_channel_write(channel: ShellChannel, bytes: &[u8]) {
+    #[cfg(test)]
+    if CHANNEL_CAPTURE.with(|slot| slot.borrow().is_some()) {
+        CHANNEL_CAPTURE.with(|slot| {
+            slot.borrow_mut()
+                .as_mut()
+                .expect("capture armed")
+                .push((channel, bytes.to_vec()));
+        });
+        return;
+    }
+    use std::io::Write as _;
+    match channel {
+        ShellChannel::Stdout => {
+            let _ = std::io::stdout().write_all(bytes);
+            let _ = std::io::stdout().flush();
+        }
+        ShellChannel::Stderr => {
+            let _ = std::io::stderr().write_all(bytes);
+            let _ = std::io::stderr().flush();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::PROCESS_STATE_LOCK;
+    use reedline::Prompt;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn host_history_provider_is_installed_only_on_interactive_entry() {
+        use rubash::history::HistoryProvider;
+
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("history");
+        std::fs::write(&path, "interactive-entry\n").unwrap();
+        let mut shell = test_shell(HookConfig::default());
+        shell.history_path = path.clone();
+        assert!(shell.history_provider.is_none());
+
+        shell.enter_interactive();
+        let provider = shell.history_provider.as_ref().unwrap().clone();
+        assert_eq!(
+            provider.borrow_mut().entries().unwrap(),
+            ["interactive-entry"]
+        );
+        provider.borrow_mut().clear().unwrap();
+        shell.enter_interactive();
+        assert!(Rc::ptr_eq(
+            &provider,
+            shell.history_provider.as_ref().unwrap()
+        ));
+        assert!(provider.borrow_mut().entries().unwrap().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "interactive-entry\n"
+        );
+    }
+
+    #[test]
+    fn refresh_edit_mode_rc_vi_switches_at_startup() {
+        // The standard bashrc line: `set -o vi` before the first prompt.
+        let mut shell = test_shell(HookConfig::default());
+        shell.executor.set_shell_option("vi", true);
+        assert_eq!(shell.refresh_edit_mode(), Some(EditorMode::Vi));
+        assert_eq!(shell.editor_mode, EditorMode::Vi);
+        // The normalization makes the flags exclusive, GNU-style: exactly
+        // one of emacs/vi reads on.
+        assert_eq!(shell.executor.get_env("__RUBASH_SETOPT_vi"), Some("1"));
+        assert_ne!(shell.executor.get_env("__RUBASH_SETOPT_emacs"), Some("1"));
+    }
+
+    #[test]
+    fn refresh_edit_mode_defaults_keep_configured_mode_quiet() {
+        let mut shell = test_shell(HookConfig::default());
+        // No engine flags at all: the configured default (emacs) stands and
+        // no editor rebuild is signaled.
+        assert_eq!(shell.refresh_edit_mode(), None);
+        assert_eq!(shell.editor_mode, EditorMode::Emacs);
+        // An explicit `set -o emacs` is also not a change.
+        shell.executor.set_shell_option("emacs", true);
+        assert_eq!(shell.refresh_edit_mode(), None);
+    }
+
+    #[test]
+    fn refresh_edit_mode_live_flip_cycle_vi_emacs_vi() {
+        // The mission journey: `set -o vi` mid-session, `set -o emacs`
+        // returns, `set -o vi` again — the last writer must win every time
+        // (GNU set.def:424 set_edit_mode rebinds editing-mode live through
+        // readline bind.c:2092 sv_editmode).
+        let mut shell = test_shell(HookConfig::default());
+        shell.executor.set_shell_option("vi", true);
+        assert_eq!(shell.refresh_edit_mode(), Some(EditorMode::Vi));
+
+        shell.executor.set_shell_option("emacs", true);
+        assert_eq!(shell.refresh_edit_mode(), Some(EditorMode::Emacs));
+
+        // Without the exclusive write-back the vi flag would still read on
+        // here and this flip would be invisible — the reason normalization
+        // exists.
+        shell.executor.set_shell_option("vi", true);
+        assert_eq!(shell.refresh_edit_mode(), Some(EditorMode::Vi));
+    }
+
+    #[test]
+    fn refresh_edit_mode_noop_flips_and_disables_keep_mode() {
+        let mut shell = test_shell(HookConfig::default());
+        shell.executor.set_shell_option("vi", true);
+        shell.refresh_edit_mode();
+        // Re-asserting the active mode is not a change.
+        shell.executor.set_shell_option("vi", true);
+        assert_eq!(shell.refresh_edit_mode(), None);
+        // `set +o emacs` while vi is active: GNU's set_edit_mode ignores a
+        // disable of the inactive option (set.def:436-441) — no keymap
+        // change.
+        shell.executor.set_shell_option("emacs", false);
+        assert_eq!(shell.refresh_edit_mode(), None);
+        // An explicit `set -o emacs` is a new writer and must win.
+        shell.executor.set_shell_option("emacs", true);
+        assert_eq!(shell.refresh_edit_mode(), Some(EditorMode::Emacs));
+        shell.executor.set_shell_option("vi", true);
+        assert_eq!(shell.refresh_edit_mode(), Some(EditorMode::Vi));
+        // `set +o <active>` is GNU's line-editing-off path (set.def:433-441,
+        // not wired yet): flags drop to all-off, the mode stands.
+        shell.executor.set_shell_option("vi", false);
+        assert_eq!(shell.refresh_edit_mode(), None);
+        assert_eq!(shell.editor_mode, EditorMode::Vi);
+        // ... and the next explicit writer still lands.
+        shell.executor.set_shell_option("emacs", true);
+        assert_eq!(shell.refresh_edit_mode(), Some(EditorMode::Emacs));
+    }
+
+    #[test]
+    fn refresh_edit_mode_both_on_in_one_gap_resolves_vi() {
+        // `set -o emacs; set -o vi` on one line between prompts: the order
+        // is unrecoverable from the two flags; resolve toward the bashrc
+        // idiom (documented tie-break).
+        let mut shell = test_shell(HookConfig::default());
+        shell.executor.set_shell_option("emacs", true);
+        shell.executor.set_shell_option("vi", true);
+        assert_eq!(shell.refresh_edit_mode(), Some(EditorMode::Vi));
+        // The exclusive write-back re-lands the pair, so the next refresh
+        // is a no-op.
+        assert_eq!(shell.refresh_edit_mode(), None);
+    }
+
+    #[test]
+    fn refresh_edit_mode_engine_listing_stays_exclusive() {
+        // GNU reports emacs/vi as exclusive views of one state
+        // (get_edit_mode, set.def:446-451); after the product normalization
+        // the engine's `set -o` listing must agree.
+        let mut shell = test_shell(HookConfig::default());
+        shell.executor.set_shell_option("vi", true);
+        shell.refresh_edit_mode();
+        shell.executor.set_shell_option("emacs", true);
+        shell.refresh_edit_mode();
+        assert_eq!(shell.executor.get_env("__RUBASH_SETOPT_emacs"), Some("1"));
+        assert_eq!(shell.executor.get_env("__RUBASH_SETOPT_vi"), Some("0"));
+        // SHELLOPTS never carries emacs/vi (rubash mirrors GNU's exclusion,
+        // shellopts_includes_option), so the write-back must not add them.
+        let shelopts = shell.executor.get_env("SHELLOPTS").unwrap_or_default();
+        assert!(!shelopts
+            .split(':')
+            .any(|name| name == "emacs" || name == "vi"));
+    }
+
+    #[test]
+    fn compatible_shell_path_env_is_explicit_and_non_empty() {
+        let _lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        {
+            let _guard = EnvVarGuard::unset(COMPATIBLE_SHELL_PATH_ENV);
+            assert_eq!(compatible_shell_path_from_env(), None);
+        }
+
+        {
+            let _guard = EnvVarGuard::set_value(COMPATIBLE_SHELL_PATH_ENV, "");
+            assert_eq!(compatible_shell_path_from_env(), None);
+        }
+
+        let shell_path = std::env::temp_dir().join("native-shell-compatible-shell.exe");
+        let _guard = EnvVarGuard::set(COMPATIBLE_SHELL_PATH_ENV, &shell_path);
+        assert_eq!(compatible_shell_path_from_env(), Some(shell_path));
+    }
+
+    #[test]
+    fn precmd_invokes_title_hooks_with_env_title() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+
+        let mut shell = test_shell(HookConfig {
+            title: vec!["HOOK_TITLE=\"$NATIVE_SHELL_TITLE\"".to_string()],
+            ..Default::default()
+        });
+        shell.executor.set_env("NATIVE_SHELL_TITLE", "custom-title");
+
+        shell.run_precmd_hooks();
+
+        assert_eq!(
+            shell.executor.get_env("HOOK_TITLE"),
+            Some("custom-title"),
+            "title hook should observe NATIVE_SHELL_TITLE from the executor env"
+        );
+        assert!(
+            shell.executor.get_env("NATIVE_SHELL_TITLE").is_none(),
+            "hook context env should be cleaned up after the hook runs"
+        );
+    }
+
+    #[test]
+    fn precmd_invokes_title_hooks_with_pwd_fallback() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-title-pwd-fallback");
+        std::fs::create_dir_all(&temp).unwrap();
+
+        let mut shell = test_shell(HookConfig {
+            title: vec!["HOOK_TITLE=\"$NATIVE_SHELL_TITLE\"".to_string()],
+            ..Default::default()
+        });
+        let target = shell_quote(&shell_display_path(&temp));
+        shell
+            .execute_interactive_line(&format!("cd {}", target))
+            .unwrap();
+        shell
+            .execute_interactive_line("unset NATIVE_SHELL_TITLE")
+            .unwrap();
+
+        shell.run_precmd_hooks();
+
+        let observed = shell.executor.get_env("HOOK_TITLE").unwrap_or_default();
+        assert!(
+            observed.contains("native-shell-title-pwd-fallback"),
+            "title hook should observe PWD as fallback, got: {observed:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn missing_primary_rc_ignores_other_rc_files_without_modifying_them() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-primary-only-defaults");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let original =
+            "export NATIVE_SHELL_IGNORED_RC_TEST=loaded\nalias ignored_rc_alias='echo loaded'\n";
+        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+            std::fs::write(home.join(name), original).unwrap();
+        }
+        for repl in [true, false] {
+            let mut shell = test_shell(HookConfig::default());
+            shell.home_dir = home.clone();
+            let default_prompt = shell.executor.get_env("PS1").map(str::to_owned);
+            assert_eq!(shell.startup_rc_path(), None);
+            for _ in 0..2 {
+                shell.run_startup_files(repl);
+                assert_eq!(shell.executor.get_env("NATIVE_SHELL_IGNORED_RC_TEST"), None);
+                assert!(!shell.aliases.contains_key("ignored_rc_alias"));
+                assert_eq!(shell.executor.get_env("PS1"), default_prompt.as_deref());
+                assert!(!home.join(NATIVE_SHELL_RC_FILE).exists());
+                for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+                    assert_eq!(std::fs::read_to_string(home.join(name)).unwrap(), original);
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(temp);
+    }
+    #[test]
+    fn standard_prompt_does_not_expose_private_use_markers() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let mut shell = Shell::new().unwrap();
+        shell.run_precmd_hooks();
+        let rendered = reedline::Prompt::render_prompt_left(&shell.prompt).into_owned();
+
+        assert!(
+            !rendered
+                .chars()
+                .any(|ch| (0xE000..=0xE0FF).contains(&(ch as u32))),
+            "prompt contains a raw-byte marker: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn native_shellrc_runs_once_for_repl_startup_shell_customization() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-winshrc-startup");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join(NATIVE_SHELL_RC_FILE),
+            r#"
+export NATIVE_SHELL_RC_VALUE=from-rc
+alias hello='echo from-alias'
+"#,
+        )
+        .unwrap();
+
+        let mut shell = test_shell(HookConfig::default());
+        shell.home_dir = home;
+        shell.run_startup_rc();
+
+        assert_eq!(
+            shell.executor.get_env("NATIVE_SHELL_RC_VALUE"),
+            Some("from-rc")
+        );
+        assert_eq!(
+            shell.aliases.get("hello").map(String::as_str),
+            Some("echo from-alias")
+        );
+        assert_eq!(shell.execute_interactive_line("hello").unwrap(), 0);
+        assert!(shell
+            .executor
+            .get_env("NATIVE_SHELL_REPL_STARTUP")
+            .is_none());
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn primary_rc_is_the_only_automatic_startup_file() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-primary-only-startup");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let ignored = "export NATIVE_SHELL_IGNORED_RC_TEST=loaded\n";
+        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+            std::fs::write(home.join(name), ignored).unwrap();
+        }
+        for (primary, expected) in [
+            (
+                "export NATIVE_SHELL_PRIMARY_RC_TEST=primary\n",
+                Some("primary"),
+            ),
+            ("", None),
+            ("if then\n", None),
+        ] {
+            std::fs::write(home.join(NATIVE_SHELL_RC_FILE), primary).unwrap();
+            let mut shell = test_shell(HookConfig::default());
+            shell.home_dir = home.clone();
+            assert_eq!(
+                shell.startup_rc_path(),
+                Some(home.join(NATIVE_SHELL_RC_FILE))
+            );
+            shell.run_startup_rc();
+            assert_eq!(
+                shell.executor.get_env("NATIVE_SHELL_PRIMARY_RC_TEST"),
+                expected
+            );
+            assert_eq!(shell.executor.get_env("NATIVE_SHELL_IGNORED_RC_TEST"), None);
+            assert_eq!(
+                std::fs::read_to_string(home.join(NATIVE_SHELL_RC_FILE)).unwrap(),
+                primary
+            );
+            for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+                assert_eq!(std::fs::read_to_string(home.join(name)).unwrap(), ignored);
+            }
+        }
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn startup_rc_override_and_norc_leave_ignored_rc_files_untouched() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-rc-selection-read-only");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let original = "export NATIVE_SHELL_LEGACY_SELECTION_TEST=legacy\n";
+        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+            std::fs::write(home.join(name), original).unwrap();
+        }
+        let custom = home.join("custom.rc");
+        std::fs::write(
+            &custom,
+            "export NATIVE_SHELL_CUSTOM_SELECTION_TEST=custom\n",
+        )
+        .unwrap();
+
+        for no_rc in [true, false] {
+            let mut shell = test_shell(HookConfig::default());
+            shell.home_dir = home.clone();
+            shell.no_rc = no_rc;
+            shell.rc_file = Some(custom.clone());
+            shell.run_interactive_startup_rc();
+            assert_eq!(
+                shell.executor.get_env("NATIVE_SHELL_LEGACY_SELECTION_TEST"),
+                None
+            );
+            assert_eq!(
+                shell.executor.get_env("NATIVE_SHELL_CUSTOM_SELECTION_TEST"),
+                if no_rc { None } else { Some("custom") }
+            );
+            assert!(!home.join(NATIVE_SHELL_RC_FILE).exists());
+            for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+                assert_eq!(std::fs::read_to_string(home.join(name)).unwrap(), original);
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn non_interactive_env_is_noop_when_unset() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let _native_shell_guard = EnvVarGuard::unset("NATIVE_SHELL_ENV");
+        let _bash_guard = EnvVarGuard::unset("BASH_ENV");
+
+        let temp = unique_temp_dir("native-shell-env-noop");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join("agent.env"),
+            "export NATIVE_SHELL_AGENT_ENV=loaded\n",
+        )
+        .unwrap();
+
+        let mut shell = test_shell(HookConfig::default());
+        shell.home_dir = home.clone();
+        let _ = shell.source_non_interactive_env();
+
+        assert!(shell.executor.get_env("NATIVE_SHELL_AGENT_ENV").is_none());
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn native_shell_env_sources_agent_init_file() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let _bash_guard = EnvVarGuard::unset("BASH_ENV");
+
+        let temp = unique_temp_dir("native-shell-env-niu");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let env_file = home.join("agent.env");
+        std::fs::write(
+            &env_file,
+            "export NATIVE_SHELL_AGENT_ENV=loaded\nalias ga='echo agent'\n",
+        )
+        .unwrap();
+
+        let _native_shell_guard = EnvVarGuard::set("NATIVE_SHELL_ENV", &env_file);
+
+        let mut shell = test_shell(HookConfig::default());
+        shell.home_dir = home;
+        let _ = shell.source_non_interactive_env();
+
+        assert_eq!(
+            shell.executor.get_env("NATIVE_SHELL_AGENT_ENV"),
+            Some("loaded")
+        );
+        // Aliases defined in the env file work in subsequent commands.
+        assert_eq!(shell.execute_script("ga").unwrap(), 0);
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn bash_env_sources_when_native_shell_env_unset() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let _native_shell_guard = EnvVarGuard::unset("NATIVE_SHELL_ENV");
+
+        let temp = unique_temp_dir("native-shell-env-bash");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let env_file = home.join("agent.env");
+        std::fs::write(&env_file, "export NATIVE_SHELL_AGENT_ENV=bash-loaded\n").unwrap();
+
+        let _bash_guard = EnvVarGuard::set("BASH_ENV", &env_file);
+
+        let mut shell = test_shell(HookConfig::default());
+        shell.home_dir = home;
+        let _ = shell.source_non_interactive_env();
+
+        assert_eq!(
+            shell.executor.get_env("NATIVE_SHELL_AGENT_ENV"),
+            Some("bash-loaded")
+        );
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn native_shell_env_takes_precedence_over_bash_env() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+
+        let temp = unique_temp_dir("native-shell-env-precedence");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let native_shell_file = home.join("native-shell.env");
+        let bash_file = home.join("bash.env");
+        std::fs::write(
+            &native_shell_file,
+            "export NATIVE_SHELL_AGENT_ENV=from-niu\n",
+        )
+        .unwrap();
+        std::fs::write(&bash_file, "export NATIVE_SHELL_AGENT_ENV=from-bash\n").unwrap();
+
+        let _native_shell_guard = EnvVarGuard::set("NATIVE_SHELL_ENV", &native_shell_file);
+        let _bash_guard = EnvVarGuard::set("BASH_ENV", &bash_file);
+
+        let mut shell = test_shell(HookConfig::default());
+        shell.home_dir = home;
+        let _ = shell.source_non_interactive_env();
+
+        assert_eq!(
+            shell.executor.get_env("NATIVE_SHELL_AGENT_ENV"),
+            Some("from-niu")
+        );
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn non_interactive_env_expands_tilde_in_path() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let _bash_guard = EnvVarGuard::unset("BASH_ENV");
+
+        let temp = unique_temp_dir("native-shell-env-tilde");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join("agent.env"),
+            "export NATIVE_SHELL_AGENT_ENV=tilde-loaded\n",
+        )
+        .unwrap();
+
+        let _native_shell_guard = EnvVarGuard::set_value("NATIVE_SHELL_ENV", "~/agent.env");
+
+        let mut shell = test_shell(HookConfig::default());
+        shell.home_dir = home;
+        let _ = shell.source_non_interactive_env();
+
+        assert_eq!(
+            shell.executor.get_env("NATIVE_SHELL_AGENT_ENV"),
+            Some("tilde-loaded")
+        );
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn non_interactive_env_ignores_empty_value() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let _bash_guard = EnvVarGuard::unset("BASH_ENV");
+
+        let temp = unique_temp_dir("native-shell-env-empty");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join("agent.env"),
+            "export NATIVE_SHELL_AGENT_ENV=should-not-load\n",
+        )
+        .unwrap();
+
+        let _native_shell_guard = EnvVarGuard::set_value("NATIVE_SHELL_ENV", "");
+
+        let mut shell = test_shell(HookConfig::default());
+        shell.home_dir = home;
+        let _ = shell.source_non_interactive_env();
+
+        assert!(shell.executor.get_env("NATIVE_SHELL_AGENT_ENV").is_none());
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+    #[test]
+    fn user_bindkeys_load_from_rc_and_widgets_round_trip() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-user-widget-bindkeys");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join(NATIVE_SHELL_RC_FILE),
+            r#"
+NATIVE_SHELL_BINDKEYS="Ctrl+X:native_shell_fzf_file
+Alt+G:native_shell_git_status"
+
+native_shell_fzf_file() {
+    NATIVE_SHELL_WIDGET_RESULT="picked:${#NATIVE_SHELL_WIDGET_BUFFER}"
+}
+"#,
+        )
+        .unwrap();
+
+        let mut shell = Shell::new().unwrap();
+        shell.home_dir = home;
+        shell.run_startup_rc();
+        shell.load_user_widget_bindings();
+
+        assert_eq!(shell.user_widget_bindings.len(), 2);
+        assert_eq!(shell.user_widget_bindings[0].key.as_deref(), Some("Ctrl+X"));
+        assert_eq!(
+            shell.user_widget_bindings[0].widget,
+            "native_shell_fzf_file"
+        );
+        assert_eq!(shell.user_widget_bindings[1].key.as_deref(), Some("Alt+G"));
+
+        assert!(shell.widget_function_available("native_shell_fzf_file"));
+
+        let outcome = shell.run_widget_function("native_shell_fzf_file", "hello", 5);
+        assert_eq!(outcome.buffer.as_deref(), Some("picked:5"));
+        assert!(!outcome.accept);
+        assert_eq!(outcome.cursor, None);
+        assert_eq!(shell.executor.get_env("NATIVE_SHELL_WIDGET_RESULT"), None);
+        assert_eq!(shell.executor.get_env("NATIVE_SHELL_WIDGET_BUFFER"), None);
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn engine_bind_x_registered_via_rc_runs_with_readline_protocol() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-engine-bind-x");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join(NATIVE_SHELL_RC_FILE),
+            r#"
+bind -x '"\C-r": __fzf_history_stub'
+__fzf_history_stub() {
+    if [ -n "$READLINE_LINE" ]; then
+        READLINE_LINE="picked:$READLINE_LINE"
+    else
+        READLINE_LINE="picked-empty"
+    fi
+    READLINE_POINT=${#READLINE_LINE}
+}
+"#,
+        )
+        .unwrap();
+
+        let mut shell = Shell::new().unwrap();
+        shell.home_dir = home;
+        shell.run_startup_rc();
+        shell.load_engine_bindings();
+
+        // The bind -x registration survived rc sourcing into the
+        // registry snapshot the editor mirrors.
+        assert_eq!(shell.engine_bindings.len(), 1);
+        assert_eq!(shell.engine_bindings[0].keyseq, r#"\C-r"#);
+        assert!(matches!(
+            &shell.engine_bindings[0].kind,
+            rubash::shell::bind_registry::BindKind::Execute { command }
+                if command == "__fzf_history_stub"
+        ));
+
+        // fzf CTRL-R shape: the command reads READLINE_LINE and writes
+        // the selection back; the outcome replaces the edit buffer.
+        let outcome = shell.run_bind_x_command(0, "typed", 5);
+        assert_eq!(outcome.buffer.as_deref(), Some("picked:typed"));
+        assert_eq!(outcome.cursor, Some("picked:typed".len()));
+        assert!(!outcome.accept, "bind -x never submits the line");
+
+        // Empty-buffer press, cursor clamped to the new line's end.
+        let outcome = shell.run_bind_x_command(0, "", 0);
+        assert_eq!(outcome.buffer.as_deref(), Some("picked-empty"));
+        assert_eq!(outcome.cursor, Some("picked-empty".len()));
+
+        // GNU unbinds the READLINE_* variables after the command
+        // (bashline.c:4573 unbind_readline_variables).
+        assert_eq!(shell.executor.get_env("READLINE_LINE"), None);
+        assert_eq!(shell.executor.get_env("READLINE_POINT"), None);
+
+        // Registry generation moved by the rc `bind` call: the REPL uses
+        // it to rebuild the mirrored keymaps before the next prompt.
+        assert!(shell.engine_bind_generation > 0);
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn user_compdefs_load_from_rc_and_run_in_engine() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-user-compdefs");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join(NATIVE_SHELL_RC_FILE),
+            r#"
+NATIVE_SHELL_COMPDEFS="git:native_shell_git_comp"
+
+native_shell_git_comp() {
+    NATIVE_SHELL_COMP_RESULT="w:${NATIVE_SHELL_COMP_WORDS}|c:${NATIVE_SHELL_COMP_CWORD}"
+}
+"#,
+        )
+        .unwrap();
+
+        let mut shell = Shell::new().unwrap();
+        shell.home_dir = home;
+        shell.run_startup_rc();
+        shell.load_user_compdefs();
+
+        assert_eq!(shell.compdefs.len(), 1);
+        assert_eq!(shell.compdefs[0].0, "git");
+        assert_eq!(shell.compdefs[0].1, "native_shell_git_comp");
+
+        let candidates = shell.run_compdef_function(
+            "native_shell_git_comp",
+            &["git".to_string(), "co".to_string()],
+            1,
+        );
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0, "w:git co|c:1");
+        assert_eq!(candidates[0].1, None);
+        assert_eq!(shell.executor.get_env("NATIVE_SHELL_COMP_RESULT"), None);
+        assert_eq!(shell.executor.get_env("NATIVE_SHELL_COMP_WORDS"), None);
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn native_shell_compdefs_directory_entries_load_completion_files() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-compdefs-dir");
+        let home = temp.join("home");
+        let defs = temp.join("compdefs");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&defs).unwrap();
+        // Native TOML: same schema as the embedded applet definitions.
+        std::fs::write(
+            defs.join("mytool.toml"),
+            r#"command = "mytool"
+description = "fixture command"
+
+[[flags]]
+long = "--fixture-flag"
+description = "declared in the completion dir"
+"#,
+        )
+        .unwrap();
+        // Standard bash completion script: statically parsed (opts= line plus
+        // a case block), the file body is never executed.
+        std::fs::write(
+            defs.join("bashtool.bash"),
+            r#"_bashtool() {
+    local opts
+    opts="-h -V --verbose --output"
+    case "${prev}" in
+        --output|-o)
+            COMPREPLY=($(compgen -f "${cur}"))
+            return 0
+            ;;
+        *)
+            COMPREPLY=()
+            ;;
+    esac
+}
+complete -F _bashtool bashtool
+"#,
+        )
+        .unwrap();
+
+        let defs_forward = defs.to_string_lossy().replace('\\', "/");
+        std::fs::write(
+            home.join(NATIVE_SHELL_RC_FILE),
+            format!(
+                r#"
+NATIVE_SHELL_COMPDEFS="{defs_forward}"
+
+native_shell_fixture_comp() {{
+    NATIVE_SHELL_COMP_RESULT="alpha"
+}}
+NATIVE_SHELL_COMPDEFS="$NATIVE_SHELL_COMPDEFS
+mytool2:native_shell_fixture_comp"
+"#
+            ),
+        )
+        .unwrap();
+
+        let mut shell = Shell::new().unwrap();
+        shell.home_dir = home;
+        shell.run_startup_rc();
+        shell.load_user_compdefs();
+
+        // The `command:function` pair in the same variable still reaches the
+        // function layer.
+        assert_eq!(
+            shell.compdefs,
+            vec![(
+                "mytool2".to_string(),
+                "native_shell_fixture_comp".to_string()
+            )]
+        );
+        // Both definition files from the declared directory serve flag
+        // candidates through the same completion state the probe reads.
+        assert!(
+            shell
+                .completion_probe("mytool -", 10)
+                .contains(&"--fixture-flag".to_string()),
+            "TOML definition from the NATIVE_SHELL_COMPDEFS directory must serve flags"
+        );
+        assert!(
+            shell
+                .completion_probe("bashtool -", 10)
+                .contains(&"--verbose".to_string()),
+            "bash completion import from the NATIVE_SHELL_COMPDEFS directory must serve flags"
+        );
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn native_shell_env_compspecs_reach_the_completion_surface() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let _bash_guard = EnvVarGuard::unset("BASH_ENV");
+
+        let temp = unique_temp_dir("native-shell-env-compspec");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let env_file = home.join("agent.env");
+        std::fs::write(
+            &env_file,
+            r#"
+complete -W 'status switch merge rebase' envtool
+_envtooldyn_hook() {
+    COMPREPLY=()
+}
+complete -F _envtooldyn_hook envtooldyn
+"#,
+        )
+        .unwrap();
+
+        let _native_shell_guard = EnvVarGuard::set("NATIVE_SHELL_ENV", &env_file);
+
+        let mut shell = Shell::new().unwrap();
+        shell.home_dir = home;
+        let _ = shell.source_non_interactive_env();
+
+        // Issue #307: `complete` registrations from NATIVE_SHELL_ENV land in the
+        // engine compspec registry — the state `--completion-probe` serves
+        // candidates from. The `-F` registration itself is visible here;
+        // turning the -F hook into Tab candidates is the rubash engine
+        // follow-up, so candidate flow is covered by the -W compspec and the
+        // binary probe tests.
+        assert!(shell.executor.has_compspec("envtool"));
+        assert!(shell.executor.has_compspec("envtooldyn"));
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn run_startup_rc_syncs_process_path_from_executor() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-rc-path-sync");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        // Simulate a user rc that appends a new directory to PATH.
+        let extra_dir = temp.join("extra-bin");
+        std::fs::create_dir_all(&extra_dir).unwrap();
+        let forward = extra_dir.to_string_lossy().replace('\\', "/");
+        std::fs::write(
+            home.join(NATIVE_SHELL_RC_FILE),
+            format!("export PATH=\"$PATH:{}\"", forward),
+        )
+        .unwrap();
+
+        let mut shell = test_shell(HookConfig::default());
+        shell.home_dir = home;
+        shell.run_startup_rc();
+
+        // After rc, std::env must reflect the executor PATH (including the new dir).
+        let process_path = std::env::var("PATH").unwrap_or_default();
+        let normalized_extra = forward.to_uppercase().replace('/', "\\");
+        assert!(
+            process_path.to_uppercase().contains(&normalized_extra),
+            "std::env PATH should contain the new directory after run_startup_rc;              got: {}",
+            process_path
+        );
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn native_command_not_found_lines_drop_package_search_hints_by_default() {
+        // native-shell#249: rg owns a compiled-in executable-tool recipe, so the
+        // targeted install hint stays; the winget/scoop/choco search block
+        // is gone under the default (off) policy — even when every
+        // third-party manager is installed.
+        let lines = native_command_not_found_hint_lines("rg", |command| {
+            matches!(command, "winget" | "scoop" | "choco")
+        });
+
+        #[cfg(windows)]
+        assert!(
+            lines.contains(
+                &"native-shell: try 'wpm install ripgrep' to add rg \
+                             (or: native-shell plugin add ripgrep)"
+                    .to_string()
+            ),
+            "{lines:?}"
+        );
+        #[cfg(not(windows))]
+        assert!(
+            lines.iter().any(|line| line.contains("to add rg")),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|line| line.contains("wpm install awk")),
+            "command-layer and application-tool channels must not cross: {lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|line| line.contains("search hints")),
+            "package search hints are opt-in (native-shell#249): {lines:?}"
+        );
+        for manager in ["winget", "scoop", "choco"] {
+            assert!(
+                !lines.iter().any(|line| line.contains(manager)),
+                "third-party managers are never recommended: {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn typo_gets_no_package_hint_by_default_issue_249_repro() {
+        // owner repro (native-shell#249): `% win` printed the command-not-found
+        // line and then a winget search advertisement. Under the default
+        // policy the hint channel contributes zero lines — the executor's
+        // GNU one-liner is the whole output.
+        let lines = native_command_not_found_hint_lines("win", |command| {
+            matches!(command, "winget" | "scoop" | "choco")
+        });
+        assert!(lines.is_empty(), "{lines:?}");
+    }
+
+    #[test]
+    fn command_not_found_hint_wpm_opt_in_suggests_only_wpm_for_near_misses() {
+        // Opt-in channel (`native-shell config set command-not-found-hint wpm`):
+        // only wpm is ever named, and only when the word is a
+        // high-confidence near-miss — dropping the last character hits a
+        // known package command name (jq) or an installed command (rg).
+        #[cfg(windows)]
+        {
+            let lines = native_command_not_found_hint_lines_with_policy(
+                "jqq",
+                |_| false,
+                CommandNotFoundHint::Wpm,
+            );
+            assert_eq!(
+                lines,
+                vec![
+                    "native-shell: package search hints:".to_string(),
+                    "  wpm search --name 'jqq'".to_string(),
+                ]
+            );
+
+            let lines = native_command_not_found_hint_lines_with_policy(
+                "rgt",
+                |command| command == "rg",
+                CommandNotFoundHint::Wpm,
+            );
+            assert_eq!(
+                lines,
+                vec![
+                    "native-shell: package search hints:".to_string(),
+                    "  wpm search --name 'rgt'".to_string(),
+                ]
+            );
+        }
+        // wpm does not exist off Windows: the string must never surface
+        // there, even with the switch set.
+        #[cfg(not(windows))]
+        {
+            let lines = native_command_not_found_hint_lines_with_policy(
+                "jqq",
+                |_| true,
+                CommandNotFoundHint::Wpm,
+            );
+            assert!(lines.is_empty(), "{lines:?}");
+        }
+    }
+
+    #[test]
+    fn command_not_found_hint_wpm_opt_in_stays_silent_for_arbitrary_typos() {
+        // Trigger tightening (native-shell#249): "win" minus its last character
+        // ("wi") hits neither an installed command nor a known package
+        // command name — a pure typo gets no hint even with the channel on.
+        let lines = native_command_not_found_hint_lines_with_policy(
+            "win",
+            |command| matches!(command, "winget" | "scoop" | "choco"),
+            CommandNotFoundHint::Wpm,
+        );
+        assert!(lines.is_empty(), "{lines:?}");
+    }
+
+    #[test]
+    fn shell_field_gates_command_not_found_hint_emission() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Default (off): a miss contributes no hint lines at all.
+        {
+            let shell = test_shell(HookConfig::default());
+            assert_eq!(shell.command_not_found_hint, CommandNotFoundHint::Off);
+            CHANNEL_CAPTURE.with(|slot| *slot.borrow_mut() = Some(Vec::new()));
+            shell.print_command_not_found_hints("win");
+            let captured = CHANNEL_CAPTURE.with(|slot| slot.borrow_mut().take());
+            assert!(
+                captured.unwrap_or_default().is_empty(),
+                "default policy must stay silent (native-shell#249)"
+            );
+        }
+        // Opt-in (wpm): the near-miss suggestion lands on stderr, wpm only.
+        #[cfg(windows)]
+        {
+            let mut shell = test_shell(HookConfig::default());
+            shell.command_not_found_hint = CommandNotFoundHint::Wpm;
+            CHANNEL_CAPTURE.with(|slot| *slot.borrow_mut() = Some(Vec::new()));
+            shell.print_command_not_found_hints("jqq");
+            let captured = CHANNEL_CAPTURE.with(|slot| slot.borrow_mut().take());
+            let captured = captured.expect("capture disarmed");
+            assert!(
+                captured
+                    .iter()
+                    .all(|(channel, _)| *channel == ShellChannel::Stderr),
+                "hints are stderr-only: {captured:?}"
+            );
+            let text: String = captured
+                .into_iter()
+                .map(|(_, bytes)| String::from_utf8(bytes).unwrap())
+                .collect();
+            assert_eq!(
+                text,
+                "native-shell: package search hints:\n  wpm search --name 'jqq'\n"
+            );
+            assert!(!text.contains("winget"));
+        }
+    }
+
+    #[test]
+    fn native_command_not_found_hint_lines_include_wpm_without_search() {
+        // awk is bundled Unix command layer: wpm keeps managing it, and the
+        // hint stays wpm-only (Windows builds; the wpm channel compiles only
+        // there).
+        #[cfg(windows)]
+        {
+            let lines = native_command_not_found_hint_lines("awk", |_| false);
+
+            assert_eq!(
+                lines,
+                vec!["native-shell: try 'wpm install awk' to add awk"]
+            );
+        }
+        // On other platforms the command layer has no wpm channel at all.
+        #[cfg(not(windows))]
+        {
+            let lines = native_command_not_found_hint_lines("awk", |_| false);
+            assert!(lines.is_empty(), "{lines:?}");
+        }
+    }
+
+    #[test]
+    fn plugin_recipe_hints_stay_cross_platform_and_recipe_backed() {
+        // Every hint here must name a compiled-in recipe row (a dead verb
+        // would be worse than no hint) — guarded by name against the seed
+        // index so a renamed recipe fails loudly.
+        for (command, recipe) in [
+            ("rg", "ripgrep"),
+            ("fd", "fd"),
+            ("fzf", "fzf"),
+            ("bat", "bat"),
+            ("eza", "eza"),
+            ("zoxide", "zoxide"),
+            ("dust", "dust"),
+            ("duf", "duf"),
+            ("erd", "erdtree"),
+            ("direnv", "direnv"),
+            ("starship", "starship"),
+        ] {
+            assert_eq!(plugin_recipe_for_command(command), Some(recipe));
+            assert!(
+                crate::plugins::recipes::recipe(recipe).is_some_and(|row| {
+                    matches!(
+                        row.driver,
+                        Some(crate::plugins::recipes::RecipeDriver::Download { .. })
+                    )
+                }),
+                "hint recipe '{recipe}' for '{command}' has no executable-tool row in the seed index"
+            );
+            let lines = native_command_not_found_hint_lines(command, |_| false);
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains(&format!("native-shell plugin add {recipe}"))),
+                "{command}: {lines:?}"
+            );
+            // The platform's primary install command is named directly
+            // (wpm on Windows, a native manager elsewhere).
+            let first = crate::plugins::recipes::first_recommendation(recipe)
+                .unwrap_or_else(|| panic!("{recipe}: no recommendation"));
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains(&format!("try '{first}'"))),
+                "{command}: expected '{first}' in {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_command_not_found_lines_skip_package_hints_for_paths() {
+        let lines = native_command_not_found_hint_lines("./missing", |_| true);
+
+        assert!(lines.is_empty(), "{lines:?}");
+    }
+    #[test]
+    fn interactive_lineno_advances_across_fast_reader_and_multiline_inputs() {
+        let _env_lock = PROCESS_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-interactive-line-base");
+        std::fs::create_dir_all(&temp).unwrap();
+        let mut shell = test_shell(HookConfig::default());
+        shell.history_path = temp.join("history");
+        shell.enter_interactive();
+        shell.execute_interactive_line("FIRST=$LINENO").unwrap();
+        shell
+            .execute_interactive_line("alias mark='SECOND=$LINENO'")
+            .unwrap();
+        shell.execute_interactive_line("mark").unwrap();
+        shell
+            .execute_interactive_script("\nFOURTH=$LINENO\nFIFTH=$LINENO\n")
+            .unwrap();
+        shell.execute_interactive_line("SIXTH=$LINENO").unwrap();
+        for (name, expected) in [
+            ("FIRST", "1"),
+            ("SECOND", "3"),
+            ("FOURTH", "5"),
+            ("FIFTH", "6"),
+            ("SIXTH", "7"),
+        ] {
+            assert_eq!(shell.executor.get_env(name), Some(expected), "{name}");
+        }
+        shell
+            .execute_interactive_line("shopt -u expand_aliases")
+            .unwrap();
+        shell.execute_interactive_line("OFF_LINE=$LINENO").unwrap();
+        assert_eq!(shell.executor.get_env("OFF_LINE"), Some("9"));
+        drop(shell);
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn interactive_alias_cli_disable_survives_repl_entry() {
+        let _env_lock = PROCESS_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-alias-cli-disable");
+        std::fs::create_dir_all(&temp).unwrap();
+        let mut shell = test_shell(HookConfig::default());
+        shell.history_path = temp.join("history");
+        let invocation = rubash::invocation::ShellInvocation::parse(&[
+            "-i".into(),
+            "+O".into(),
+            "expand_aliases".into(),
+        ])
+        .unwrap();
+        shell.apply_invocation_before_startup(&invocation).unwrap();
+        shell.enter_interactive();
+        assert!(!shell.executor.alias_expansion_enabled());
+        drop(shell);
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn interactive_same_line_alias_waits_for_next_submission() {
+        let _env_lock = PROCESS_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-alias-read-boundary");
+        std::fs::create_dir_all(&temp).unwrap();
+        let mut shell = test_shell(HookConfig::default());
+        shell.history_path = temp.join("history");
+        shell.enter_interactive();
+        assert_eq!(
+            shell
+                .execute_interactive_line(
+                    "alias nextprompt='NATIVE_SHELL_ALIAS_BOUNDARY_RESULT=next'; nextprompt"
+                )
+                .unwrap(),
+            127
+        );
+        assert!(shell
+            .executor
+            .get_env("NATIVE_SHELL_ALIAS_BOUNDARY_RESULT")
+            .is_none());
+        assert_eq!(shell.execute_interactive_line("nextprompt").unwrap(), 0);
+        assert_eq!(
+            shell.executor.get_env("NATIVE_SHELL_ALIAS_BOUNDARY_RESULT"),
+            Some("next")
+        );
+        drop(shell);
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn live_alias_executes_after_separate_interactive_submissions() {
+        let _env_lock = PROCESS_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-live-alias");
+        std::fs::create_dir_all(&temp).unwrap();
+        let mut shell = test_shell(HookConfig::default());
+        shell.history_path = temp.join("history");
+        shell.enter_interactive();
+        assert_eq!(
+            shell
+                .execute_interactive_line("alias ll='NATIVE_SHELL_LIVE_ALIAS_RESULT=expanded'")
+                .unwrap(),
+            0
+        );
+        assert!(shell.executor.alias_expansion_enabled());
+        assert!(shell.executor.get_env("__RUBASH_ALIAS_STREAMED").is_none());
+        assert_eq!(
+            shell.aliases.get("ll").map(String::as_str),
+            Some("NATIVE_SHELL_LIVE_ALIAS_RESULT=expanded")
+        );
+        assert_eq!(shell.execute_interactive_line("alias ll").unwrap(), 0);
+        assert_eq!(shell.execute_interactive_line("ll").unwrap(), 0);
+        assert_eq!(
+            shell.executor.get_env("NATIVE_SHELL_LIVE_ALIAS_RESULT"),
+            Some("expanded")
+        );
+        drop(shell);
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn alias_mirror_tracks_successful_interactive_alias_commands() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let mut shell = test_shell(HookConfig::default());
+
+        shell
+            .execute_interactive_line("alias gst='git status'")
+            .unwrap();
+        assert_eq!(
+            shell.aliases.get("gst").map(String::as_str),
+            Some("git status")
+        );
+
+        shell.execute_interactive_line("unalias gst").unwrap();
+        assert!(shell.aliases.get("gst").is_none());
+    }
+
+    #[test]
+    fn completion_state_tracks_shell_local_variables_after_interactive_source() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let mut shell = test_shell(HookConfig::default());
+
+        shell
+            .execute_interactive_line("SOURCE_COMPLETION_VAR=from-source")
+            .unwrap();
+
+        assert_eq!(
+            shell.executor.get_env("SOURCE_COMPLETION_VAR"),
+            Some("from-source")
+        );
+        assert!(shell
+            .completion_probe("$SOURCE_COMPLETION", "$SOURCE_COMPLETION".len())
+            .contains(&"$SOURCE_COMPLETION_VAR".to_string()));
+    }
+
+    #[test]
+    fn execute_interactive_script_runs_multiline_compound_blocks() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let mut shell = test_shell(HookConfig::default());
+
+        shell.execute_interactive_line("HTTP_CODE=200").unwrap();
+        let code = shell
+            .execute_interactive_script("if [ $HTTP_CODE -eq 200 ]; then\n  RESULT=OK\nfi")
+            .unwrap();
+
+        assert_eq!(code, 0);
+        assert_eq!(shell.executor.get_env("RESULT"), Some("OK"));
+    }
+
+    #[test]
+    fn shell_path_to_host_path_converts_drive_style_paths() {
+        if cfg!(windows) {
+            assert_eq!(
+                shell_path_to_host_path("/c/Users/me/project"),
+                "C:/Users/me/project"
+            );
+            assert_eq!(shell_path_to_host_path("/d"), "D:/");
+        } else {
+            assert_eq!(
+                shell_path_to_host_path("/c/Users/me/project"),
+                "/c/Users/me/project"
+            );
+        }
+    }
+
+    #[test]
+    fn host_path_to_shell_path_uses_windows_native_drive_paths() {
+        if cfg!(windows) {
+            assert_eq!(
+                host_path_to_shell_path(r"C:\Users\me\project"),
+                "C:/Users/me/project"
+            );
+            assert_eq!(
+                host_path_to_shell_path("C:/Users/me/project"),
+                "C:/Users/me/project"
+            );
+        } else {
+            assert_eq!(
+                host_path_to_shell_path("/home/me/project"),
+                "/home/me/project"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_shell_path_argument_expands_current_user_tilde() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = unique_temp_dir("native-shell-tilde-path");
+        let home = temp.join("home");
+        let _home_guard = EnvVarGuard::set("HOME", &home);
+        let _userprofile_guard = EnvVarGuard::set("USERPROFILE", &home);
+
+        assert_eq!(
+            host_display_path(&resolve_shell_path_argument("C:/work", "~")),
+            host_display_path(&home)
+        );
+        assert_eq!(
+            host_display_path(&resolve_shell_path_argument("C:/work", "~/dir/file.txt")),
+            host_display_path(&home.join("dir").join("file.txt"))
+        );
+        assert_eq!(
+            host_display_path(&resolve_shell_path_argument("C:/work", r"~\dir\file.txt")),
+            host_display_path(&home.join("dir").join("file.txt"))
+        );
+        assert_eq!(
+            host_display_path(&resolve_shell_path_argument("C:/work", "~other/file.txt")),
+            host_display_path(&PathBuf::from("C:/work").join("~other").join("file.txt"))
+        );
+    }
+
+    #[test]
+    fn shell_home_dir_accepts_shell_style_userprofile() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _home_guard = EnvVarGuard::set_value("HOME", "");
+        let _userprofile_guard = EnvVarGuard::set_value("USERPROFILE", "/c/Users/example");
+
+        let home = shell_home_dir().unwrap();
+        if cfg!(windows) {
+            assert_eq!(host_display_path(&home), "C:/Users/example");
+        } else {
+            assert_eq!(host_display_path(&home), "/c/Users/example");
+        }
+    }
+
+    /// native-shell#302: the shared resolver honors `HOME` isolation on every
+    /// platform — an explicit `HOME` override wins over `USERPROFILE`
+    /// (the pre-#302 Windows order preferred the system profile, which
+    /// leaked HOME-only sandboxes back into the real home).
+    #[test]
+    fn shell_home_dir_prefers_home_env_over_userprofile() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = unique_temp_dir("native-shell-userprofile-home-precedence");
+        let home = temp.join("home");
+        let userprofile = temp.join("userprofile");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&userprofile).unwrap();
+        let _home_guard = EnvVarGuard::set("HOME", &home);
+        let _userprofile_guard = EnvVarGuard::set("USERPROFILE", &userprofile);
+
+        assert_eq!(
+            crate::path_utils::normalize_existing_host_path(shell_home_dir().unwrap()),
+            crate::path_utils::normalize_existing_host_path(home.clone())
+        );
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn startup_rc_uses_shell_style_userprofile_when_home_is_empty() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = unique_temp_dir("native-shell-shell-style-home-startup");
+        let home = temp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join(NATIVE_SHELL_RC_FILE),
+            "export NATIVE_SHELL_RC_SOURCE=primary\n",
+        )
+        .unwrap();
+        let host_home = host_display_path(&home);
+        let shell_style_home =
+            if cfg!(windows) && host_home.len() >= 2 && host_home.as_bytes()[1] == b':' {
+                let drive = (host_home.as_bytes()[0] as char).to_ascii_lowercase();
+                format!("/{drive}{}", &host_home[2..])
+            } else {
+                host_home
+            };
+        let _home_guard = EnvVarGuard::set_value("HOME", "");
+        let _userprofile_guard = EnvVarGuard::set_value("USERPROFILE", &shell_style_home);
+
+        let mut shell = Shell::new().unwrap();
+        shell.run_startup_rc();
+
+        assert_eq!(
+            shell.executor.get_env("NATIVE_SHELL_RC_SOURCE"),
+            Some("primary")
+        );
+        if cfg!(windows) {
+            assert!(
+                shell
+                    .executor
+                    .get_env("HOME")
+                    .is_some_and(|home| is_windows_drive_path(home)),
+                "HOME should be Windows-native for external tools, got {:?}",
+                shell.executor.get_env("HOME")
+            );
+        }
+    }
+
+    #[test]
+    fn windows_drive_only_paths_normalize_to_drive_root() {
+        if cfg!(windows) {
+            assert_eq!(windows_drive_path_to_slash_drive("C:"), Some("/c/".into()));
+            assert_eq!(
+                windows_drive_path_to_slash_drive("C:/Users/me"),
+                Some("/c/Users/me".into())
+            );
+        } else {
+            assert_eq!(windows_drive_path_to_slash_drive("C:"), None);
+        }
+    }
+
+    #[test]
+    fn bare_windows_drive_commands_rewrite_to_cd_drive_root() {
+        let tokens = tokenize("c:; echo keep");
+        let mut ast = parse(&tokens);
+        normalize_bare_windows_drive_commands(&mut ast);
+
+        if cfg!(windows) {
+            assert_eq!(ast.commands[0].words, vec!["cd", "C:/"]);
+            assert_eq!(
+                ast.commands[0].word_kinds,
+                vec![TokenKind::Word, TokenKind::Word]
+            );
+            assert_eq!(ast.commands[0].word_metadata.len(), 2);
+            assert_eq!(ast.commands[1].words, vec!["echo", "keep"]);
+        } else {
+            assert_eq!(ast.commands[0].words, vec!["c:"]);
+        }
+    }
+
+    #[test]
+    fn windows_drive_normalization_descends_into_and_or_lists() {
+        let tokens = tokenize("cd c: && c:");
+        let mut ast = parse(&tokens);
+        normalize_bare_windows_drive_commands(&mut ast);
+        normalize_cd_windows_drive_args(&mut ast);
+
+        if cfg!(windows) {
+            let and_or_list = ast.commands[0].and_or_list.as_ref().unwrap();
+            assert_eq!(and_or_list.commands[0].words, vec!["cd", "/c/"]);
+            assert_eq!(and_or_list.commands[1].words, vec!["cd", "/c/"]);
+        } else {
+            let and_or_list = ast.commands[0].and_or_list.as_ref().unwrap();
+            assert_eq!(and_or_list.commands[0].words, vec!["cd", "c:"]);
+            assert_eq!(and_or_list.commands[1].words, vec!["c:"]);
+        }
+    }
+
+    #[test]
+    fn cd_slash_drive_args_normalize_to_windows_roots() {
+        let tokens = tokenize("cd /d && cd /e/projects");
+        let mut ast = parse(&tokens);
+        normalize_cd_windows_drive_args(&mut ast);
+
+        if cfg!(windows) {
+            let and_or_list = ast.commands[0].and_or_list.as_ref().unwrap();
+            assert_eq!(and_or_list.commands[0].words, vec!["cd", "D:/"]);
+            assert_eq!(and_or_list.commands[1].words, vec!["cd", "E:/projects"]);
+        } else {
+            let and_or_list = ast.commands[0].and_or_list.as_ref().unwrap();
+            assert_eq!(and_or_list.commands[0].words, vec!["cd", "/d"]);
+            assert_eq!(and_or_list.commands[1].words, vec!["cd", "/e/projects"]);
+        }
+    }
+
+    #[test]
+    fn process_path_from_shell_path_list_converts_msys_drive_entries() {
+        if cfg!(windows) {
+            assert_eq!(
+                process_path_from_shell_path_list("/c/Users/me/bin;C:/Windows/System32", None),
+                r"C:\Users\me\bin;C:\Windows\System32"
+            );
+        } else {
+            assert_eq!(
+                process_path_from_shell_path_list("/home/me/bin:/usr/bin", None),
+                "/home/me/bin:/usr/bin"
+            );
+        }
+    }
+
+    #[test]
+    fn split_shell_path_list_preserves_windows_drive_colons() {
+        assert_eq!(
+            split_shell_path_list("D:/repo/bin:D:/sdk/tools:/usr/bin"),
+            vec![
+                "D:/repo/bin".to_string(),
+                "D:/sdk/tools".to_string(),
+                "/usr/bin".to_string(),
+            ]
+        );
+        assert_eq!(
+            split_shell_path_list("C:/Windows;D:\\Tools:/c/bin"),
+            vec![
+                "C:/Windows".to_string(),
+                "D:\\Tools".to_string(),
+                "/c/bin".to_string(),
+            ]
+        );
+        if cfg!(windows) {
+            assert_eq!(
+                split_shell_path_list("D:/repo/bin"),
+                vec!["D:/repo/bin".to_string()]
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn installed_winuxcmd_root_maps_host_path_helpers() {
+        // Mutates the process env (NATIVE_SHELL_ROOT): serialize with every other
+        // env-touching test (Windows env races — wt61).
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _root_guard = EnvVarGuard::set_value("NATIVE_SHELL_ROOT", "");
+        let root = unique_temp_dir("native-shell-installed-root");
+        let configured = root.join("root");
+        let winuxcmd = configured.join("usr/bin/native-cmd.exe");
+        std::fs::create_dir_all(winuxcmd.parent().unwrap()).unwrap();
+        std::fs::write(&winuxcmd, b"test").unwrap();
+        let shell_root = prepare_shell_root(Some(&winuxcmd)).unwrap();
+        assert_eq!(shell_root, Some(configured.clone()));
+
+        let mut env = HashMap::new();
+        env.insert(
+            "__RUBASH_SHELL_ROOT".to_string(),
+            configured.to_string_lossy().to_string(),
+        );
+        assert_eq!(
+            process_path_from_shell_path_list("/usr/bin:/bin", Some(&env)),
+            format!(
+                r"{}\usr\bin;{}\bin",
+                configured.display(),
+                configured.display()
+            )
+        );
+        assert_eq!(
+            Executor::resolve_shell_path_from_env("/etc", &env),
+            configured.join("etc")
+        );
+        assert_eq!(
+            host_path_to_shell_path_with_root(
+                &configured.join("etc").to_string_lossy(),
+                Some(&configured),
+            ),
+            "/etc"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parameter_pattern_removal_wins_before_equals_in_pattern() {
+        // The `=` and `\"` inside the pattern body are pattern text, not
+        // assignment syntax — rubash parses them natively now.
+        let script = r##"line='<rect x="0" fill="#fe0000"/>'; rest=${line#*fill=\"}; printf '%s\n' "${rest%%\"*}""##;
+        let script = normalize_native_windows_path_literals(script);
+
+        let mut shell = test_shell(HookConfig::default());
+        assert_eq!(shell.execute_script(&script).unwrap(), 0);
+        assert_eq!(shell.executor.get_env("rest"), Some("#fe0000\"/>"));
+    }
+
+    #[test]
+    fn native_windows_path_literals_are_normalized_before_tokenize() {
+        if cfg!(windows) {
+            assert_eq!(
+                normalize_native_windows_path_literals(r"ls C:\Users\me"),
+                r"ls C:\\Users\\me"
+            );
+            assert_eq!(
+                normalize_native_windows_path_literals(r"ls --root=C:\Users\me"),
+                r"ls --root=C:\\Users\\me"
+            );
+            assert_eq!(
+                normalize_native_windows_path_literals(r"echo foo\ bar C:\Users\me"),
+                r"echo foo\ bar C:\\Users\\me"
+            );
+            assert_eq!(
+                normalize_native_windows_path_literals(r"echo 'C:\Users\me'"),
+                r"echo 'C:\Users\me'"
+            );
+            assert_eq!(
+                normalize_native_windows_path_literals(r"echo http:\example"),
+                r"echo http:\example"
+            );
+        } else {
+            assert_eq!(
+                normalize_native_windows_path_literals(r"ls C:\Users\me"),
+                r"ls C:\Users\me"
+            );
+        }
+    }
+
+    #[test]
+    fn native_windows_path_literals_survive_rubash_tokenize() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let line = normalize_native_windows_path_literals(r"ls C:\Users\me; echo C:\Users\me");
+        let tokens = tokenize(&line);
+        let mut ast = parse(&tokens);
+        normalize_cd_windows_drive_args(&mut ast);
+        normalize_winuxcmd_slash_drive_args(&mut ast);
+
+        assert_eq!(ast.commands[0].words[1], "C:\x14Users\x14me");
+        assert_eq!(ast.commands[1].words[1], "C:\x14Users\x14me");
+    }
+
+    #[test]
+    fn winuxcmd_slash_drive_args_are_translated_for_path_commands() {
+        let tokens = tokenize(
+            "ls /c/Users; mktemp /c/Users/test.XXXXXX.tmp; echo /c/Users; RealPath.Exe /c/Users; sha256sum /c/Users/file; ln /c/Users/a /c/Users/b; printf /c/Users; mkdir -p /c/Users/tmp && mktemp /c/Users/tmp/test.XXXXXX.tmp",
+        );
+        let mut ast = parse(&tokens);
+        normalize_winuxcmd_slash_drive_args(&mut ast);
+
+        if cfg!(windows) {
+            assert_eq!(ast.commands[0].words[1], "C:/Users");
+            assert_eq!(ast.commands[1].words[1], "C:/Users/test.XXXXXX.tmp");
+            assert_eq!(ast.commands[2].words[1], "/c/Users");
+            assert_eq!(ast.commands[3].words[1], "C:/Users");
+            assert_eq!(ast.commands[4].words[1], "C:/Users/file");
+            assert_eq!(ast.commands[5].words[1], "C:/Users/a");
+            assert_eq!(ast.commands[5].words[2], "C:/Users/b");
+            assert_eq!(ast.commands[6].words[1], "/c/Users");
+            let and_or_list = ast.commands[7].and_or_list.as_ref().unwrap();
+            assert_eq!(and_or_list.commands[0].words[2], "C:/Users/tmp");
+            assert_eq!(
+                and_or_list.commands[1].words[1],
+                "C:/Users/tmp/test.XXXXXX.tmp"
+            );
+        } else {
+            assert_eq!(ast.commands[0].words[1], "/c/Users");
+            assert_eq!(ast.commands[1].words[1], "/c/Users/test.XXXXXX.tmp");
+            assert_eq!(ast.commands[2].words[1], "/c/Users");
+            assert_eq!(ast.commands[3].words[1], "/c/Users");
+            assert_eq!(ast.commands[4].words[1], "/c/Users/file");
+            assert_eq!(ast.commands[5].words[1], "/c/Users/a");
+            assert_eq!(ast.commands[5].words[2], "/c/Users/b");
+            assert_eq!(ast.commands[6].words[1], "/c/Users");
+            let and_or_list = ast.commands[7].and_or_list.as_ref().unwrap();
+            assert_eq!(and_or_list.commands[0].words[2], "/c/Users/tmp");
+            assert_eq!(
+                and_or_list.commands[1].words[1],
+                "/c/Users/tmp/test.XXXXXX.tmp"
+            );
+        }
+    }
+
+    #[test]
+    fn winuxcmd_pattern_operands_are_not_slash_drive_translated() {
+        let tokens = tokenize(
+            "grep -F \"/h/\" /c/Users/file; grep /h/ /c/Users/file; grep -e /h/ /c/Users/file; grep -f /c/patfile /c/Users/file; grep -A 2 /h/ /c/Users/file; sed /h/d /c/Users/file; awk /h/ /c/Users/file; find /c/Users -name /h/ -print; find /e/ -maxdepth 1",
+        );
+        let mut ast = parse(&tokens);
+        normalize_winuxcmd_slash_drive_args(&mut ast);
+
+        if cfg!(windows) {
+            assert_eq!(ast.commands[0].words[2], "/h/");
+            assert_eq!(ast.commands[0].words[3], "C:/Users/file");
+            assert_eq!(ast.commands[1].words[1], "/h/");
+            assert_eq!(ast.commands[1].words[2], "C:/Users/file");
+            assert_eq!(ast.commands[2].words[2], "/h/");
+            assert_eq!(ast.commands[2].words[3], "C:/Users/file");
+            assert_eq!(ast.commands[3].words[2], "C:/patfile");
+            assert_eq!(ast.commands[3].words[3], "C:/Users/file");
+            assert_eq!(ast.commands[4].words[1], "-A");
+            assert_eq!(ast.commands[4].words[2], "2");
+            assert_eq!(ast.commands[4].words[3], "/h/");
+            assert_eq!(ast.commands[4].words[4], "C:/Users/file");
+            assert_eq!(ast.commands[5].words[1], "/h/d");
+            assert_eq!(ast.commands[5].words[2], "C:/Users/file");
+            assert_eq!(ast.commands[6].words[1], "/h/");
+            assert_eq!(ast.commands[6].words[2], "C:/Users/file");
+            assert_eq!(ast.commands[7].words[1], "C:/Users");
+            assert_eq!(ast.commands[7].words[3], "/h/");
+            assert_eq!(ast.commands[8].words[1], "E:/");
+        } else {
+            assert_eq!(ast.commands[0].words[2], "/h/");
+            assert_eq!(ast.commands[0].words[3], "/c/Users/file");
+            assert_eq!(ast.commands[3].words[2], "/c/patfile");
+            assert_eq!(ast.commands[4].words[3], "/h/");
+            assert_eq!(ast.commands[5].words[1], "/h/d");
+            assert_eq!(ast.commands[6].words[1], "/h/");
+            assert_eq!(ast.commands[7].words[1], "/c/Users");
+            assert_eq!(ast.commands[7].words[3], "/h/");
+            assert_eq!(ast.commands[8].words[1], "/e/");
+        }
+    }
+
+    #[test]
+    fn filesystem_blind_string_tools_keep_slash_drive_operands_verbatim() {
+        // native-shell#346(c): dirname/basename never stat their operand, so a
+        // POSIX-shaped NAME such as /a/b is display text, not a drive form.
+        // The host must not fold it to A:/b before rubash's own mask runs
+        // (rubash argv_data_primary_positions exempts the same two tools).
+        let tokens = tokenize(
+            "dirname /a/b; basename /a/b/c.txt; dirname -z /a/b /usr/bin/seq; dirname a/b",
+        );
+        let mut ast = parse(&tokens);
+        normalize_winuxcmd_slash_drive_args(&mut ast);
+
+        assert_eq!(ast.commands[0].words[1], "/a/b");
+        assert_eq!(ast.commands[1].words[1], "/a/b/c.txt");
+        assert_eq!(ast.commands[2].words[1], "-z");
+        assert_eq!(ast.commands[2].words[2], "/a/b");
+        assert_eq!(ast.commands[2].words[3], "/usr/bin/seq");
+        assert_eq!(ast.commands[3].words[1], "a/b");
+    }
+
+    #[test]
+    fn shim_rewrite_preserves_quoted_glob_carriers() {
+        // Phase 0 (host-semantic-layer-elimination): the host must not strip
+        // rubash's \x11 quoted-glob carrier from token values — the executor
+        // decodes it at the argv boundary, and stripping it here made
+        // `echo a\*b` glob-expand. Host consumers decode via
+        // rubash::decode_to_visible_text instead.
+        let mut tokens = tokenize(r"grep a\*b file; echo c\?d");
+        rewrite_winuxcmd_command_shims(&mut tokens, false);
+        let ast = parse(&tokens);
+        assert!(ast.commands[0].words[1].contains('\x11'));
+        assert!(ast.commands[1].words[1].contains('\x11'));
+        assert_eq!(decode_to_visible_text(&ast.commands[0].words[1]), "a*b");
+        assert_eq!(decode_to_visible_text(&ast.commands[1].words[1]), "c?d");
+    }
+
+    #[test]
+    fn interactive_terminal_grep_colors_force_pipeline_final_stage() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let mut tokens = tokenize("ls -la | grep map");
+        rewrite_winuxcmd_command_shims(&mut tokens, true);
+        let ast = parse(&tokens);
+        let pipeline = ast.commands[0].pipeline_command.as_ref().unwrap();
+
+        assert_eq!(
+            pipeline.stages[1].words,
+            vec!["grep.exe", "--color=always", "map"]
+        );
+    }
+
+    #[test]
+    fn interactive_terminal_grep_colors_preserve_explicit_color_choice() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let mut tokens = tokenize("ls -la | grep --color=never map");
+        rewrite_winuxcmd_command_shims(&mut tokens, true);
+        let ast = parse(&tokens);
+        let pipeline = ast.commands[0].pipeline_command.as_ref().unwrap();
+
+        assert_eq!(
+            pipeline.stages[1].words,
+            vec!["grep.exe", "--color=never", "map"]
+        );
+    }
+
+    #[test]
+    fn interactive_terminal_grep_colors_force_grep_exe_pipeline_stage() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let mut tokens = tokenize("ls -la | grep.exe map");
+        rewrite_winuxcmd_command_shims(&mut tokens, true);
+        let ast = parse(&tokens);
+        let pipeline = ast.commands[0].pipeline_command.as_ref().unwrap();
+
+        assert_eq!(
+            pipeline.stages[1].words,
+            vec!["grep.exe", "--color=always", "map"]
+        );
+    }
+
+    #[test]
+    fn interactive_terminal_grep_colors_skip_redirected_stdout() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let mut tokens = tokenize("ls -la | grep map > out.txt");
+        rewrite_winuxcmd_command_shims(&mut tokens, true);
+        let ast = parse(&tokens);
+        let pipeline = ast.commands[0].pipeline_command.as_ref().unwrap();
+
+        assert_eq!(pipeline.stages[1].words, vec!["grep.exe", "map"]);
+    }
+
+    #[test]
+    fn interactive_terminal_grep_colors_force_simple_terminal_grep() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let mut tokens = tokenize("grep map README.md");
+        rewrite_winuxcmd_command_shims(&mut tokens, true);
+        let ast = parse(&tokens);
+
+        assert_eq!(
+            ast.commands[0].words,
+            vec!["grep.exe", "--color=always", "map", "README.md"]
+        );
+    }
+
+    #[test]
+    fn script_grep_rewrite_forces_external_grep_without_color() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let mut tokens = tokenize("printf \"abc\\n\" | grep -E \"a.+c\"");
+        rewrite_winuxcmd_command_shims(&mut tokens, false);
+        let ast = parse(&tokens);
+        let pipeline = ast.commands[0].pipeline_command.as_ref().unwrap();
+
+        // The `+` stays behind rubash's \x11 data carrier until the executor
+        // decodes it at the argv boundary; the host sees the transport form.
+        assert_eq!(
+            pipeline.stages[1].words,
+            vec!["grep.exe", "-E", "a.\u{11}+c"]
+        );
+        assert_eq!(decode_to_visible_text(&pipeline.stages[1].words[2]), "a.+c");
+    }
+
+    #[test]
+    fn file_commands_are_not_rewritten_or_claimed_as_native_shell_builtins() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let mut tokens = tokenize("rm -rf -- '-p'; cat file; cp src dst");
+        rewrite_winuxcmd_command_shims(&mut tokens, false);
+        let ast = parse(&tokens);
+
+        assert_eq!(ast.commands[0].words, vec!["rm", "-rf", "--", "-p"]);
+        assert!(native_shell_builtin_words(&ast.commands[0]).is_none());
+        assert!(native_shell_builtin_words(&ast.commands[1]).is_none());
+        assert!(native_shell_builtin_words(&ast.commands[2]).is_none());
+    }
+
+    #[test]
+    fn source_and_file_commands_are_not_claimed_as_native_shell_builtins() {
+        let mut tokens = tokenize(
+            "cat file; chmod +w file; cp src dst; kill -l; mkdir -p dir; mkfifo pipe; pwd; rm -rf dir; rmdir dir; self-update --check; source file; touch file",
+        );
+        rewrite_winuxcmd_command_shims(&mut tokens, false);
+        let ast = parse(&tokens);
+
+        let names: Vec<_> = ast
+            .commands
+            .iter()
+            .map(|command| native_shell_builtin_words(command).map(|(name, _)| name))
+            .collect();
+        assert_eq!(
+            names,
+            vec![None, None, None, None, None, None, None, None, None, None, None, None,]
+        );
+    }
+
+    #[test]
+    fn self_update_repl_commands_are_not_shell_builtins() {
+        let ast = parse(&tokenize(
+            "self-update --check; update-native-shell --dry-run",
+        ));
+
+        let names: Vec<_> = ast
+            .commands
+            .iter()
+            .map(|command| native_shell_builtin_words(command).map(|(name, _)| name))
+            .collect();
+        assert_eq!(names, vec![None, None]);
+    }
+
+    #[test]
+    fn file_helpers_stay_on_path_resolution_surface() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let mut tokens = tokenize("cat file; chmod +x script; cp -R src dst; mkdir -p dir; mkfifo pipe; rm -rf dir; rmdir dir; touch -t 202001010000 file");
+        rewrite_winuxcmd_command_shims(&mut tokens, false);
+        let ast = parse(&tokens);
+
+        assert_eq!(ast.commands[0].words[0], "cat");
+        assert_eq!(ast.commands[1].words[0], "chmod");
+        assert_eq!(ast.commands[2].words[0], "cp");
+        assert_eq!(ast.commands[3].words[0], "mkdir");
+        assert_eq!(ast.commands[4].words[0], "mkfifo");
+        assert_eq!(ast.commands[5].words[0], "rm");
+        assert_eq!(ast.commands[6].words[0], "rmdir");
+        assert_eq!(ast.commands[7].words[0], "touch");
+        for command in &ast.commands {
+            assert!(native_shell_builtin_words(command).is_none());
+        }
+    }
+
+    #[test]
+    fn builtin_prefix_does_not_fabricate_file_builtins() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let mut tokens = tokenize("builtin rm -- '-p'");
+        rewrite_winuxcmd_command_shims(&mut tokens, false);
+        let ast = parse(&tokens);
+
+        assert_eq!(ast.commands[0].words, vec!["builtin", "rm", "--", "-p"]);
+        assert!(native_shell_builtin_words(&ast.commands[0]).is_none());
+    }
+
+    #[test]
+    fn setopt_delegates_to_rubash_builtin_surface() {
+        let ast = parse(&tokenize(
+            "setopt hist_ignore_space; builtin setopt prompt_subst; command unsetopt prompt_subst",
+        ));
+
+        assert!(native_shell_builtin_words(&ast.commands[0]).is_none());
+        assert!(native_shell_builtin_words(&ast.commands[1]).is_none());
+        assert!(native_shell_builtin_words(&ast.commands[2]).is_none());
+    }
+    #[test]
+    fn pwd_delegates_to_rubash_without_winuxcmd_path_dependency() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let mut tokens = tokenize("pwd; builtin pwd; command pwd");
+        rewrite_winuxcmd_command_shims(&mut tokens, false);
+        let ast = parse(&tokens);
+
+        assert_eq!(ast.commands[0].words, vec!["pwd"]);
+        assert_eq!(ast.commands[1].words, vec!["builtin", "pwd"]);
+        assert_eq!(ast.commands[2].words, vec!["command", "pwd"]);
+        assert!(native_shell_builtin_words(&ast.commands[0]).is_none());
+        assert!(native_shell_builtin_words(&ast.commands[1]).is_none());
+        assert!(native_shell_builtin_words(&ast.commands[2]).is_none());
+    }
+
+    #[test]
+    fn redirected_pwd_uses_rubash_redirection_path() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let ast = parse(&tokenize("pwd > out.txt"));
+
+        assert!(native_shell_builtin_words(&ast.commands[0]).is_none());
+    }
+
+    #[test]
+    fn rewritten_grep_exe_first_pipeline_stage_gets_stdin_bridge() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let mut tokens = tokenize("grep -E alpha | cat");
+        rewrite_winuxcmd_command_shims(&mut tokens, false);
+        let mut ast = parse(&tokens);
+
+        {
+            let stage = process_stdin_pipeline_bridge_stage(&mut ast).unwrap();
+            assert_eq!(stage.words[0], "grep.exe");
+        }
+    }
+
+    #[test]
+    fn redirected_grep_exe_pipeline_stage_does_not_get_stdin_bridge() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let mut tokens = tokenize("grep alpha < input.txt | cat");
+        rewrite_winuxcmd_command_shims(&mut tokens, false);
+        let mut ast = parse(&tokens);
+
+        assert!(process_stdin_pipeline_bridge_stage(&mut ast).is_none());
+    }
+
+    #[test]
+    fn interactive_cd_syncs_process_cwd_and_normalizes_pwd() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-cwd-sync");
+        let target = temp.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+
+        let mut shell = test_shell(HookConfig::default());
+        let target_shell_path = shell_display_path(&target);
+        let code = shell
+            .execute_interactive_line(&format!("cd {}", shell_quote(&target_shell_path)))
+            .unwrap();
+        assert_eq!(
+            code,
+            0,
+            "cd failed, PWD={:?}, target={target_shell_path}",
+            shell.executor.get_env("PWD")
+        );
+
+        let completion_cwd = shell
+            .completion_state
+            .lock()
+            .unwrap()
+            .current_dir
+            .canonicalize()
+            .unwrap();
+        assert_eq!(
+            completion_cwd,
+            target.canonicalize().unwrap(),
+            "completion cwd did not sync, PWD={:?}",
+            shell.executor.get_env("PWD")
+        );
+        if cfg!(windows) {
+            // rubash#556 (P0 #537): $PWD/`pwd` render the POSIX persona form
+            // unconditionally — the native-style hatch is retired, and the
+            // form must not depend on which route executed the cd.
+            let pwd = shell.executor.get_env("PWD").unwrap_or_default();
+            let expected_persona = format!(
+                "/{}{}",
+                (target_shell_path.as_bytes()[0] as char).to_ascii_lowercase(),
+                &target_shell_path[2..]
+            );
+            assert_eq!(
+                pwd, expected_persona,
+                "PWD must render the POSIX persona form (rubash#556/#537), got {pwd:?}"
+            );
+        } else {
+            assert_eq!(
+                shell.executor.get_env("PWD").as_deref(),
+                Some(target_shell_path.as_str())
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn execute_line_syncs_cd_before_following_windows_child_command() {
+        if !cfg!(windows) {
+            return;
+        }
+
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-cwd-sequence");
+        let start = temp.join("start");
+        let target = start.join("target");
+        let bin = temp.join("bin");
+        let log = temp.join("cwdprobe.txt");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        write_fake_cwd_probe(&bin, &host_display_path(&log));
+
+        let old_path = prepend_path_for_test(&bin);
+        let old_pathext = std::env::var_os("PATHEXT");
+        std::env::set_var("PATHEXT", ".COM;.EXE;.BAT;.CMD");
+        std::env::set_current_dir(&start).unwrap();
+
+        let mut shell = test_shell(HookConfig::default());
+        let code = shell.execute_line("cd target; cwdprobe").unwrap();
+
+        assert_eq!(code, 0);
+        let observed = std::fs::read_to_string(&log).unwrap();
+        let observed = host_path_to_shell_path(observed.trim());
+        let expected = shell_display_path(&target);
+        assert!(
+            same_shell_dir(&observed, &expected),
+            "native child cwd mismatch: observed={observed:?}, expected={expected:?}"
+        );
+        assert!(
+            same_shell_dir(shell.executor.get_env("PWD").unwrap_or_default(), &expected),
+            "executor PWD mismatch: {:?}, expected={expected:?}",
+            shell.executor.get_env("PWD")
+        );
+
+        restore_path_for_test(old_path);
+        match old_pathext {
+            Some(value) => std::env::set_var("PATHEXT", value),
+            None => std::env::remove_var("PATHEXT"),
+        }
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn bash_prompt_command_updates_ps1_before_prompt_render() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let _columns_guard = EnvVarGuard::set_value("COLUMNS", "80");
+        let mut shell = test_shell(HookConfig::default());
+        shell.executor.set_env(
+            "PROMPT_COMMAND",
+            "PS1=\"status:$? cols:${COLUMNS:-missing}> \"",
+        );
+        shell.executor.set_last_exit_code(7);
+
+        shell.run_precmd_hooks();
+
+        match &shell.prompt {
+            PromptBackend::Bash(prompt) => {
+                assert_eq!(prompt.render_prompt_left(), "status:7 cols:80> ");
+            }
+            _ => panic!("expected Bash prompt backend"),
+        }
+        assert_eq!(shell.executor.last_exit_code(), 7);
+    }
+
+    #[test]
+    fn one_shot_shell_uses_a_terminal_free_prompt_backend() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let shell = Shell::new_one_shot().expect("one-shot shell should initialize");
+
+        assert!(shell.one_shot);
+        assert!(matches!(shell.prompt, PromptBackend::Template(_)));
+    }
+
+    #[test]
+    fn bash_ps1_prompt_escapes_render_from_executor_state() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let mut shell = test_shell(HookConfig::default());
+        shell
+            .executor
+            .set_env("PS1", "user:\\u host:\\h dir:\\w \\\\$ ");
+        shell.executor.set_env("PS2", "more> ");
+
+        shell.run_precmd_hooks();
+
+        match &shell.prompt {
+            PromptBackend::Bash(prompt) => {
+                let left = prompt.render_prompt_left();
+                assert!(left.contains("user:"), "{left}");
+                assert!(left.contains("host:"), "{left}");
+                assert!(left.contains("dir:"), "{left}");
+                assert!(!left.contains("\\u"), "{left}");
+                assert_eq!(prompt.render_prompt_multiline_indicator(), "more> ");
+            }
+            _ => panic!("expected Bash prompt backend"),
+        }
+    }
+
+    #[test]
+    fn enter_interactive_discards_foreign_inherited_ps1() {
+        // JayWanX/native-shell#117 (reopened): the Git Bash session PS1 exported
+        // into child processes must not be adopted by an interactive shell.
+        // enter_interactive runs before the startup rc, so discarding there
+        // leaves a PS1 set by the user's own rc fully in charge.
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let history_dir = tempfile::tempdir().unwrap();
+        let mut shell = test_shell(HookConfig::default());
+        shell.history_path = history_dir.path().join("first-history");
+        shell
+            .executor
+            .set_env("PS1", r"\[\033]0;x\007\]`__git_ps1` $ ");
+
+        shell.enter_interactive();
+
+        // The foreign value is gone from the environment, so no prompt path
+        // (REPL sync or engine interactive stdin) can expand `__git_ps1`.
+        assert_eq!(shell.executor.get_env("PS1"), None);
+        // The shell's own theme backend is untouched by the discard.
+        assert!(matches!(shell.prompt, PromptBackend::Template(_)));
+
+        // A PS1 without Git Bash session machinery is user content and must
+        // survive into prompt adoption exactly as before.
+        let mut plain = test_shell(HookConfig::default());
+        plain.history_path = history_dir.path().join("plain-history");
+        plain.executor.set_env("PS1", r"\u@\h:\w\$ ");
+        plain.enter_interactive();
+        assert_eq!(plain.executor.get_env("PS1"), Some(r"\u@\h:\w\$ "));
+        plain.sync_bash_prompt_from_env();
+        assert!(matches!(plain.prompt, PromptBackend::Bash(_)));
+    }
+
+    /// Defaults-as-floor (design §14.5): a PS1 written *after* interactive
+    /// entry — the provenance an enabled framework has when its guarded
+    /// loader block runs inside the startup rc — is never eligible for the
+    /// #117 foreign-inheritance discard, even when its text happens to
+    /// carry Git Bash session markers. The discard is provenance-gated
+    /// (inherited env only, once, before any rc); framework recognition
+    /// must never grow another content-detector.
+    #[test]
+    fn framework_ps1_set_after_interactive_entry_is_never_discarded() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let history_dir = tempfile::tempdir().unwrap();
+        let mut shell = test_shell(HookConfig::default());
+        shell.history_path = history_dir.path().join("history");
+        shell.enter_interactive();
+        // Simulate a framework theme block sourced from the rc. The value
+        // deliberately reuses #117's marker shapes to prove ordering, not
+        // content, is the guard.
+        shell
+            .executor
+            .set_env("PS1", r"\u@\h $MSYSTEM \w `__git_ps1` $ ");
+        shell.run_precmd_hooks();
+        assert_eq!(
+            shell.executor.get_env("PS1"),
+            Some(r"\u@\h $MSYSTEM \w `__git_ps1` $ "),
+            "a framework-set PS1 must keep full effect"
+        );
+        assert!(
+            matches!(shell.prompt, PromptBackend::Bash(_)),
+            "the claim renders through the bash-compatible channel"
+        );
+    }
+
+    /// Defaults-as-floor (§14.5): releasing the claim (unset/empty PS1 —
+    /// `native-shell plugin disable`, theme off, plain `unset PS1`) restores the
+    /// product floor instead of freezing the last claimed face.
+    #[test]
+    fn prompt_claim_release_restores_the_floor() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let mut shell = test_shell(HookConfig::default());
+        shell.executor.set_env("PS1", "claimed-face> ");
+        shell.run_precmd_hooks();
+        match &shell.prompt {
+            PromptBackend::Bash(prompt) => {
+                assert_eq!(prompt.render_prompt_left(), "claimed-face> ");
+            }
+            _ => panic!("expected the claim to render"),
+        }
+
+        shell.executor.unset_env("PS1");
+        shell.run_precmd_hooks();
+        match &shell.prompt {
+            PromptBackend::Template(floor) => {
+                let left = reedline::Prompt::render_prompt_left(floor).into_owned();
+                assert!(!left.contains("claimed-face"), "{left}");
+            }
+            _ => panic!("expected the product floor after release"),
+        }
+
+        // Re-claim after release still wins (claim/release/claim cycle).
+        shell.executor.set_env("PS1", "reclaimed> ");
+        shell.run_precmd_hooks();
+        match &shell.prompt {
+            PromptBackend::Bash(prompt) => {
+                assert_eq!(prompt.render_prompt_left(), "reclaimed> ");
+            }
+            _ => panic!("expected re-claim to render"),
+        }
+    }
+
+    /// Defaults-as-floor (§14.5): PROMPT_COMMAND is a hook, not a claim.
+    /// Hook-only frameworks (oh-my-bash's `history` plugin registers
+    /// `history -a` without any theme) must not displace the product floor
+    /// with a placeholder PS1; the hook still runs every prompt.
+    #[test]
+    fn hook_only_prompt_command_keeps_the_floor() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let mut shell = test_shell(HookConfig::default());
+        shell
+            .executor
+            .set_env("PROMPT_COMMAND", "NATIVE_SHELL_HOOK_RAN=1");
+
+        shell.run_precmd_hooks();
+
+        assert!(
+            matches!(shell.prompt, PromptBackend::Template(_)),
+            "a hook without PS1 must not claim the prompt slot"
+        );
+        assert_eq!(
+            shell.executor.get_env("NATIVE_SHELL_HOOK_RAN"),
+            Some("1"),
+            "the hook still ran before the prompt"
+        );
+    }
+
+    /// starship's claim shape (src/init/starship.bash): PROMPT_COMMAND names
+    /// a precmd function that assigns PS1 itself. Because the hook runs
+    /// before the backend sync, the PS1 claim is visible in the same render
+    /// cycle — the floor steps aside on the very first starship prompt.
+    #[test]
+    fn starship_style_precmd_hook_claims_via_ps1_same_cycle() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let mut shell = test_shell(HookConfig::default());
+        shell
+            .execute_line("starship_precmd() { PS1='starship-face> '; }")
+            .unwrap();
+        shell
+            .execute_line("PROMPT_COMMAND=starship_precmd")
+            .unwrap();
+
+        shell.run_precmd_hooks();
+
+        match &shell.prompt {
+            PromptBackend::Bash(prompt) => {
+                assert_eq!(prompt.render_prompt_left(), "starship-face> ");
+            }
+            _ => panic!("expected starship's PS1 claim to render"),
+        }
+    }
+
+    #[test]
+    fn bash_ps0_runs_before_interactive_command() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let mut shell = test_shell(HookConfig::default());
+        shell.executor.set_env(
+            "PS0",
+            "${STARSHIP_START_TIME:$((STARSHIP_START_TIME=12345,0)):0}",
+        );
+
+        assert_eq!(shell.execute_interactive_line(":").unwrap(), 0);
+
+        assert_eq!(shell.executor.get_env("STARSHIP_START_TIME"), Some("12345"));
+    }
+
+    /// JayWanX/native-shell#190: PS0's decoded output must go to the stderr
+    /// channel (GNU eval.c:176 writes stderr), with stdout left untouched —
+    /// `cmd 2>/dev/null` drops the PS0 bytes while `cmd > file` stays clean.
+    #[test]
+    fn bash_ps0_expansion_targets_stderr_and_stdout_stays_clean() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let mut shell = test_shell(HookConfig::default());
+        shell.executor.set_env("PS0", "PS0-EXPANDED ");
+
+        // Arm the capture, run one interactive line, then disarm — on panic
+        // too, so the thread-local never leaks into a later test.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            CHANNEL_CAPTURE.with(|slot| *slot.borrow_mut() = Some(Vec::new()));
+            shell.execute_interactive_line(":").unwrap();
+        }));
+        let captured = CHANNEL_CAPTURE.with(|slot| slot.borrow_mut().take());
+        if let Err(payload) = result {
+            std::panic::resume_unwind(payload);
+        }
+        let captured = captured.expect("capture disarmed");
+
+        assert!(
+            captured
+                .iter()
+                .all(|(channel, _)| *channel == ShellChannel::Stderr),
+            "PS0 expansion must never write the stdout channel: {captured:?}"
+        );
+        assert_eq!(
+            captured,
+            vec![(ShellChannel::Stderr, b"PS0-EXPANDED ".to_vec())],
+            "decoded PS0 bytes land on stderr exactly once"
+        );
+    }
+
+    #[test]
+    fn restricted_startup_finishes_before_greeting_and_precmd_hooks() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cwd_guard = CwdGuard::capture();
+        let temp = unique_temp_dir("native-shell-restricted-hooks");
+        std::fs::create_dir_all(&temp).unwrap();
+        std::fs::write(temp.join(NATIVE_SHELL_RC_FILE), "cd .\nSTARTUP_CD=$?\n").unwrap();
+        let mut shell = test_shell(HookConfig {
+            greeting: vec!["cd .; GREETING_CD=$?".into()],
+            precmd: vec!["cd .; PRECMD_CD=$?".into()],
+            ..HookConfig::default()
+        });
+        shell.home_dir = temp.clone();
+        let invocation = rubash::invocation::ShellInvocation::parse(&["-r".into()]).unwrap();
+        shell.apply_invocation_before_startup(&invocation).unwrap();
+        shell.run_startup_rc();
+        assert_eq!(shell.executor.get_env("STARTUP_CD"), Some("0"));
+        assert_eq!(shell.executor.get_env("GREETING_CD"), Some("1"));
+        shell.run_precmd_hooks();
+        assert_eq!(shell.executor.get_env("PRECMD_CD"), Some("1"));
+        assert!(shell.startup_invocation.is_none());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    /// native-shell#422: on the login posix face (`sh -l -i`), an `exit` in the
+    /// `$ENV` file ends the startup BEFORE the login tail — greeting hooks
+    /// (and the completion sync) must not run after the file already ended
+    /// the invocation. GNU 5.3.0 oracle (WSL `sh -l -i`, $ENV = "echo
+    /// ENV-RAN; exit 7"): the marker prints, the shell exits 7, the first
+    /// prompt never renders (the no-exit control does render it). The same
+    /// early return the profile and rc exit paths take.
+    #[test]
+    fn login_posix_env_exit_skips_the_greeting_startup_tail() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = tempfile::tempdir().unwrap();
+        let env_file = temp.path().join("env422.src");
+        std::fs::write(&env_file, "export ENV_RAN=$((2+3))\nexit 7\n").unwrap();
+        let mut shell = test_shell(HookConfig {
+            greeting: vec!["export GREETING_RAN=$((6*7))".into()],
+            ..HookConfig::default()
+        });
+        shell.home_dir = temp.path().to_path_buf();
+        // The `sh -l -i` shape: posix mode (invoked as sh) plus the login
+        // marker, REPL dispatch (the greeting tail only runs with repl).
+        shell.executor.set_env("__RUBASH_POSIX_MODE", "1");
+        shell.executor.set_env("__RUBASH_LOGIN_SHELL", "1");
+        shell
+            .executor
+            .set_env("ENV", &env_file.to_string_lossy().into_owned());
+        let exit = shell.run_startup_files(true);
+        assert_eq!(
+            exit,
+            Some(7),
+            "the ENV file's exit status is the startup status"
+        );
+        assert_eq!(
+            shell.executor.get_env("ENV_RAN"),
+            Some("5"),
+            "the ENV file itself ran"
+        );
+        assert_eq!(
+            shell.executor.get_env("GREETING_RAN"),
+            None,
+            "no greeting hook may run after the ENV exit jump"
+        );
+        assert_ne!(
+            shell.executor.get_env("NATIVE_SHELL_REPL_STARTUP"),
+            Some("1"),
+            "the REPL startup marker must not leak past the jump"
+        );
+    }
+
+    /// Control for the jump above: the same face WITHOUT the ENV exit still
+    /// runs the greeting tail (the guard is the exit jump, not the face).
+    #[test]
+    fn login_posix_env_without_exit_still_runs_the_greeting_tail() {
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = tempfile::tempdir().unwrap();
+        let env_file = temp.path().join("env422ctl.src");
+        std::fs::write(&env_file, "export ENV_RAN=$((2+3))\n").unwrap();
+        let mut shell = test_shell(HookConfig {
+            greeting: vec!["export GREETING_RAN=$((6*7))".into()],
+            ..HookConfig::default()
+        });
+        shell.home_dir = temp.path().to_path_buf();
+        shell.executor.set_env("__RUBASH_POSIX_MODE", "1");
+        shell.executor.set_env("__RUBASH_LOGIN_SHELL", "1");
+        shell
+            .executor
+            .set_env("ENV", &env_file.to_string_lossy().into_owned());
+        let exit = shell.run_startup_files(true);
+        assert_eq!(exit, None);
+        assert_eq!(shell.executor.get_env("GREETING_RAN"), Some("42"));
+    }
+
+    fn test_shell(hooks: HookConfig) -> Shell {
+        let mut executor = Executor::new();
+        executor.set_shopt_option("expand_aliases", true);
+        let mut shell = Shell {
+            executor,
+            completion_state: Arc::new(Mutex::new(CompletionState::new(PathBuf::from(".")))),
+            prompt: PromptBackend::Template(NativeShellPrompt::new(None, None)),
+            gitbash_prompt_active: false,
+            floor_prompt: PromptBackend::Template(NativeShellPrompt::new(None, None)),
+            home_dir: PathBuf::from("."),
+            shell_root: None,
+            history_path: PathBuf::from(".native-shell_history"),
+            history_max_size: 10000,
+            history_ignore_space_prefixed: false,
+            history_provider: None,
+            history_mode: crate::config::HistoryMode::default(),
+            menu_config: MenuConfig::default(),
+            editor_mode: EditorMode::Emacs,
+            command_not_found_hint: CommandNotFoundHint::Off,
+            edit_flags_seen: None,
+            autosuggest: AutosuggestConfig::default(),
+            syntax_highlighting: SyntaxHighlightConfig::default(),
+            native_widgets: NativeWidgetConfig::default(),
+            native_widget_bindings: Vec::new(),
+            user_widget_bindings: Vec::new(),
+            engine_bindings: Vec::new(),
+            engine_bind_generation: 0,
+            compdefs: Vec::new(),
+            config_completion_dirs: Vec::new(),
+            hooks,
+            aliases: HashMap::new(),
+            last_interactive_command: None,
+            last_interactive_exit_code: None,
+            line_editor: None,
+            process_stdin_pipeline_bridge: false,
+            bash_prompt_command_running: false,
+            interactive_lines_read: 0,
+            interactive: false,
+            no_rc: false,
+            no_profile: false,
+            rc_file: None,
+            no_editing: false,
+            startup_invocation: None,
+            invoked_as_rbash: false,
+            script_exit_jump: false,
+            one_shot: false,
+        };
+        shell.sync_executor_pwd_from_process_cwd();
+        shell
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), nanos))
+    }
+
+    fn shell_display_path(path: &std::path::Path) -> String {
+        path.to_string_lossy().replace('\\', "/")
+    }
+
+    fn host_display_path(path: &std::path::Path) -> String {
+        path.to_string_lossy().replace('\\', "/")
+    }
+
+    fn prepend_path_for_test(dir: &std::path::Path) -> Option<std::ffi::OsString> {
+        let old_path = std::env::var_os("PATH");
+        let mut paths = vec![dir.to_path_buf()];
+        if let Some(old_path) = &old_path {
+            paths.extend(std::env::split_paths(old_path));
+        }
+        let new_path = std::env::join_paths(paths).unwrap();
+        std::env::set_var("PATH", new_path);
+        old_path
+    }
+
+    fn restore_path_for_test(old_path: Option<std::ffi::OsString>) {
+        match old_path {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+
+        fn set_value(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    struct CwdGuard {
+        previous: PathBuf,
+    }
+
+    impl CwdGuard {
+        fn capture() -> Self {
+            Self {
+                previous: std::env::current_dir().unwrap(),
+            }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.previous);
+        }
+    }
+
+    fn write_fake_cwd_probe(bin: &std::path::Path, log_path: &str) {
+        let script = format!("@echo off\r\n>\"{}\" echo %CD%\r\nexit /b 0\r\n", log_path);
+        std::fs::write(bin.join("cwdprobe.cmd"), script).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod invocation_name_tests {
+    use super::default_script_name_from;
+    use crate::test_support::PROCESS_STATE_LOCK;
+
+    #[test]
+    fn sh_shim_forward_yields_sh_as_dollar_zero() {
+        // The sh.exe shim forwards its argv[0] stem verbatim.
+        assert_eq!(default_script_name_from(Some("sh".to_string())), "sh");
+        assert_eq!(
+            default_script_name_from(Some("C:/x/winuxcmd/bin/sh.exe".to_string())),
+            "sh"
+        );
+        assert_eq!(
+            default_script_name_from(Some("\\usr\\bin\\ASH.EXE".to_string())),
+            "ash"
+        );
+    }
+
+    #[test]
+    fn login_marker_survives_into_dollar_zero() {
+        // GNU shell.c set_shell_name keeps the leading `-': a login `sh'
+        // shows $0 = -sh.
+        assert_eq!(default_script_name_from(Some("-sh".to_string())), "-sh");
+        assert_eq!(default_script_name_from(Some("-SH.exe".to_string())), "-sh");
+    }
+
+    #[test]
+    fn bash_and_rbash_faces_report_the_invocation_name() {
+        // rubash#598 companion (native-shell#321): the shim forwards the
+        // bash/rbash stems too, and GNU set_shell_name binds $0 to argv[0]
+        // for every face — `bash -c 'echo $0'` must read `bash`, not native-shell.
+        assert_eq!(default_script_name_from(Some("bash".to_string())), "bash");
+        assert_eq!(
+            default_script_name_from(Some("C:/x/winuxcmd/bin/bash.exe".to_string())),
+            "bash"
+        );
+        assert_eq!(default_script_name_from(Some("rbash".to_string())), "rbash");
+        assert_eq!(
+            default_script_name_from(Some("-BASH.EXE".to_string())),
+            "-bash"
+        );
+    }
+
+    #[test]
+    fn plain_native_shell_and_unknown_stems_keep_the_native_shell_default() {
+        // A direct native-shell.exe run (or any stem the shim never forwards) keeps
+        // the historical default byte-for-byte.
+        assert_eq!(default_script_name_from(None), "native-shell");
+        assert_eq!(
+            default_script_name_from(Some("native-shell".to_string())),
+            "native-shell"
+        );
+        assert_eq!(
+            default_script_name_from(Some("mysh".to_string())),
+            "native-shell"
+        );
+        assert_eq!(
+            default_script_name_from(Some("C:/x/bin/native-shell.exe".to_string())),
+            "native-shell"
+        );
+    }
+
+    #[test]
+    fn invoked_as_is_consumed_from_the_process_environment() {
+        // The variable describes how THIS process was invoked, nothing a
+        // child should inherit: reading it removes it, so a `native-shell` or `bash`
+        // spawned later under `sh -c` starts clean and keeps its own
+        // argv[0]-keyed GNU contract.
+        let _env_lock = PROCESS_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var_os("NATIVE_SHELL_INVOKED_AS");
+        std::env::set_var("NATIVE_SHELL_INVOKED_AS", "sh");
+        assert_eq!(super::invoked_as_from_env(), Some("sh".to_string()));
+        assert_eq!(std::env::var_os("NATIVE_SHELL_INVOKED_AS"), None);
+        // A consumed variable stays consumed; reading again yields None
+        // without touching the environment a second time.
+        assert_eq!(super::invoked_as_from_env(), None);
+        match previous {
+            Some(value) => std::env::set_var("NATIVE_SHELL_INVOKED_AS", value),
+            None => std::env::remove_var("NATIVE_SHELL_INVOKED_AS"),
+        }
+    }
+}

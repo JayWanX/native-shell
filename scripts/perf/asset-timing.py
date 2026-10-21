@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Per-asset timing budget gate for niubash.
+"""Per-asset timing budget gate for native-shell.
 
 Owner iron directive (2026-10-04, after the 6-second source incident):
 EVERY plugin asset — down to every individual theme FILE — gets a measured
@@ -12,12 +12,12 @@ every oh-my-bash theme, every bash-it theme — plus each alias/completion/
 plugin file where individually sourceable):
 
   source_wall   time from `. <asset>` start to prompt return. Driven
-                piped-interactive (`niu --rcfile <probe> -i`, stdin on a
+                piped-interactive (`native-shell --rcfile <probe> -i`, stdin on a
                 pipe): the asset is loaded through the framework's NATIVE
                 mechanism with that one asset selected (OSH_THEME /
                 aliases=() / plugins=() / completions=() for oh-my-bash;
                 BASH_IT_THEME / an enabled/ entry for bash-it). Echo
-                sentinels bracket the window: @@NIU-PERF-T0@@ is printed
+                sentinels bracket the window: @@NATIVE_SHELL-PERF-T0@@ is printed
                 immediately before the loader line, and a PROMPT_COMMAND
                 sentinel right before the first prompt renders.
   first_prompt  ConPTY session: rc load (the bootstrap line) -> first prompt
@@ -79,9 +79,9 @@ REPO = Path(__file__).resolve().parents[2]
 
 # Sentinel strings must be unique enough that no theme/plugin output can
 # collide with them.
-SENT_PROMPT = "@@NIU-PERF-PROMPT@@"
-SENT_T0 = "@@NIU-PERF-T0@@"
-SENT_SRC = "@@NIU-PERF-SRC@@"
+SENT_PROMPT = "@@NATIVE_SHELL-PERF-PROMPT@@"
+SENT_T0 = "@@NATIVE_SHELL-PERF-T0@@"
+SENT_SRC = "@@NATIVE_SHELL-PERF-SRC@@"
 
 PHASES = ("source_wall", "first_prompt", "rerender")
 EXIT_GRACE_S = 3.0
@@ -222,14 +222,14 @@ def build_rc(asset: Asset, omb: Path | None, bashit_root: Path | None,
 def sandbox_env(base: dict, home: Path) -> dict:
     env = dict(base)
     for k in ("BASH_ENV", "OSH", "OSH_THEME", "BASH_IT", "BASH_IT_THEME",
-              "OSH_CUSTOM", "OSH_CACHE_DIR", "NIU_PLUGIN_SPEC"):
+              "OSH_CUSTOM", "OSH_CACHE_DIR", "NATIVE_SHELL_PLUGIN_SPEC"):
         env.pop(k, None)
     (home / "tmp").mkdir(parents=True, exist_ok=True)
     (home / "local-appdata").mkdir(parents=True, exist_ok=True)
     # An empty primary rc suppresses the first-run setup wizard
     # (setup_wizard.rs:820 is_first_run) without contributing startup cost;
     # the measured bootstrap line is the probe rc passed via --rcfile.
-    (home / ".niubashrc").write_text("", encoding="utf-8")
+    (home / ".native-shellrc").write_text("", encoding="utf-8")
     env.update({
         "HOME": str(home),
         "USERPROFILE": str(home),
@@ -306,7 +306,7 @@ def enable_one(bashit_root: Path, asset: Asset) -> None:
 # Phase 1 — source wall (piped-interactive driver)
 # ---------------------------------------------------------------------------
 
-def measure_source_wall(niu: Path, rc: Path, cwd: Path, env: dict,
+def measure_source_wall(native_shell: Path, rc: Path, cwd: Path, env: dict,
                         timeout_s: float) -> tuple[float | None, float | None,
                                                    str, str]:
     """Returns (source_wall_ms, loader_ms, status, detail).
@@ -331,7 +331,7 @@ def measure_source_wall(niu: Path, rc: Path, cwd: Path, env: dict,
                 err_buf.append(line)
 
     proc = subprocess.Popen(
-        [str(niu), "--rcfile", str(rc), "-i"],
+        [str(native_shell), "--rcfile", str(rc), "-i"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         cwd=str(cwd), env=env,
     )
@@ -451,7 +451,7 @@ class ConptySession:
         except Exception:
             pass
         # Belt and braces: a ConPTY terminate does not always reap the child
-        # (orphaned niu.exe sessions were observed on Win10 19044); the gate
+        # (orphaned native-shell.exe sessions were observed on Win10 19044); the gate
         # must not leave shells behind on the runner.
         try:
             if self.proc.isalive():
@@ -461,13 +461,13 @@ class ConptySession:
             pass
 
 
-def measure_conpty(niu: Path, rc: Path, cwd: Path, env: dict, cols: int, rows: int,
+def measure_conpty(native_shell: Path, rc: Path, cwd: Path, env: dict, cols: int, rows: int,
                    timeout_s: float, settle_s: float) -> tuple[
         float | None, float | None, str, str, str, str]:
     """One ConPTY session yields both prompt phases.
     Returns (first_prompt_ms, rerender_ms, fp_status, rr_status, detail, '').
 
-    first_prompt is anchored at the @@NIU-PERF-T0@@ sentinel (the probe rc's
+    first_prompt is anchored at the @@NATIVE_SHELL-PERF-T0@@ sentinel (the probe rc's
     first command, i.e. rc load including the bootstrap line) rather than at
     process spawn: the winpty/ConPTY handshake has a machine-dependent output
     floor of seconds that even `cmd /c echo` pays, so spawn-relative numbers
@@ -475,7 +475,7 @@ def measure_conpty(niu: Path, rc: Path, cwd: Path, env: dict, cols: int, rows: i
     to every asset and cancels in the T0-relative window.
     Returns boot_ms (spawn -> T0 rendered) for visibility."""
     try:
-        sess = ConptySession([str(niu), "--rcfile", str(rc), "-i"], cwd, env, cols, rows)
+        sess = ConptySession([str(native_shell), "--rcfile", str(rc), "-i"], cwd, env, cols, rows)
     except (OSError, ValueError) as exc:
         return None, None, "error", "error", f"conpty spawn failed: {exc}", -1.0
 
@@ -617,21 +617,21 @@ def fresh_phase_record() -> dict:
             "status": "not-run", "errors": []}
 
 
-def niu_version(niu: Path) -> str:
+def native_shell_version(native_shell: Path) -> str:
     try:
-        r = subprocess.run([str(niu), "--version"], capture_output=True, text=True,
+        r = subprocess.run([str(native_shell), "--version"], capture_output=True, text=True,
                            timeout=20, env=dict(os.environ))
         return (r.stdout or r.stderr).strip().splitlines()[0]
     except (subprocess.SubprocessError, OSError):
         return "unknown"
 
 
-def measure_asset(asset: Asset, args, niu: Path, rc_path: Path, fixture: Path,
+def measure_asset(asset: Asset, args, native_shell: Path, rc_path: Path, fixture: Path,
                   env: dict, timeout_s: float, settle_s: float) -> dict:
     phases = {p: fresh_phase_record() for p in PHASES}
     for _rep in range(args.n):
         sw, loader, status, detail = measure_source_wall(
-            niu, rc_path, fixture, env, timeout_s)
+            native_shell, rc_path, fixture, env, timeout_s)
         phases["source_wall"]["status"] = status
         if status == "ok":
             phases["source_wall"]["samples_ms"].append(sw)
@@ -642,7 +642,7 @@ def measure_asset(asset: Asset, args, niu: Path, rc_path: Path, fixture: Path,
                 "loader_samples_ms", []).append(round(loader, 2))
 
         fp, rr, fp_status, rr_status, detail, boot = measure_conpty(
-            niu, rc_path, fixture, env, args.cols, args.rows, timeout_s, settle_s)
+            native_shell, rc_path, fixture, env, args.cols, args.rows, timeout_s, settle_s)
         if boot is not None and boot >= 0:
             phases["first_prompt"].setdefault(
                 "boot_samples_ms", []).append(round(boot, 2))
@@ -685,9 +685,9 @@ def run(args: argparse.Namespace) -> int:
     if tomllib is None:
         print("asset-timing: python 3.11+ (tomllib) required", file=sys.stderr)
         return 2
-    niu = args.niu.resolve()
-    if not niu.is_file():
-        print(f"asset-timing: niu binary not found: {niu}", file=sys.stderr)
+    native_shell = args.native_shell.resolve()
+    if not native_shell.is_file():
+        print(f"asset-timing: native-shell binary not found: {native_shell}", file=sys.stderr)
         return 2
     budgets = Budgets(tomllib.loads(Path(args.budgets).read_text(encoding="utf-8")))
     timeout_s = args.timeout if args.timeout is not None else budgets.phase_timeout_s
@@ -719,7 +719,7 @@ def run(args: argparse.Namespace) -> int:
         return 2
 
     print(f"asset-timing: {len(assets)} assets, N={args.n}, workers={workers}, "
-          f"timeout={timeout_s}s, settle={args.settle_ms}ms, niu={niu}", flush=True)
+          f"timeout={timeout_s}s, settle={args.settle_ms}ms, native-shell={native_shell}", flush=True)
 
     def process_one(task):
         idx, asset, w = task
@@ -734,7 +734,7 @@ def run(args: argparse.Namespace) -> int:
         rc_path.write_text(build_rc(asset, omb, bashit_sandbox, home),
                            encoding="utf-8", newline="\n")
 
-        phases = measure_asset(asset, args, niu, rc_path, fixture, env,
+        phases = measure_asset(asset, args, native_shell, rc_path, fixture, env,
                                timeout_s, settle_s)
         source_broken = (not phases["source_wall"]["samples_ms"]
                          and phases["source_wall"]["status"] == "error")
@@ -773,9 +773,9 @@ def run(args: argparse.Namespace) -> int:
     elapsed = time.monotonic() - t_all
     out = {
         "meta": {
-            "schema": "niubash:perf-asset-timing@1.0.0",
-            "niu": str(niu),
-            "niu_version": niu_version(niu),
+            "schema": "native-shell:perf-asset-timing@1.0.0",
+            "native-shell": str(native_shell),
+            "native_shell_version": native_shell_version(native_shell),
             "omb": str(args.omb) if args.omb else None,
             "bashit": str(args.bashit) if args.bashit else None,
             "reps": args.n,
@@ -926,15 +926,15 @@ def compare_baseline(results: list[dict], baseline: Path) -> None:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    default_omb = Path(os.environ.get("NIU_PERF_OMB",
+    default_omb = Path(os.environ.get("NATIVE_SHELL_PERF_OMB",
                                       r"C:\Users\Administrator\.oh-my-bash"))
     default_bashit = Path(os.environ.get(
-        "NIU_PERF_BASHIT", r"D:\repo\rubash\target-ecosys2\bash-it"))
-    p.add_argument("--niu", type=Path, default=REPO / "target" / "release" / "niu.exe")
+        "NATIVE_SHELL_PERF_BASHIT", r"D:\repo\rubash\target-ecosys2\bash-it"))
+    p.add_argument("--native-shell", type=Path, default=REPO / "target" / "release" / "native-shell.exe")
     p.add_argument("--omb", type=Path, default=default_omb,
-                   help="oh-my-bash root (NIU_PERF_OMB); pass '' to disable")
+                   help="oh-my-bash root (NATIVE_SHELL_PERF_OMB); pass '' to disable")
     p.add_argument("--bash-it", dest="bashit", type=Path, default=default_bashit,
-                   help="bash-it root (NIU_PERF_BASHIT); pass '' to disable")
+                   help="bash-it root (NATIVE_SHELL_PERF_BASHIT); pass '' to disable")
     p.add_argument("--budgets", type=Path,
                    default=Path(__file__).parent / "budgets.toml")
     p.add_argument("--out", type=Path, default=None)

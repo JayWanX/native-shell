@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """state-corrupter.py -- injects aged, drifted, hand-edited and corrupted
-niubash state into a sandbox HOME (adversarial-matrix lanes AM02, AM08,
+native-shell state into a sandbox HOME (adversarial-matrix lanes AM02, AM08,
 AM11).
 
 The golden journey always meets a just-written install; every P0 that
@@ -18,12 +18,12 @@ touches is backed up to <name>.pre-corrupt first; `restore` undoes the
 last round.
 
 Ops (composable, order = call order):
-  crlf-mix                 rewrite ~/.niubashrc with mixed CRLF/LF lines
+  crlf-mix                 rewrite ~/.native-shellrc with mixed CRLF/LF lines
   duplicate-block          append a second copy of the oh-my-bash managed block
   approximate-marker       begin marker loses its closing '>>>' (the
-                           second-unmanaged-block shape of niu#176)
+                           second-unmanaged-block shape of native-shell#176)
   hand-line-in-block       a user alias line inside the managed block
-                           (the silent-drop shape of niu#176)
+                           (the silent-drop shape of native-shell#176)
   truncate-rc              cut the last 4 lines of the rc
   corrupt-spec-toml        append a broken TOML line to plugins.toml
   stale-bootstrap-failure  seed bootstrap-failures.toml (real schema) with
@@ -36,7 +36,7 @@ Ops (composable, order = call order):
                            (the #168 suspected mechanism)
   registry-truncate        cut the registry mid-record (broken TOML)
   foreign-ps1              Git-Bash-shaped PS1/PROMPT_COMMAND planted in
-                           the rc user area (the niu#117 class)
+                           the rc user area (the native-shell#117 class)
   imperative-era           delete plugins.toml, keep the registry
                            (pre-1.3.1 shape, journey P9-S1)
   age-all                  curated week-old drift: crlf-mix +
@@ -58,23 +58,23 @@ import sys
 import time
 from pathlib import Path
 
-SPEC_SCHEMA = "niubash:plugin-spec@0.1.0"
-REGISTRY_SCHEMA = "niubash:plugin-source-registry@0.3.0"
-BOOTSTRAP_SCHEMA = "niubash:plugin-bootstrap-failures@1"
+SPEC_SCHEMA = "native-shell:plugin-spec@0.1.0"
+REGISTRY_SCHEMA = "native-shell:plugin-source-registry@0.3.0"
+BOOTSTRAP_SCHEMA = "native-shell:plugin-bootstrap-failures@1"
 
 BEGIN_MARKER = (
-    "# >>> niu source oh-my-bash (managed by `niu plugin enable/disable`) >>>"
+    "# >>> native-shell source oh-my-bash (managed by `native-shell plugin enable/disable`) >>>"
 )
-END_MARKER = "# <<< niu source oh-my-bash <<<"
+END_MARKER = "# <<< native-shell source oh-my-bash <<<"
 
 BLOCK_BODY = """\
-export OSH='$HOME/.niubash/sources/oh-my-bash'
+export OSH='$HOME/.native-shell/sources/oh-my-bash'
 export OSH_THEME='powerline-multiline'
 source "$OSH/oh-my-bash.sh"
 """
 
 RC_TEMPLATE = f"""\
-# ~/.niubashrc -- written by niu setup, kept by niu
+# ~/.native-shellrc -- written by native-shell setup, kept by native-shell
 # user lines live outside the managed markers
 alias gs='git status'
 
@@ -108,7 +108,7 @@ checksum_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b
 id = "oh-my-bash"
 installed_at = "1767139200"
 license = "MIT"
-path = "~/.niubash/sources/oh-my-bash"
+path = "~/.native-shell/sources/oh-my-bash"
 ref = "master"
 trusted = true
 url = "https://github.com/ohmybash/oh-my-bash"
@@ -120,7 +120,7 @@ checksum_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b
 id = "bash-completion"
 installed_at = "1767139200"
 license = "GPL-2.0"
-path = "~/.niubash/sources/bash-completion"
+path = "~/.native-shell/sources/bash-completion"
 ref = "main"
 trusted = false
 url = "https://github.com/rhysd/bash-completion"
@@ -129,25 +129,25 @@ version = "bash-completion main"
 
 THEME_FILE = """\
 # powerline-multiline (fixture excerpt for the sandbox tree)
-function __niu_prompt_segment { :; }
+function __native_shell_prompt_segment { :; }
 PS1=" \\[\\e[36m\\]\\t \\[\\e[0m\\]\\n❯ "
 """
 
 
 def rc_path(home: Path) -> Path:
-    return home / ".niubashrc"
+    return home / ".native-shellrc"
 
 
-def niu_dir(home: Path) -> Path:
-    return home / ".niubash"
+def native_shell_dir(home: Path) -> Path:
+    return home / ".native-shell"
 
 
 def spec_path(home: Path) -> Path:
-    return niu_dir(home) / "plugins.toml"
+    return native_shell_dir(home) / "plugins.toml"
 
 
 def sources_root(home: Path) -> Path:
-    return niu_dir(home) / "sources"
+    return native_shell_dir(home) / "sources"
 
 
 def registry_path(home: Path) -> Path:
@@ -177,7 +177,7 @@ def read_text(path: Path) -> str:
 # ── ops ──────────────────────────────────────────────────────────────────
 
 def op_crlf_mix(home: Path, report) -> None:
-    """Mixed line endings: a real Windows-editor artifact, niu#176's
+    """Mixed line endings: a real Windows-editor artifact, native-shell#176's
     'CRLF whole-file rewrite' shape lives here."""
     path = rc_path(home)
     lines = read_text(path).splitlines()

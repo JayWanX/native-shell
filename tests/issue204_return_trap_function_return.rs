@@ -1,9 +1,9 @@
-//! niubash#204 — RETURN trap must fire both when a sourced script finishes
+//! native-shell#204 — RETURN trap must fire both when a sourced script finishes
 //! AND (for functions that inherit it) when a shell function returns.
 //!
 //! GNU oracle: `D:\Git\usr\bin\bash.exe` (GNU bash 5.2.37(1)-release,
 //! x86_64-pc-msys), script-file probes 2026-10-09, byte-compared against the
-//! niu built from this tree. Semantics (GNU execute_cmd.c:5291-5295): shell
+//! native-shell built from this tree. Semantics (GNU execute_cmd.c:5291-5295): shell
 //! functions inherit the RETURN trap only when function tracing is on
 //! globally (`set -T` / functrace, which `shopt -s extdebug` implies) or the
 //! individual function carries the trace attribute (`declare -ft f`); a
@@ -12,7 +12,7 @@
 //!
 //! Oracle-verified matrix locked below:
 //!
-//! | scenario                                        | GNU 5.2.37 | niu |
+//! | scenario                                        | GNU 5.2.37 | native-shell |
 //! |-------------------------------------------------|------------|-----|
 //! | plain `trap … RETURN; f`                        | no fire    | same |
 //! | `declare -ft f` (trace attribute)               | fires      | same |
@@ -25,33 +25,33 @@
 //!
 //! Root-cause note: the function-return dispatch itself lives in the
 //! embedded rubash engine (`run_function_return_trap`,
-//! src/executor/trap_exec.rs, rubash#343/#345 family). niu 1.3.3 shipped a
+//! src/executor/trap_exec.rs, rubash#343/#345 family). native-shell 1.3.3 shipped a
 //! rubash revision predating that work, which is what the issue observed;
-//! the tests here pin the GNU-aligned contract on the niubash side so the
+//! the tests here pin the GNU-aligned contract on the native-shell side so the
 //! class cannot regress silently again.
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-fn niu_binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_niu"))
+fn native_shell_binary() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_native-shell"))
 }
 
-/// Runs a script body through the built niu binary and returns trimmed
+/// Runs a script body through the built native-shell binary and returns trimmed
 /// stdout, mirroring the oracle probe style (script file, LF endings).
 fn run_script(body: &str) -> String {
-    let dir = std::env::temp_dir().join("niubash-issue204");
+    let dir = std::env::temp_dir().join("native-shell-issue204");
     std::fs::create_dir_all(&dir).unwrap();
     let script = dir.join("probe.sh");
     std::fs::write(&script, format!("{body}\n")).unwrap();
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg(&script)
         .stdin(Stdio::null())
         .output()
-        .expect("spawn niu");
+        .expect("spawn native-shell");
     assert!(
         output.status.success(),
-        "niu failed: {}",
+        "native-shell failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8_lossy(&output.stdout)
@@ -63,7 +63,7 @@ fn run_script(body: &str) -> String {
 /// RETURN trap (no regression on the pre-existing path).
 #[test]
 fn return_trap_fires_when_source_completes() {
-    let dir = std::env::temp_dir().join("niubash-issue204");
+    let dir = std::env::temp_dir().join("native-shell-issue204");
     std::fs::create_dir_all(&dir).unwrap();
     let sourced = dir.join("sourced_204.sh");
     std::fs::write(&sourced, "true\n").unwrap();

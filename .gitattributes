@@ -21,8 +21,8 @@ tests/fixtures/sources/** text eol=lf
 
 # Generated completion assets and help transcripts are golden fixtures;
 # CRLF would change the bytes the generator diff and Rust corpus tests see.
-crates/niubash-runtime/assets/completions/** text eol=lf
-crates/niubash-runtime/tests/fixtures/winuxcmd-help-corpus/** text eol=lf
+crates/native-shell-runtime/assets/completions/** text eol=lf
+crates/native-shell-runtime/tests/fixtures/winuxcmd-help-corpus/** text eol=lf
 
 # Audit probe scripts live deeper than scripts/*.sh; same CRLF hazard
 # (wt82-L01: the tracked lanes' sweep/migrate probes must stay LF).
@@ -36,11 +36,11 @@ scripts/journey/*.py text eol=lf
 # The adversarial injection kit (wt88/advmatrix) is python edited and run
 # across agents/shells; same shared-tree hygiene as scripts/journey/*.py.
 scripts/adversarial/*.py text eol=lf
-# Skill bundle (niubash#188): the corpus transcripts are byte-diffed by
+# Skill bundle (native-shell#188): the corpus transcripts are byte-diffed by
 # scripts/generate-skill.py, and the bundle files are embedded via
 # include_str! — a CRLF working copy would flip both the golden check and
 # the shipped bytes.
-crates/niubash-runtime/tests/fixtures/skill-corpus/** text eol=lf
-skills/niubash/** text eol=lf
+crates/native-shell-runtime/tests/fixtures/skill-corpus/** text eol=lf
+skills/native-shell/** text eol=lf
 scripts/generate-skill.py text eol=lf
 scripts/test-skill-bundle.py text eol=lf

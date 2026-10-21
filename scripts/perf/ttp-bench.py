@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Time-to-first-prompt (TTP) bench: niu vs GNU bash, ConPTY, DSR answered.
+"""Time-to-first-prompt (TTP) bench: native-shell vs GNU bash, ConPTY, DSR answered.
 
-niubash#373 sub-item 3: measure and attribute interactive first-prompt
+native-shell#373 sub-item 3: measure and attribute interactive first-prompt
 latency against GNU bash BEFORE changing any startup/theme behavior. This
 script is measurement only — it changes nothing and gates nothing; its job
 is to make the next behavior change (if any) honest about what it buys.
@@ -18,7 +18,7 @@ Method (same discipline as scripts/perf/asset-timing.py):
     numbers carry this machine's ConPTY transport floor (1.5-2.5 s here,
     see scripts/perf/budgets.toml) on BOTH sides; the comparison and the
     before/after delta are the usable outputs;
-  * niu attribution: a second pass re-runs niu with NIU_TRACE_STARTUP=1 and
+  * native-shell attribution: a second pass re-runs native-shell with NATIVE_SHELL_TRACE_STARTUP=1 and
     parses the per-stage ticks (config load, prompt backend, completion
     state, ...) out of the stream, so the internal cost is attributable
     independently of the transport floor;
@@ -30,7 +30,7 @@ Usage:
 
     python scripts/perf/ttp-bench.py                       # defaults
     python scripts/perf/ttp-bench.py --runs 7 --json
-    python scripts/perf/ttp-bench.py --niu target/release/niu.exe
+    python scripts/perf/ttp-bench.py --native-shell target/release/native-shell.exe
 
 Windows only (ConPTY + pywinpty), like the journey/theme harnesses.
 Requires: pywinpty (pyte not needed — sentinels are read from raw bytes).
@@ -57,18 +57,18 @@ except ImportError:
     sys.exit(2)
 
 PROMPT_SENTINEL = b"P1> "
-BANNER_SENTINEL = "Niubash"
+BANNER_SENTINEL = "NativeShell"
 
 # Deterministic rc: ASCII prompt sentinel, no default plugin packs — the
 # same shape the interactive test suites pin, so the bench measures the
 # shell's floor, not a theme.
-NIU_RC = "PS1='P1> '\nNIU_DISABLE_DEFAULT_PLUGINS=1\n"
+NATIVE_SHELL_RC = "PS1='P1> '\nNATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n"
 # bash rc: the same sentinel. --rcfile keeps the user's bashrc out.
 BASH_RC = "PS1='P1> '\n"
 
-NIU_CANDIDATES = (
-    "target/release/niu.exe",
-    "target/debug/niu.exe",
+NATIVE_SHELL_CANDIDATES = (
+    "target/release/native-shell.exe",
+    "target/debug/native-shell.exe",
 )
 BASH_CANDIDATES = (
     r"D:\Git\bin\bash.exe",
@@ -152,7 +152,7 @@ def session_env(home: Path, start: Path, extra: dict | None = None) -> dict:
         "TEMP": str(home / "tmp"),
         "TMP": str(home / "tmp"),
         "TERM": "xterm",
-        "NIU_LANG": "en",
+        "NATIVE_SHELL_LANG": "en",
         "RUST_LOG": "off",
         "RUST_BACKTRACE": "0",
     }
@@ -197,14 +197,14 @@ def bench_shell(label: str, argv_for, rc_text: str, rc_name: str, runs: int,
 
 
 def parse_trace_ticks(raw: bytes) -> dict[str, float]:
-    """NIU_TRACE_STARTUP lines -> {stage: cumulative_ms} (last seen wins)."""
+    """NATIVE_SHELL_TRACE_STARTUP lines -> {stage: cumulative_ms} (last seen wins)."""
     ticks: dict[str, float] = {}
     for line in raw.decode("utf-8", "ignore").splitlines():
-        if "NIU_TRACE_STARTUP:" not in line:
+        if "NATIVE_SHELL_TRACE_STARTUP:" not in line:
             continue
-        # "NIU_TRACE_STARTUP:   123.4 ms  (delta     12.3)  stage label"
+        # "NATIVE_SHELL_TRACE_STARTUP:   123.4 ms  (delta     12.3)  stage label"
         try:
-            after = line.split("NIU_TRACE_STARTUP:", 1)[1].strip()
+            after = line.split("NATIVE_SHELL_TRACE_STARTUP:", 1)[1].strip()
             ms_text = after.split("ms", 1)[0].strip()
             label = after.split(")", 1)[1].strip()
             ticks[label] = float(ms_text)
@@ -221,41 +221,41 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--runs", type=int, default=5,
                         help="measured runs per shell (default 5)")
-    parser.add_argument("--niu", type=Path, default=None,
-                        help="niu binary (default: target/release, then debug)")
+    parser.add_argument("--native-shell", type=Path, default=None,
+                        help="native-shell binary (default: target/release, then debug)")
     parser.add_argument("--bash", type=Path, default=None,
                         help="GNU bash binary (default: Git for Windows paths)")
     parser.add_argument("--json", action="store_true",
                         help="emit the result table as JSON")
     args = parser.parse_args()
 
-    niu = args.niu or first_existing(NIU_CANDIDATES)
+    native_shell = args.native_shell or first_existing(NATIVE_SHELL_CANDIDATES)
     bash = args.bash or first_existing(BASH_CANDIDATES)
     repo = Path(__file__).resolve().parents[2]
-    if niu is None or not niu.exists():
-        print("ttp-bench: no niu binary found (build one or pass --niu)",
+    if native_shell is None or not native_shell.exists():
+        print("ttp-bench: no native-shell binary found (build one or pass --native-shell)",
               file=sys.stderr)
         return 2
 
-    result: dict = {"niu_binary": str(niu), "bash_binary": str(bash) if bash else None,
+    result: dict = {"native_shell_binary": str(native_shell), "bash_binary": str(bash) if bash else None,
                     "runs": args.runs, "samples_ms": {}, "median_ms": {},
-                    "niu_trace_stages_ms": {}}
+                    "native_shell_trace_stages_ms": {}}
 
-    samples = bench_shell("niu", lambda root: [str(niu)], NIU_RC, ".niubashrc",
+    samples = bench_shell("native-shell", lambda root: [str(native_shell)], NATIVE_SHELL_RC, ".native-shellrc",
                           args.runs, repo, None)
-    result["samples_ms"]["niu"] = [round(s, 1) for s in samples]
-    result["median_ms"]["niu"] = round(median(samples), 1) if samples else None
+    result["samples_ms"]["native-shell"] = [round(s, 1) for s in samples]
+    result["median_ms"]["native-shell"] = round(median(samples), 1) if samples else None
 
-    # Attribution pass: same flow, NIU_TRACE_STARTUP=1, one representative
+    # Attribution pass: same flow, NATIVE_SHELL_TRACE_STARTUP=1, one representative
     # run parsed for the per-stage cumulative table (the ticks are internal
     # monotonic timing — transport-floor independent).
     root = sandbox_home("niu-trace")
     try:
-        _, raw = measure_ttp([str(niu)], root / "start",
+        _, raw = measure_ttp([str(native_shell)], root / "start",
                              session_env(root / "home", root / "start",
-                                         {"NIU_TRACE_STARTUP": "1"}),
-                             NIU_RC, ".niubashrc", timeout_s=30.0)
-        result["niu_trace_stages_ms"] = {
+                                         {"NATIVE_SHELL_TRACE_STARTUP": "1"}),
+                             NATIVE_SHELL_RC, ".native-shellrc", timeout_s=30.0)
+        result["native_shell_trace_stages_ms"] = {
             k: round(v, 1) for k, v in parse_trace_ticks(raw).items()}
     finally:
         shutil.rmtree(root, ignore_errors=True)
@@ -282,17 +282,17 @@ def main() -> int:
     if args.json:
         print(json.dumps(result, indent=2))
     else:
-        print(f"niu binary : {niu}")
+        print(f"native-shell binary : {native_shell}")
         print(f"bash binary: {bash}")
         print(f"runs       : {args.runs} (median of TTP spawn->'P1> ', "
               f"ConPTY transport floor included on both sides)")
-        for shell in ("niu", "bash"):
+        for shell in ("native-shell", "bash"):
             if result["median_ms"][shell] is not None:
                 print(f"TTP {shell:>4}: median {result['median_ms'][shell]:>8.1f} ms   "
                       f"samples {result['samples_ms'][shell]}")
-        if result["niu_trace_stages_ms"]:
-            print("niu attribution (NIU_TRACE_STARTUP, cumulative ms):")
-            for stage, ms in result["niu_trace_stages_ms"].items():
+        if result["native_shell_trace_stages_ms"]:
+            print("native-shell attribution (NATIVE_SHELL_TRACE_STARTUP, cumulative ms):")
+            for stage, ms in result["native_shell_trace_stages_ms"].items():
                 print(f"  {ms:>8.1f} ms  {stage}")
     return 0
 

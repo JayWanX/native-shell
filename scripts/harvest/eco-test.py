@@ -8,7 +8,7 @@ Consumes the manifest produced by scripts/harvest/eco-harvest.py. Per asset:
      gz cache under --cache-dir (dev-box E:/eco-harvest/cache when that drive
      exists, else <repo>/eco/cache — #356); T4 assets get sha256 backfilled),
   2. rubash -n pre-filter,
-  3. if rubash accepts: ConPTY-test with a temporary HOME in `niu -i` (the wt91/journey
+  3. if rubash accepts: ConPTY-test with a temporary HOME in `native-shell -i` (the wt91/journey
      harness shape: sandbox HOME with a minimal rc, marker-verified input
      delivery, hard timeouts on every phase) — source wall, first prompt
      (marker), ENTER, second ENTER,
@@ -109,7 +109,7 @@ NOW = lambda: dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # ── Defaults ────────────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_NIU = REPO_ROOT / "target" / "debug" / "niu.exe"
+DEFAULT_NATIVE_SHELL = REPO_ROOT / "target" / "debug" / "native-shell.exe"
 DEFAULT_RUBASH = Path("D:/repo/rubash/target/debug/rubash.exe")
 
 
@@ -247,7 +247,7 @@ def fetch_asset(asset: dict, token: str | None, cache_root: Path,
         cache_root.mkdir(parents=True, exist_ok=True)
     url = percent_encode_raw_url(asset["source_url"])
     req = urllib.request.Request(url, headers={"User-Agent":
-                                               "niubash-eco-test/wt92"})
+                                               "native-shell-eco-test/wt92"})
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     data = None
@@ -318,7 +318,7 @@ def _msys_bash_candidates():
     locate (#409). ECO_GNU_BASH overrides; then the standard GfW homes;
     then wherever `where git` points; finally PATH's bash (never
     System32\\bash.exe — that one is the WSL launcher, not a bash).
-    Candidates inside niubash's own winuxcmd shim layout are dropped
+    Candidates inside native-shell's own winuxcmd shim layout are dropped
     unconditionally (#410 CR F1): on a dev box `where git` resolves to our
     own install, and grading the engine under test against a forwarder of
     itself is exactly the oracle we must not elect."""
@@ -348,16 +348,16 @@ def _msys_bash_candidates():
     if found and "system32" not in found.lower():
         out.append(Path(found))
     # The self-layout filter is the authoritative defense (CR #410 F1): a
-    # FUNCTIONAL niu forwarder passes the script smoke too — the product is
+    # FUNCTIONAL native-shell forwarder passes the script smoke too — the product is
     # deliberately bash-compatible — so no output check can separate them.
     # It applies to the ECO_GNU_BASH pin as well: an operator pinning into
     # our own shim layout is either a mistake or a self-test, and both must
-    # be refused loudly instead of grading niu against niu.
+    # be refused loudly instead of grading native-shell against native-shell.
     kept = [c for c in out
             if _SELF_FORWARDER_MARKER not in str(c).lower()]
     dropped = [c for c in out if c not in kept]
     for cand in dropped:
-        print(f"WARNING: oracle candidate dropped — inside the niubash shim "
+        print(f"WARNING: oracle candidate dropped — inside the native-shell shim "
               f"layout (would grade the engine under test against itself): "
               f"{cand}")
     return kept
@@ -429,13 +429,13 @@ class GnuBash:
             return
 
     def _script_smoke(self, bash_exe: str) -> bool:
-        """--version only proves the binary talks (#410 CR F1): niu's own
+        """--version only proves the binary talks (#410 CR F1): native-shell's own
         winuxcmd forwarder passes it and then fails — or worse, *is* — the
         engine under test. A real oracle must actually execute a script:
         rc=0 AND the marker on stdout, or the candidate is not bash and the
         probe moves on (WSL stays next in line, exactly like the pre-#409
         lane). Note this smoke alone cannot catch a FUNCTIONAL forwarder —
-        niu runs marker scripts too — that class is cut by the winuxcmd
+        native-shell runs marker scripts too — that class is cut by the winuxcmd
         layout filter in _msys_bash_candidates; the smoke catches the
         broken-shim class (version banner talks, script exec fails). An
         explicit ECO_GNU_BASH pin OUTSIDE the self layout is honored as
@@ -476,7 +476,7 @@ class GnuBash:
         timeout. Returns (verdict_note, detail): 'ok' | 'hang' | 'error'.
         Any non-zero rc is a failure (#409): assets that end the shell with
         `exit N` must classify as oracle-failed even without error-pattern
-        lines, or niu's EXITED verdicts can never reach parity."""
+        lines, or native-shell's EXITED verdicts can never reach parity."""
         if self.kind == "msys":
             try:
                 proc = subprocess.Popen(
@@ -533,33 +533,33 @@ class GnuBash:
 
 # ── The ConPTY session (journey-harness shape, marker-verified) ─────────────
 
-class NiuSession:
-    """One `niu -i` under ConPTY, with a pyte-parsed screen (the journey
+class NativeShellSession:
+    """One `native-shell -i` under ConPTY, with a pyte-parsed screen (the journey
     harness's pattern). Marker detection runs on the RENDERED screen rows —
-    niu's prompt repaints with ESC7/ESC8 save/restore pairs, and stripping
+    native-shell's prompt repaints with ESC7/ESC8 save/restore pairs, and stripping
     escapes from the raw stream can shred or join text so a typed echo can
     masquerade as an output line; the rendered viewport can never lie about
     what a user would see. The raw stream is kept for diagnostics."""
 
-    def __init__(self, niu: Path, home: Path):
+    def __init__(self, native_shell: Path, home: Path):
         import pyte
         from winpty import PtyProcess as _PtyProcess
         env = dict(os.environ)
         env.update({
             "HOME": str(home), "USERPROFILE": str(home),
             "TEMP": str(home / "tmp"), "TMP": str(home / "tmp"),
-            "TERM": "xterm", "NIU_LANG": "en", "NIU_NO_UPDATE_CHECK": "1",
+            "TERM": "xterm", "NATIVE_SHELL_LANG": "en", "NATIVE_SHELL_NO_UPDATE_CHECK": "1",
         })
         # Ambient overrides must not leak into the sandbox (journey rule).
-        for key in ("NIU_PLUGIN_SOURCES_ROOT", "NIU_PLUGIN_SPEC",
-                    "NIU_MIRRORS", "NIU_PLUGIN_BOOTSTRAP",
-                    "NIU_REPL_STARTUP", "BASH_ENV", "WINUXSH_ROOT",
-                    "NIU_THEME", "OSH_THEME", "BASH_IT_THEME"):
+        for key in ("NATIVE_SHELL_PLUGIN_SOURCES_ROOT", "NATIVE_SHELL_PLUGIN_SPEC",
+                    "NATIVE_SHELL_MIRRORS", "NATIVE_SHELL_PLUGIN_BOOTSTRAP",
+                    "NATIVE_SHELL_REPL_STARTUP", "BASH_ENV", "WINUXSH_ROOT",
+                    "NATIVE_SHELL_THEME", "OSH_THEME", "BASH_IT_THEME"):
             env.pop(key, None)
         (home / "tmp").mkdir(parents=True, exist_ok=True)
-        (home / ".niubashrc").write_text("PS1='ECO> '\n",
+        (home / ".native-shellrc").write_text("PS1='ECO> '\n",
                                          encoding="utf-8", newline="\n")
-        self.proc = _PtyProcess.spawn([str(niu), "-i"], cwd=str(home),
+        self.proc = _PtyProcess.spawn([str(native_shell), "-i"], cwd=str(home),
                                       env=env, dimensions=(ROWS, COLS))
         self.dead = False
         self.chunks: list[str] = []
@@ -668,14 +668,14 @@ class NiuSession:
             pass
 
 
-def test_asset_conpty(asset: dict, work: Path, niu: Path, tmp_root: Path,
+def test_asset_conpty(asset: dict, work: Path, native_shell: Path, tmp_root: Path,
                       slow_threshold: float) -> dict:
     """The wt91-shape interactive test. Returns verdict fields."""
     home = tmp_root / f"sand-{asset['content_hash'][:12]}"
     if home.exists():
         shutil.rmtree(home, ignore_errors=True)
     home.mkdir(parents=True)
-    sess = NiuSession(niu, home)
+    sess = NativeShellSession(native_shell, home)
     phases_ms = {}
     out = {"phases_ms": phases_ms, "phase": None, "tail": [],
            "storm_head": [], "storm_lines": 0}
@@ -810,7 +810,7 @@ def test_one(asset: dict, cfg) -> dict:
         "path": asset["path"], "tier": asset["tier"],
         "category": asset.get("category"), "bytes": asset.get("bytes"),
         "source_url": asset["source_url"],
-        "niu": str(cfg.niu), "rubash": str(cfg.rubash),
+        "native-shell": str(args.native_shell), "rubash": str(cfg.rubash),
     }
     work = None
     # Permanent pre-fetch guard (wt97b): a raw URL carrying control
@@ -886,11 +886,11 @@ def test_one(asset: dict, cfg) -> dict:
             # Keep the historical verdict but say so in the record — the
             # run-level alarm is the unexplained-failure gate's job (#409).
             try:
-                out = test_asset_conpty(asset, work, cfg.niu, cfg.tmp_root,
+                out = test_asset_conpty(asset, work, args.native_shell, cfg.tmp_root,
                                         cfg.slow_threshold)
-                rec["niu_sources"] = out["verdict"]
+                rec["native_shell_sources"] = out["verdict"]
             except Exception as err:
-                rec["niu_sources"] = f"HARNESS-ERROR: {err!r}"[:120]
+                rec["native_shell_sources"] = f"HARNESS-ERROR: {err!r}"[:120]
             rec.update(verdict="SYNTAX-REJECT-RUBASH-ONLY",
                        detail="UNCONFIRMED: no oracle available",
                        signature=syntax_signature(rub_err, work),
@@ -899,16 +899,16 @@ def test_one(asset: dict, cfg) -> dict:
             return rec
         if gnu_ok or gnu_runtime_note == "ok":
             # Engine divergence candidate — the oracle parses (or at least
-            # executes) what rubash rejects. Confirm what niu's EXECUTOR
+            # executes) what rubash rejects. Confirm what native-shell's EXECUTOR
             # does with the same file (rubash -n may be stricter than
             # rubash's own runtime — still a parser divergence worth its
             # own group).
             try:
-                out = test_asset_conpty(asset, work, cfg.niu, cfg.tmp_root,
+                out = test_asset_conpty(asset, work, args.native_shell, cfg.tmp_root,
                                         cfg.slow_threshold)
-                rec["niu_sources"] = out["verdict"]
+                rec["native_shell_sources"] = out["verdict"]
             except Exception as err:
-                rec["niu_sources"] = f"HARNESS-ERROR: {err!r}"[:120]
+                rec["native_shell_sources"] = f"HARNESS-ERROR: {err!r}"[:120]
             # wt97b triage fix, verdict renamed by #409: when the oracle's
             # -n ALSO rejects the file but its runtime sources it clean,
             # both engines' -n share the same strictness while both
@@ -916,9 +916,9 @@ def test_one(asset: dict, cfg) -> dict:
             # `shopt -s extglob` makes a later `case x in @(a|b))` legal at
             # runtime under bash, which `bash -n` never executes —
             # oh-my-bash lib/cli.bash). That is NOT a divergence: PARITY.
-            # But if niu's runtime chokes where the oracle's is clean, the
+            # But if native-shell's runtime chokes where the oracle's is clean, the
             # SYNTAX-REJECT gold stands.
-            if not gnu_ok and rec.get("niu_sources") in ("OK", "SLOW"):
+            if not gnu_ok and rec.get("native_shell_sources") in ("OK", "SLOW"):
                 rec.update(verdict="PARITY",
                            detail="bash -n rejects under BOTH engines "
                                   "(pre-execution strictness, e.g. "
@@ -947,7 +947,7 @@ def test_one(asset: dict, cfg) -> dict:
 
     # ── ConPTY interactive test ──
     try:
-        out = test_asset_conpty(asset, work, cfg.niu, cfg.tmp_root,
+        out = test_asset_conpty(asset, work, args.native_shell, cfg.tmp_root,
                                 cfg.slow_threshold)
     except Exception as err:
         out = {"verdict": "HARNESS-ERROR", "phase": None, "tail": [],
@@ -962,9 +962,9 @@ def test_one(asset: dict, cfg) -> dict:
     # Oracle runtime parity for interactive failures (upstream vs engine,
     # #409): when the oracle reproduces the failure, the verdict is
     # ASSET-NATURE — upstream content misbehaving everywhere — regardless of
-    # the niu flavor (a HANG whose oracle run errors is still the asset's
+    # the native-shell flavor (a HANG whose oracle run errors is still the asset's
     # nature; `same form` is recorded for triage). Only an oracle-healthy
-    # run leaves the niu verdict standing as an engine suspect.
+    # run leaves the native-shell verdict standing as an engine suspect.
     if verdict in ("HANG", "ERROR-STORM", "EXITED") and cfg.gnu.bin:
         note, detail = cfg.gnu.runtime(work)
         rec["gnu_parity"] = note
@@ -1077,14 +1077,14 @@ TIERS = ("t1", "t2", "t3", "t4", "t5")
 TRANSIENT = {"FETCH-FAILED", "HARNESS-ERROR", "EXITED"}
 
 
-def build_identity(niu, rubash, niu_revision, rubash_revision, slow_threshold, gnu):
+def build_identity(native_shell, rubash, native_shell_revision, rubash_revision, slow_threshold, gnu):
     def digest(path):
         with open(path, "rb") as source:
             return hashlib.file_digest(source, "sha256").hexdigest()
 
     identity = {
-        "niu_sha256": digest(niu), "rubash_sha256": digest(rubash),
-        "niu_revision": niu_revision, "rubash_revision": rubash_revision,
+        "native_shell_sha256": digest(native_shell), "rubash_sha256": digest(rubash),
+        "native_shell_revision": native_shell_revision, "rubash_revision": rubash_revision,
         "harness_sha256": digest(Path(__file__)),
         "slow_threshold": slow_threshold,
         "gnu_oracle": {
@@ -1303,9 +1303,9 @@ def main(argv=None):
     ap.add_argument("--max-seconds", type=float, default=2400,
                     help="stop dispatch after this budget; drain in-flight work (0 = unlimited)")
     ap.add_argument("--slow-threshold", type=float, default=2.0)
-    ap.add_argument("--niu", default=str(DEFAULT_NIU))
+    ap.add_argument("--native-shell", default=str(DEFAULT_NATIVE_SHELL))
     ap.add_argument("--rubash", default=str(DEFAULT_RUBASH))
-    ap.add_argument("--niu-revision", default="unknown",
+    ap.add_argument("--native-shell-revision", default="unknown",
                     help="build checkout SHA; binary SHA256 is always included")
     ap.add_argument("--rubash-revision", default="unknown",
                     help="actual sibling checkout SHA; not the patched Cargo.lock revision")
@@ -1337,8 +1337,8 @@ def main(argv=None):
 
     # EVERY path becomes absolute before it is used. The workflow passes
     # workspace-relative paths (eco/...), and `tmp_root` is handed to the
-    # child as HOME/USERPROFILE: a relative HOME lets niu resolve
-    # `eco/tmp/sand-x/.niubashrc` against the child's OWN cwd, the rc check
+    # child as HOME/USERPROFILE: a relative HOME lets native-shell resolve
+    # `eco/tmp/sand-x/.native-shellrc` against the child's OWN cwd, the rc check
     # misses, `is_first_run()` fires and the setup wizard blocks the asset
     # until the startup timeout (544/544 HANG, run 38690079988). wsl_path()
     # is drive-absolute-only too, so a relative --tmp-root also broke the
@@ -1363,23 +1363,23 @@ def main(argv=None):
     if args.workers < 1 or min(args.limit, args.stale_limit, args.max_seconds) < 0:
         ap.error("workers must be positive; limits and budget must be non-negative")
 
-    niu = Path(args.niu).resolve()
+    native_shell = Path(args.native_shell).resolve()
     rubash = Path(args.rubash).resolve()
-    if not niu.is_file() or not rubash.is_file():
-        print(f"FATAL: build binaries first: niu={niu}, rubash={rubash}")
+    if not native_shell.is_file() or not rubash.is_file():
+        print(f"FATAL: build binaries first: native-shell={native_shell}, rubash={rubash}")
         return 2
     gnu = GnuBash()
     if gnu.bin is None:
         msg = ("GNU oracle unavailable (no WSL distro, no Git for Windows "
                "usr/bin/bash.exe) — parity classification degrades: failures "
-               "keep niu verdicts, and any HANG/ERROR-STORM will trip the "
+               "keep native-shell verdicts, and any HANG/ERROR-STORM will trip the "
                "unexplained-failure gate (#409)")
         print(f"::warning::{msg}" if os.environ.get("GITHUB_ACTIONS")
               else f"WARNING: {msg}")
     else:
         print(f"GNU parity oracle: {gnu.kind} :: {gnu.version}")
     build_id, identity = build_identity(
-        niu, rubash, args.niu_revision, args.rubash_revision, args.slow_threshold, gnu)
+        native_shell, rubash, args.native_shell_revision, args.rubash_revision, args.slow_threshold, gnu)
     migrate_verdicts(db, results_path)
     with db:
         db.execute("INSERT OR IGNORE INTO eco_test_builds VALUES (?, ?)",
@@ -1431,7 +1431,7 @@ def main(argv=None):
     class Cfg:
         pass
     cfg = Cfg()
-    cfg.niu = niu
+    args.native_shell = native_shell
     cfg.rubash = rubash
     cfg.tmp_root = tmp_root
     cfg.cache_root = cache_root

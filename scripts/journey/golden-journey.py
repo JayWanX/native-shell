@@ -11,14 +11,14 @@ sandboxed HOME (USERPROFILE and HOME both overridden — USERPROFILE wins in
 this product, a known pitfall, so both point at the sandbox):
 
   J1 fresh-install first contact
-     no ~/.niubash anything -> run `niu` -> the `Niubash <version>`
+     no ~/.native-shell anything -> run `native-shell` -> the `NativeShell <version>`
      welcome line plus the dim first-run hint naming the explicit
-     `niu setup` verb, then the live REPL prompt. The wizard never
+     `native-shell setup` verb, then the live REPL prompt. The wizard never
      auto-starts (the #359 stage-1 contract — startup is zero-write;
      release run 39223964675 died here on the retired auto-wizard
      expectation).
-  J2 wizard full run, entered through the explicit `niu setup` verb
-     at the J1 prompt: `niu setup` -> the wizard welcome block (the
+  J2 wizard full run, entered through the explicit `native-shell setup` verb
+     at the J1 prompt: `native-shell setup` -> the wizard welcome block (the
      v-banner, environment panel, "No external themes installed yet")
      -> collection "full" -> Apply -> the real `git clone`s progress on
      the terminal -> trust-now question -> "Trust now" (现在信任) -> theme
@@ -27,9 +27,9 @@ this product, a known pitfall, so both point at the sandbox):
      generated loader), spec written, undo receipts listed on the finish
      screen -> the live REPL prompt again.
   J3 activation
-     source ~/.niubashrc in a live session -> ZERO syntax errors anywhere.
+     source ~/.native-shellrc in a live session -> ZERO syntax errors anywhere.
   J4 new-terminal x3
-     each fresh `niu` session: no "Cloning into" (no re-downloads), no
+     each fresh `native-shell` session: no "Cloning into" (no re-downloads), no
      "not declared" nags, at most the documented per-source awaiting-trust
      notices, prompt renders.
   J5 daily battery (in the live session left open by J4)
@@ -37,10 +37,10 @@ this product, a known pitfall, so both point at the sandbox):
      `[[ a != b ]] && echo ok` — each must produce output, not errors,
      with the prompt still alive after each command.
   J6 trust + activate bash-completion (the owner's exact flow)
-     `niu plugin trust bash-completion` -> `source ~/.niubashrc` -> a
+     `native-shell plugin trust bash-completion` -> `source ~/.native-shellrc` -> a
      fresh terminal -> ZERO syntax errors (bash_completion included).
-  J7 gallery live preview (niubash#170)
-     re-run `niu setup` -> the pane below the gallery highlight renders
+  J7 gallery live preview (native-shell#170)
+     re-run `native-shell setup` -> the pane below the gallery highlight renders
      that theme's real PS1 (header follows the highlight; a hung theme
      degrades bounded instead of freezing); Esc fast-forwards, Cancel
      writes nothing.
@@ -60,8 +60,8 @@ bash-completion — and P8-S4 restores what it removes):
      a session detects "a previous session mutated state"), proving the
      sandbox HOME wiring survives process boundaries.
   P3-S2 theme-block byte-stability + theme identity across terminals
-  (niu#168)
-     snapshot rc bytes after the wizard; `source ~/.niubashrc` in a live
+  (native-shell#168)
+     snapshot rc bytes after the wizard; `source ~/.native-shellrc` in a live
      session; two fresh terminals; snapshot after each. (a) the THEME
      block bytes (the oh-my-bash managed guard region — the #168
      battleground) identical after every open, present exactly once,
@@ -78,7 +78,7 @@ bash-completion — and P8-S4 restores what it removes):
      expected since wt72/themeback landed (release 1.3.4): the retired
      `wt73-168-theme-rebound` label no longer swallows this class, so a
      red here is a plain #168 regression.
-  P3-S3 first-key integrity as product behavior (niu#167 anti-masking)
+  P3-S3 first-key integrity as product behavior (native-shell#167 anti-masking)
      after the themed prompt idles >=1.2s (>=1 clock repaint), send
      `echo NIU167KEY` with the driver's Ctrl-U wake DISABLED for this
      one probe: the full word must execute, never `cho: command not
@@ -92,11 +92,11 @@ bash-completion — and P8-S4 restores what it removes):
      origin plus its `bootstrap-failures.toml` memo. The next terminal
      reaches a prompt within 10s with at most the documented one-line
      notices (deferred / awaiting-trust); the explicit verbs repair
-     (`niu plugin sync` retries the missing origin readably, `niu
+     (`native-shell plugin sync` retries the missing origin readably, `native-shell
      plugin restore` rebuilds the tree); after healing the spec, the
      final terminal is silent again.
   P8-S4 remove the source providing the ACTIVE theme (F4)
-     `niu plugin source remove oh-my-bash` while its theme is applied:
+     `native-shell plugin source remove oh-my-bash` while its theme is applied:
      spec declaration drops, registry record and tree drop, fresh
      terminal(s) fall back to the floor prompt with no resurrection and
      no syntax-error storm; then re-add + trust + re-enable restores the
@@ -104,7 +104,7 @@ bash-completion — and P8-S4 restores what it removes):
      blocks) at steady state. The theme under test is DERIVED from the
      live state at step start (whatever P4 left active — see the
      function docstring); the floor-terminal count is the
-     NIU_JOURNEY_P8S4_FLOOR_TERMINALS matrix knob (default 1).
+     NATIVE_SHELL_JOURNEY_P8S4_FLOOR_TERMINALS matrix knob (default 1).
 
 Driver capabilities landed with this lane (journey-steps.json
 `driver_capabilities`, owner W1):
@@ -160,11 +160,11 @@ Exit codes: 0 every assertion holds or every red is a labeled
 known-fail (for --cleanup-sandbox: the path is gone, including when it
 was already absent), 1 an unlabeled fail (or an unrecognized verdict,
 or --cleanup-sandbox tree survived the full rescue chain), 2 skip or
-refused request (missing python deps / not Windows / no niu.exe / no
+refused request (missing python deps / not Windows / no native-shell.exe / no
 git / unknown phase id / --cleanup-sandbox refused an unsafe or
 non-sandbox path).
 
-Usage: python scripts/journey/golden-journey.py <niu.exe> [--artifacts DIR]
+Usage: python scripts/journey/golden-journey.py <native-shell.exe> [--artifacts DIR]
         [--keep-sandbox DIR] [--cleanup-sandbox DIR]
         [--phases all|base|P3,P4,P7,P8,...|full|gate|persist]
 """
@@ -208,7 +208,7 @@ ENTER = "\r"
 DOWN = "\x1b[B"
 
 # ── Input-delivery hardening (release run 37149660449, journey J6) ──────────
-# On a slow runner the J6 keystrokes (`niu plugin trust bash-completion`,
+# On a slow runner the J6 keystrokes (`native-shell plugin trust bash-completion`,
 # typed right after the prompt came up) never reached the ConPTY: the
 # screen still showed the startup banner + awaiting-trust nags with NO
 # echo of the command, and the 90s wait timed out. Same family as wt61:
@@ -274,14 +274,14 @@ def _env_int(name: str, default: int) -> int:
 STRESS_DELAY_MS = 0
 # Readline kill-line: the REPL editor's first input byte after the themed
 # prompt has been idle is EATEN (observed 2026-10-03, run drv-run1: `echo`
-# renders as `❯ cho`, `niu` as `❯ iu`, `source` as `❯ ource` — the prompt's
+# renders as `❯ cho`, `native-shell` as `❯ iu`, `source` as `❯ ource` — the prompt's
 # per-second clock repaint consumes one queued key). Ctrl-U is the
 # sacrificial wake byte: eaten -> the line behind it lands intact; not
 # eaten -> it clears the (empty or stale) input line and the line still
 # lands intact. Verified against the release build: Ctrl-U + line executes
 # clean; double Ctrl-U + line (the retry shape) also executes clean.
 KILL_LINE = "\x15"
-# The wake-flag capability (journey-spec W1, P3-S3 / niu#167): the gate's
+# The wake-flag capability (journey-spec W1, P3-S3 / native-shell#167): the gate's
 # sends normally carry the sacrificial Ctrl-U above, which MASKS the
 # product's first-key-eat behavior. P3-S3 runs one labeled no-wake probe;
 # when the product passes it (the 1.3.3 typeahead guard), the probe flips
@@ -301,7 +301,7 @@ PROMPTISH_LAST_ROW = re.compile(
 COLS, ROWS = 120, 36
 
 # Network clones are the real thing; give them real time. The budget is
-# sized for the `full` collection's SEQUENTIAL apply: since niubash#171 it
+# sized for the `full` collection's SEQUENTIAL apply: since native-shell#171 it
 # clones eight sources (oh-my-bash, bash-it, bash-completion, bash-preexec,
 # complete-alias, fzf-git.sh, bash-sensible, git-flow-completion) — on a
 # slow link (~100-300 KiB/s, several MiB) that legitimately exceeds the old
@@ -337,9 +337,9 @@ KNOWN_FAILS = [
     },
     {
         "id": "wt80-undo-receipt-ambiguous-theme",
-        "ticket": "niu (new finding, lane wt80/jw2-wizardspec, run "
+        "ticket": "native-shell (new finding, lane wt80/jw2-wizardspec, run "
                   "20261004-173006): the wizard's undo receipt "
-                  "`niu plugin disable <theme>` fails when the theme name "
+                  "`native-shell plugin disable <theme>` fails when the theme name "
                   "exists in more than one installed source",
         "pattern": r"exists in multiple sources",
         "note": "the finish screen and setup-journal print the bare theme "
@@ -347,7 +347,7 @@ KNOWN_FAILS = [
                 "oh-my-bash/powerline-multiline, bash-it/powerline-multiline') "
                 "— the undo contract breaks in exactly the dual-framework "
                 "state the 'full' collection itself creates (the same-name "
-                "family of niu#168). expected-red until the receipt prints "
+                "family of native-shell#168). expected-red until the receipt prints "
                 "the qualified id or resolution prefers the theme's owning "
                 "source. labeling, never waiving",
     },
@@ -368,7 +368,7 @@ def stress_pause():
 
 # ── Raw-stream plain mirror ─────────────────────────────────────────────────
 # `wait_for`'s raw fallback must see the line a USER saw, not the bytes. The
-# product colorizes single words (jt444 run9: `niu plugin source remove`
+# product colorizes single words (jt444 run9: `native-shell plugin source remove`
 # printed `\x1b[32mRemoved\x1b[0m source 'oh-my-bash'` — the needle
 # "Removed source 'oh-my-bash'" is split by the SGR reset in the raw bytes
 # and can never substring-match there). The pump therefore maintains an
@@ -417,7 +417,7 @@ def make_history_screen(cols: int, rows: int) -> "pyte.HistoryScreen":
 
 # ── The ConPTY session (the proven Session pattern, plus full transcripts) ──
 class Session:
-    """A niu.exe under ConPTY with a pyte-parsed screen and a running
+    """A native-shell.exe under ConPTY with a pyte-parsed screen and a running
     capture of every raw chunk. The RAW stream is the truth: a screen
     clear (the about-tour's \\x1b[2J) erases unscrolled lines from pyte's
     view forever, so waits fall back to the raw stream and the artifacts
@@ -474,7 +474,7 @@ class Session:
                         #
                         # A feed EXCEPTION must not kill the reader either
                         # (jt444 run9: the pump died inside feed on the
-                        # `niu plugin source remove` output chunk — raw
+                        # `native-shell plugin source remove` output chunk — raw
                         # append/file-write had already run, so the needle
                         # sat in the artifacts while the screen froze and
                         # `dead` never set, leaving every later wait to a
@@ -506,7 +506,7 @@ class Session:
     def _write(self, data) -> bool:
         """One guarded ConPTY write. A child that dies mid-journey closes
         the pty out from under the driver (observed 2026-10-04 run 4:
-        niu.exe children vanishing while sibling lanes ran their own
+        native-shell.exe children vanishing while sibling lanes ran their own
         cleanup — a by-name taskkill looks identical to a product crash
         here); the journey must then record an honest red and STILL seal
         a verdict, never crash unsealed."""
@@ -648,7 +648,7 @@ class Session:
         substring test can never match; pyte's rendered row holds the
         glyphs contiguously. `before` is the pre-send viewport — a match
         that was already on screen is not an echo (the awaiting-trust
-        nag spells `niu plugin trust bash-completion`; drv-run1's
+        nag spells `native-shell plugin trust bash-completion`; drv-run1's
         raw-stream false confirm hid the eaten first byte)."""
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -762,7 +762,7 @@ class Session:
         short confirm (its scroll is immediate). Delivery retries only —
         the expected-output wait that follows never retries.
 
-        wake (the W1 wake-flag capability, journey-spec P3-S3 / niu#167):
+        wake (the W1 wake-flag capability, journey-spec P3-S3 / native-shell#167):
         `wake=False` sends the line WITHOUT the sacrificial Ctrl-U and
         WITHOUT the one resend — the #167 probe must observe the
         product's raw first-key behavior (a retry, with or without a
@@ -781,7 +781,7 @@ class Session:
 
         `anchor=False` skips that post-execution anchor for commands
         whose completion is INTERACTIVE, not a returning prompt — the
-        wizard re-runs (`niu setup`): the flow continues with menu keys
+        wizard re-runs (`native-shell setup`): the flow continues with menu keys
         gated on the wizard's own screens (wait_for), and the anchor's
         prompt-ish matcher must not decide when interaction may start.
         Delivery hardening (settle/wake/echo/retry) is identical."""
@@ -1049,11 +1049,11 @@ def build_env(home: Path, exe: Path) -> dict:
     """The real user's terminal environment with state redirected into the
     sandbox: USERPROFILE and HOME both point there (USERPROFILE wins in
     this product — set both, leave no ambiguity; both must be ABSOLUTE —
-    a relative home doubles inside niu's path joins), APPDATA/LOCALAPPDATA/
+    a relative home doubles inside native-shell's path joins), APPDATA/LOCALAPPDATA/
     TEMP/TMP too. PATH is the real user PATH with one journey fix: the
-    tested exe's directory goes FIRST so `niu` resolves to the binary
-    under test (a developer machine may carry an older niu on PATH, and
-    the rc bootstrap line `niu plugin sync --bootstrap` must run THIS
+    tested exe's directory goes FIRST so `native-shell` resolves to the binary
+    under test (a developer machine may carry an older native-shell on PATH, and
+    the rc bootstrap line `native-shell plugin sync --bootstrap` must run THIS
     build). git (clones) and ls/cat (battery) come from the real PATH,
     exactly like the user's machine."""
     env = dict(os.environ)
@@ -1070,15 +1070,15 @@ def build_env(home: Path, exe: Path) -> dict:
         "TERM": "xterm",
         # Deterministic, assertable wizard language (the strings this gate
         # waits for are the English ones).
-        "NIU_LANG": "en",
+        "NATIVE_SHELL_LANG": "en",
         # The update hint is environment noise, not part of the journey.
-        "NIU_NO_UPDATE_CHECK": "1",
+        "NATIVE_SHELL_NO_UPDATE_CHECK": "1",
     })
     # Ambient overrides from a developer shell must not leak into the user
-    # journey: niu state locations must resolve purely from HOME.
-    for key in ("NIU_PLUGIN_SOURCES_ROOT", "NIU_PLUGIN_SPEC", "NIU_MIRRORS",
-                "NIU_PLUGIN_BOOTSTRAP", "NIU_REPL_STARTUP", "BASH_ENV",
-                "WINUXSH_ROOT", "NIU_THEME", "OSH_THEME", "BASH_IT_THEME"):
+    # journey: native-shell state locations must resolve purely from HOME.
+    for key in ("NATIVE_SHELL_PLUGIN_SOURCES_ROOT", "NATIVE_SHELL_PLUGIN_SPEC", "NATIVE_SHELL_MIRRORS",
+                "NATIVE_SHELL_PLUGIN_BOOTSTRAP", "NATIVE_SHELL_REPL_STARTUP", "BASH_ENV",
+                "WINUXSH_ROOT", "NATIVE_SHELL_THEME", "OSH_THEME", "BASH_IT_THEME"):
         env.pop(key, None)
     env["PATH"] = os.pathsep.join(
         [str(exe.parent)] + [ensure_tools_on_path(env.get("PATH", ""))])
@@ -1145,7 +1145,7 @@ def prompt_block(session: Session):
 # structure: startup-sync notices, the banner, and plain command output
 # must never enter the comparison (the run 37224044818 artifact: the
 # last-4-rows fingerprint carried a wrapped `completion`` notice fragment).
-NOTICE_MARK = "niu plugin sync:"
+NOTICE_MARK = "native-shell plugin sync:"
 POWERLINE_GLYPHS = "\ue0b0\ue0b2\ue0b3\ue0b6"
 
 
@@ -1220,7 +1220,7 @@ def themed_prompt_signature(session: Session, samples: int = 8):
         for row in reversed(rows[:input_idx]):
             if NOTICE_MARK in row:
                 break
-            banner = bool(re.match(r"Niubash \d+\.\d+\.\d+", row.strip()))
+            banner = bool(re.match(r"NativeShell \d+\.\d+\.\d+", row.strip()))
             if _prompt_structure_row(row):
                 # A themed structure row joins the block EVEN when it
                 # shares the banner's physical row: powerbash10k's right
@@ -1300,7 +1300,7 @@ def await_bare_line(session: Session, text, timeout=30):
     both lead with the payload, while the input echo leads with the
     prompt glyph (the distinction the #167 probe lives on). Prefix (not
     full-line) matching on purpose: stray console noise (observed:
-    tasklist's 'No Instance(s) Available.' from niu's own startup probes)
+    tasklist's 'No Instance(s) Available.' from native-shell's own startup probes)
     can land on the same physical row right after the payload with no
     newline in between."""
     deadline = time.time() + timeout
@@ -1316,7 +1316,7 @@ def await_bare_line(session: Session, text, timeout=30):
 
 
 def sync_row_keys(body: str, action: str):
-    """Distinct source ids of `niu plugin sync: <action> <id> ...` rows in
+    """Distinct source ids of `native-shell plugin sync: <action> <id> ...` rows in
     a mixed transcript+raw body. The same row appears twice (the pyte
     transcript AND the raw stream both carry it) and stray console noise
     can glue onto a physical line, so row identity is (action, id) —
@@ -1324,7 +1324,7 @@ def sync_row_keys(body: str, action: str):
     return {
         match.group(1)
         for match in re.finditer(
-            rf"niu plugin sync: {re.escape(action)}\s+(\S+)", body)
+            rf"native-shell plugin sync: {re.escape(action)}\s+(\S+)", body)
     }
 
 
@@ -1335,7 +1335,7 @@ def untrusted_registry_ids(home: Path):
     entry-set change (six-plus untrusted at J4 is the documented new
     normal), so the bound derives from the registry — the same state
     sync --bootstrap reads (the J4 derivation, shared with P3-S4)."""
-    registry_path = home / ".niubash" / "sources" / "registry.toml"
+    registry_path = home / ".native-shell" / "sources" / "registry.toml"
     if not registry_path.is_file():
         return set()
     registry = tomllib.loads(registry_path.read_text(encoding="utf-8"))
@@ -1405,15 +1405,15 @@ class SandboxSeed:
     # ── paths ──
     @property
     def rc_path(self) -> Path:
-        return self.home / ".niubashrc"
+        return self.home / ".native-shellrc"
 
     @property
     def spec_path(self) -> Path:
-        return self.home / ".niubash" / "plugins.toml"
+        return self.home / ".native-shell" / "plugins.toml"
 
     @property
     def sources_root(self) -> Path:
-        return self.home / ".niubash" / "sources"
+        return self.home / ".native-shell" / "sources"
 
     @property
     def ledger_path(self) -> Path:
@@ -1437,8 +1437,8 @@ class SandboxSeed:
         the rc — carries the managed source blocks and the theme assignment
         (the activation plane the theme assertions guard)."""
         try:
-            return (self.home / ".niubash" / "generated"
-                    / "plugins.niu").read_bytes()
+            return (self.home / ".native-shell" / "generated"
+                    / "plugins.nsh").read_bytes()
         except OSError:
             return b""
 
@@ -1451,7 +1451,7 @@ class SandboxSeed:
     # ── spec hand-editing (the documented workflow: edit + sync) ──
     def add_spec_source(self, stanza_body: str):
         """Append one `[[sources]]` stanza (body lines without the
-        header) to the spec — the same shape `niu plugin add` writes."""
+        header) to the spec — the same shape `native-shell plugin add` writes."""
         text = self.spec_text()
         if text and not text.endswith("\n"):
             text += "\n"
@@ -1496,9 +1496,9 @@ class SandboxSeed:
                             encoding="utf-8", newline="\n")
         else:
             path.write_text(
-                "# Startup install-failure memo (niu plugin sync --bootstrap).\n"
-                "# Cleared by an explicit `niu plugin sync` / `niu plugin add` retry.\n"
-                "schema = \"niubash:plugin-bootstrap-failures@1\"\n" + entry,
+                "# Startup install-failure memo (native-shell plugin sync --bootstrap).\n"
+                "# Cleared by an explicit `native-shell plugin sync` / `native-shell plugin add` retry.\n"
+                "schema = \"native-shell:plugin-bootstrap-failures@1\"\n" + entry,
                 encoding="utf-8", newline="\n")
 
     # ── tree damage (the `tree missing` / guarded-loader contract) ──
@@ -1518,7 +1518,7 @@ class SandboxSeed:
 # ── Wave-1 persistence steps (journey-spec P3 + P8-S4, lane wt79/W1) ─────────
 #
 # Each step is the user's own moves over the SAME sandbox the J-blocks
-# aged: real fresh terminals, real `niu plugin` verbs, and the seed
+# aged: real fresh terminals, real `native-shell plugin` verbs, and the seed
 # capability writing between sessions. `state` threads the ordered facts
 # (rc byte snapshots keyed by milestone, the picked theme line, the
 # first themed prompt row) from the wizard block into the assertions.
@@ -1588,13 +1588,13 @@ THEMED_SOURCE_ID = "oh-my-bash"
 
 def p3_s2_rc_stability(exe, home, env, verdict, seed, state):
     """P3-S2: theme-block byte-stability + theme identity across
-    terminals — the niu#168 regression gate. Green expected since
+    terminals — the native-shell#168 regression gate. Green expected since
     wt72/themeback landed (release 1.3.4): a red is a regression, not an
     expected-red (the wt73-168-theme-rebound label retired with the
     fix)."""
     step = verdict.step(
         "P3-S2", "theme-block byte-stability + theme identity across "
-        "terminals (niu#168)")
+        "terminals (native-shell#168)")
     theme_line = state.get("theme_line") or ""
     theme_var = state.get("theme_var") or "OSH_THEME"
     other_var = "BASH_IT_THEME" if theme_var == "OSH_THEME" else "OSH_THEME"
@@ -1614,13 +1614,13 @@ def p3_s2_rc_stability(exe, home, env, verdict, seed, state):
                 "live session detects the previous session's wake-flag "
                 "marker",
                 await_bare_line(live, P3_MARKER_VALUE, timeout=30))
-            live.send_line("source ~/.niubashrc", anchor_timeout=60)
+            live.send_line("source ~/.native-shellrc", anchor_timeout=60)
             live.send_line("echo P3S2_SRC_DONE")
             try:
                 live.wait_for("P3S2_SRC_DONE", timeout=60)
-                step.check("source ~/.niubashrc completed", True)
+                step.check("source ~/.native-shellrc completed", True)
             except TimeoutError as err:
-                step.check("source ~/.niubashrc completed", False, str(err))
+                step.check("source ~/.native-shellrc completed", False, str(err))
             drain_notices(live)
             verdict.capture("P3-S2-after-source", live)
             state["rc_bytes"]["after-source"] = seed.rc_bytes()
@@ -1670,7 +1670,7 @@ def p3_s2_rc_stability(exe, home, env, verdict, seed, state):
                 (snap_block or "").encode("utf-8")))
             check_theme_stability(
                 step,
-                f"theme block bytes identical after {milestone} (niu#168)",
+                f"theme block bytes identical after {milestone} (native-shell#168)",
                 stable,
                 "the theme block diverged across session opens",
                 diff or ("snapshot missing — the earlier step carrying it "
@@ -1709,7 +1709,7 @@ def p3_s2_rc_stability(exe, home, env, verdict, seed, state):
 
         # (a2) no activated/deactivated flip of the THEME source in any
         # P3 session stream: the enable/disable life cycle would print
-        # `niu plugin sync: activated|deactivated oh-my-bash`.
+        # `native-shell plugin sync: activated|deactivated oh-my-bash`.
         for label in sorted(raws):
             if not label.startswith(("P3-S1", "P3-S2")):
                 continue
@@ -1779,12 +1779,12 @@ def p3_s2_rc_stability(exe, home, env, verdict, seed, state):
 
 
 def p3_s3_first_key(exe, home, env, verdict, seed, state):
-    """P3-S3: first-key integrity as product behavior — the niu#167
+    """P3-S3: first-key integrity as product behavior — the native-shell#167
     anti-masking probe. One labeled no-wake probe; on a pass the run's
     global wake is disabled so the gate stops masking."""
     global WAKE_ENABLED
     step = verdict.step(
-        "P3-S3", "first-key integrity as product behavior (niu#167 "
+        "P3-S3", "first-key integrity as product behavior (native-shell#167 "
         "anti-masking)")
     marker = "NIU167KEY"
     session = None
@@ -1933,11 +1933,11 @@ def p3_s4_aged_state(exe, home, env, verdict, seed, state):
             verdict.capture("P3-S4-damaged-terminal", term)
 
             # ── explicit verbs retry and repair ──
-            term.send_line("niu plugin sync", anchor_timeout=300)
+            term.send_line("native-shell plugin sync", anchor_timeout=300)
             try:
                 term.wait_for("journey-missing-origin", timeout=120)
                 retry_body = term.raw_stripped()
-                # The interactive verb's rows have no `niu plugin sync:`
+                # The interactive verb's rows have no `native-shell plugin sync:`
                 # prefix (that is the bootstrap form): `  failed <id>  …`.
                 readable = any(
                     re.search(r"failed\s+journey-missing-origin\b", line)
@@ -1953,17 +1953,17 @@ def p3_s4_aged_state(exe, home, env, verdict, seed, state):
             # degraded network this is the long pole (the five TLS-burned
             # release runs), so it carries the largest bound in the group
             # and fails fast on the transport error instead of timing out.
-            term.send_line("niu plugin restore oh-my-bash",
+            term.send_line("native-shell plugin restore oh-my-bash",
                            anchor_timeout=900)
             try:
                 needle = term.wait_for("Restored source 'oh-my-bash'",
                                        "git clone exited", timeout=600)
-                step.check("`niu plugin restore oh-my-bash` rebuilt the "
+                step.check("`native-shell plugin restore oh-my-bash` rebuilt the "
                            "pinned tree",
                            needle == "Restored source 'oh-my-bash'",
                            f"restore returned: {needle}")
             except TimeoutError as err:
-                step.check("`niu plugin restore oh-my-bash` rebuilt the "
+                step.check("`native-shell plugin restore oh-my-bash` rebuilt the "
                            "pinned tree", False, str(err))
             guarded = seed.sources_root / "oh-my-bash" / "oh-my-bash.sh"
             step.check("the damaged file is back after restore (tree "
@@ -1977,7 +1977,7 @@ def p3_s4_aged_state(exe, home, env, verdict, seed, state):
                        "from the spec", dropped)
             step.note("the spec heal is the documented hand-edit workflow "
                       "(plugins-guide: 'you can equally hand-edit the "
-                      "spec and run niu plugin sync')")
+                      "spec and run native-shell plugin sync')")
         finally:
             term.close()
 
@@ -2003,7 +2003,7 @@ def p3_s4_aged_state(exe, home, env, verdict, seed, state):
             drain_notices(healed)
             body = healed.transcript() + "\n" + healed.raw_stripped()
             bad = [line for line in body.splitlines()
-                   if re.search(r"niu plugin sync: (deferred|failed|"
+                   if re.search(r"native-shell plugin sync: (deferred|failed|"
                                 "degraded)\b", line)]
             step.check("terminal after repair is silent (no deferred/"
                        "failed/degraded rows)", not bad,
@@ -2030,7 +2030,7 @@ def p3_s4_aged_state(exe, home, env, verdict, seed, state):
 
 
 def p8_s4_remove_active_theme_source(exe, home, env, verdict, seed, state):
-    """P8-S4: `niu plugin source remove oh-my-bash` while its theme is
+    """P8-S4: `native-shell plugin source remove oh-my-bash` while its theme is
     applied — the F4 resurrection guard (spec declaration drops, no
     resurrection at the next startup) plus the degradation contract
     (guarded loader no-ops, floor prompt, no syntax-error storm), then
@@ -2109,9 +2109,9 @@ def p8_s4_remove_active_theme_source(exe, home, env, verdict, seed, state):
             entry_file = tree / "oh-my-bash.sh"
             if not entry_file.is_file():
                 step.note("tree still damaged from P3-S4 — running the "
-                          "documented repair (`niu plugin restore "
+                          "documented repair (`native-shell plugin restore "
                           "oh-my-bash`) before the removal")
-                remover.send_line("niu plugin restore oh-my-bash",
+                remover.send_line("native-shell plugin restore oh-my-bash",
                                   anchor_timeout=900)
                 try:
                     needle = remover.wait_for("Restored source 'oh-my-bash'",
@@ -2122,14 +2122,14 @@ def p8_s4_remove_active_theme_source(exe, home, env, verdict, seed, state):
                 except TimeoutError as err:
                     step.check("repair before removal (network-bound)",
                                False, str(err))
-            remover.send_line("niu plugin source remove oh-my-bash",
+            remover.send_line("native-shell plugin source remove oh-my-bash",
                               anchor_timeout=120)
             try:
                 remover.wait_for("Removed source 'oh-my-bash'", timeout=90)
-                step.check("`niu plugin source remove oh-my-bash` reported "
+                step.check("`native-shell plugin source remove oh-my-bash` reported "
                            "removal", True)
             except TimeoutError as err:
-                step.check("`niu plugin source remove oh-my-bash` reported "
+                step.check("`native-shell plugin source remove oh-my-bash` reported "
                            "removal", False, str(err))
         finally:
             remover.close()
@@ -2150,14 +2150,14 @@ def p8_s4_remove_active_theme_source(exe, home, env, verdict, seed, state):
         # The count is a matrix axis (wt87, owner standard: the gate must
         # hold in every cell, not the one we happened to run): resurrection
         # can first appear on a LATER startup (the memoized-defer path
-        # differs from the first one), so NIU_JOURNEY_P8S4_FLOOR_TERMINALS
+        # differs from the first one), so NATIVE_SHELL_JOURNEY_P8S4_FLOOR_TERMINALS
         # (default 1, matrix cell 3) walks that many consecutive fresh
         # terminals and asserts the contract on each.
-        floor_terminals = max(1, _env_int("NIU_JOURNEY_P8S4_FLOOR_TERMINALS",
+        floor_terminals = max(1, _env_int("NATIVE_SHELL_JOURNEY_P8S4_FLOOR_TERMINALS",
                                           1))
         if floor_terminals > 1:
             step.note(f"matrix cell: {floor_terminals} post-remove "
-                      "terminals (NIU_JOURNEY_P8S4_FLOOR_TERMINALS)")
+                      "terminals (NATIVE_SHELL_JOURNEY_P8S4_FLOOR_TERMINALS)")
         for floor_idx in range(1, floor_terminals + 1):
             floor_nth = "" if floor_terminals == 1 else f" #{floor_idx}"
             floor = Session(
@@ -2193,7 +2193,7 @@ def p8_s4_remove_active_theme_source(exe, home, env, verdict, seed, state):
                                f"floor signature: {floor_sig}; themed "
                                f"reference: {sig_ref}")
                 rc_after = seed.rc_bytes().decode("utf-8", errors="replace")
-                orphan = ">>> niu source oh-my-bash" in rc_after
+                orphan = ">>> native-shell source oh-my-bash" in rc_after
                 state["orphan_block_after_fresh_terminal"] = orphan
                 if floor_idx == floor_terminals:
                     step.note(
@@ -2225,7 +2225,7 @@ def p8_s4_remove_active_theme_source(exe, home, env, verdict, seed, state):
             installed = None
             add_detail = ""
             for add_attempt in (1, 2):
-                restorer.send_line("niu plugin add oh-my-bash",
+                restorer.send_line("native-shell plugin add oh-my-bash",
                                    anchor_timeout=900)
                 try:
                     needle = restorer.wait_for(
@@ -2244,29 +2244,29 @@ def p8_s4_remove_active_theme_source(exe, home, env, verdict, seed, state):
                               "second failure rules")
                 else:
                     break
-            step.check("`niu plugin add oh-my-bash` re-installed the "
+            step.check("`native-shell plugin add oh-my-bash` re-installed the "
                        "source", installed is True, add_detail)
-            restorer.send_line("niu plugin trust oh-my-bash",
+            restorer.send_line("native-shell plugin trust oh-my-bash",
                                anchor_timeout=90)
             try:
                 restorer.wait_for("is now trusted", timeout=90)
-                step.check("`niu plugin trust oh-my-bash` reported trusted",
+                step.check("`native-shell plugin trust oh-my-bash` reported trusted",
                            True)
             except TimeoutError as err:
-                step.check("`niu plugin trust oh-my-bash` reported trusted",
+                step.check("`native-shell plugin trust oh-my-bash` reported trusted",
                            False, str(err))
             if themed:
                 # Re-enable the theme that was ACTIVE at step start (the
                 # live state's own pick — restoring the state P8-S4 found,
                 # not the J2 pick).
-                restorer.send_line(f"niu plugin enable oh-my-bash/"
+                restorer.send_line(f"native-shell plugin enable oh-my-bash/"
                                    f"{active_theme}", anchor_timeout=120)
                 try:
                     restorer.wait_for("Enabled", timeout=90)
-                    step.check(f"`niu plugin enable oh-my-bash/"
+                    step.check(f"`native-shell plugin enable oh-my-bash/"
                                f"{active_theme}` re-applied the theme", True)
                 except TimeoutError as err:
-                    step.check(f"`niu plugin enable oh-my-bash/"
+                    step.check(f"`native-shell plugin enable oh-my-bash/"
                                f"{active_theme}` re-applied the theme",
                                False, str(err))
             else:
@@ -2361,8 +2361,8 @@ def journey(exe: Path, root: Path, verdict: Verdict,
     phases = [p for p in (phases or []) if p in PHASE_RUNNERS]
 
     # ── J1: first contact on a fresh install. Since #359 stage 1 the
-    # wizard NEVER auto-starts: startup prints the `Niubash <version>`
-    # line plus the dim first-run hint naming the explicit `niu setup`
+    # wizard NEVER auto-starts: startup prints the `NativeShell <version>`
+    # line plus the dim first-run hint naming the explicit `native-shell setup`
     # verb, then lands at the REPL prompt (release run 39223964675 died
     # here waiting for the retired auto-wizard).
     step = verdict.step(
@@ -2376,27 +2376,27 @@ def journey(exe: Path, root: Path, verdict: Verdict,
                            label="J1J2",
                            delivery_log=verdict.delivery_events)
     except Exception as err:  # noqa: BLE001 - any spawn failure is a J1 fail
-        step.check("niu spawned under ConPTY", False, f"{err}")
+        step.check("native-shell spawned under ConPTY", False, f"{err}")
         j1_ok = False
     if j1_ok:
         try:
-            session.wait_for("Niubash ", timeout=90)
+            session.wait_for("NativeShell ", timeout=90)
             step.check("welcome banner appears", True)
         except TimeoutError as err:
             step.check("welcome banner appears", False, str(err))
             j1_ok = False
         body = session.raw_stripped()
-        step.check("banner carries the version (Niubash "
+        step.check("banner carries the version (NativeShell "
                    "{CARGO_PKG_VERSION})",
-                   re.search(r"Niubash \d+\.\d+\.\d+", body) is not None)
+                   re.search(r"NativeShell \d+\.\d+\.\d+", body) is not None)
         # The hint is the #359 stage-1 replacement for the auto-wizard: it
-        # names the explicit verb (`niu setup`) a real user must type.
+        # names the explicit verb (`native-shell setup`) a real user must type.
         try:
-            session.wait_for("niu setup", timeout=30)
-            step.check("first-run hint names the explicit `niu setup` verb",
+            session.wait_for("native-shell setup", timeout=30)
+            step.check("first-run hint names the explicit `native-shell setup` verb",
                        True)
         except TimeoutError as err:
-            step.check("first-run hint names the explicit `niu setup` verb",
+            step.check("first-run hint names the explicit `native-shell setup` verb",
                        False, str(err))
             j1_ok = False
         verdict.capture("J1-fresh-install", session)
@@ -2406,7 +2406,7 @@ def journey(exe: Path, root: Path, verdict: Verdict,
         alive = prompt_alive(session, "J1_ALIVE")
         step.check("first contact lands at the REPL prompt", alive)
         step.check("wizard never auto-starts (no welcome block)",
-                   "Welcome to Niubash" not in session.raw_stripped())
+                   "Welcome to NativeShell" not in session.raw_stripped())
         j1_ok = j1_ok and alive
     step.finish()
 
@@ -2430,15 +2430,15 @@ def journey(exe: Path, root: Path, verdict: Verdict,
     # stage 1 (the wizard never auto-starts), so the fresh REPL J1 left
     # open is asked for it.
     step = verdict.step(
-        "J2", "wizard full run via `niu setup`: full -> trust now -> "
+        "J2", "wizard full run via `native-shell setup`: full -> trust now -> "
               "powerline-multiline")
     try:
         # Entering the verb draws the full wizard welcome block (the
         # v-banner, the environment panel, the empty-ecosystem note) —
         # the first-contact assertions the auto-wizard era carried on J1.
         try:
-            session.send_line("niu setup", anchor=False)
-            session.wait_for("Welcome to Niubash", timeout=90)
+            session.send_line("native-shell setup", anchor=False)
+            session.wait_for("Welcome to NativeShell", timeout=90)
             step.check("wizard welcome v-banner appears", True)
         except TimeoutError as err:
             raise AssertionError(f"wizard welcome never appeared: {err}")
@@ -2466,7 +2466,7 @@ def journey(exe: Path, root: Path, verdict: Verdict,
         except TimeoutError as err:
             raise AssertionError(f"collection question never appeared: {err}")
 
-        # Q2.6 (the 2026-10-12 wizard surface; the step niubash#322 added to
+        # Q2.6 (the 2026-10-12 wizard surface; the step native-shell#322 added to
         # the d3 smoke journey too): the TAB completion style menu runs on
         # every first run AND re-run. The current effective style is
         # pre-highlighted, so Enter is a no-op pick — no rc line is written
@@ -2481,8 +2481,8 @@ def journey(exe: Path, root: Path, verdict: Verdict,
             raise AssertionError(
                 f"TAB completion style question never appeared: {err}")
 
-        # Q3 is CONDITIONAL (niubash#230 follow-up): an installation whose
-        # bundle already carries niu-git (opt/niugit) skips the question
+        # Q3 is CONDITIONAL (native-shell#230 follow-up): an installation whose
+        # bundle already carries niu-git (opt/native-git) skips the question
         # silently — it records the "installed" answer and moves straight
         # on to Q4. Wait briefly; on a bare install the menu appears and
         # takes its highlighted Skip default.
@@ -2494,7 +2494,7 @@ def journey(exe: Path, root: Path, verdict: Verdict,
         except TimeoutError:
             step.check("niu-git question answered with Skip", True,
                        "question skipped: the bundle already carries "
-                       "niu-git (niubash#230) — nothing to answer")
+                       "niu-git (native-shell#230) — nothing to answer")
 
         # Q4: external completion providers (carapace-bin) — Skip is the
         # highlighted default and writes no rc snippet; the journey never
@@ -2594,7 +2594,7 @@ def journey(exe: Path, root: Path, verdict: Verdict,
             time.sleep(NAV_GAP_SECONDS)
         # Redraw-race guard: rapid Downs can outrun the menu's repaint, so
         # settle and RE-VERIFY the highlight before confirming — an Enter
-        # that races the repaint picks whatever row niu actually has.
+        # that races the repaint picks whatever row native-shell actually has.
         if picked:
             time.sleep(SETTLE_SECONDS)
             picked = highlight_row("powerline-multiline") is not None
@@ -2638,9 +2638,9 @@ def journey(exe: Path, root: Path, verdict: Verdict,
 
     # Durable receipts (screen tails can drop at process exit — the files
     # are the truth, the smoke-journey discipline).
-    rc_path = home / ".niubashrc"
-    spec_path = home / ".niubash" / "plugins.toml"
-    journal_path = home / ".niubash" / "setup-journal.toml"
+    rc_path = home / ".native-shellrc"
+    spec_path = home / ".native-shell" / "plugins.toml"
+    journal_path = home / ".native-shell" / "setup-journal.toml"
     rc = rc_path.read_text(encoding="utf-8") if rc_path.is_file() else ""
     spec = spec_path.read_text(encoding="utf-8") if spec_path.is_file() else ""
     journal = (journal_path.read_text(encoding="utf-8")
@@ -2653,12 +2653,12 @@ def journey(exe: Path, root: Path, verdict: Verdict,
     # and NEVER as a theme line — the activation lives in the generated
     # loader (probe evidence, 2026-10-19: "# Prompt owned by the oh-my-bash
     # theme 'powerline-multiline'; PS1 renders via the bash-compatible
-    # channel." + ~/.niubash/generated/plugins.niu holding the OSH_THEME
+    # channel." + ~/.native-shell/generated/plugins.nsh holding the OSH_THEME
     # line).
-    loader_path = home / ".niubash" / "generated" / "plugins.niu"
+    loader_path = home / ".native-shell" / "generated" / "plugins.nsh"
     loader = (loader_path.read_text(encoding="utf-8")
               if loader_path.is_file() else "")
-    step.check("~/.niubashrc written with the pick's ownership note "
+    step.check("~/.native-shellrc written with the pick's ownership note "
                "(theme lines retired from the rc — #359)",
                rc_path.is_file()
                and ("# Prompt owned by the oh-my-bash theme "
@@ -2683,7 +2683,7 @@ def journey(exe: Path, root: Path, verdict: Verdict,
                or "Undo this run" in session.raw_text())
     # The gallery assertion, made durable: the cloned oh-my-bash tree
     # itself holds the themes (>60).
-    themes_dir = home / ".niubash" / "sources" / "oh-my-bash" / "themes"
+    themes_dir = home / ".native-shell" / "sources" / "oh-my-bash" / "themes"
     if themes_dir.is_dir():
         count = sum(1 for child in themes_dir.iterdir() if child.is_dir())
         step.check("cloned oh-my-bash carries >60 themes on disk",
@@ -2696,7 +2696,7 @@ def journey(exe: Path, root: Path, verdict: Verdict,
     # live now — the theme snapshot P3-S1/S2 and P8-S4 guard.
     state["rc_bytes"]["after-wizard"] = rc_path.read_bytes() \
         if rc_path.is_file() else b""
-    loader_path = home / ".niubash" / "generated" / "plugins.niu"
+    loader_path = home / ".native-shell" / "generated" / "plugins.nsh"
     state["loader_bytes"]["after-wizard"] = loader_path.read_bytes() \
         if loader_path.is_file() else b""
     picked = re.search(r"^((?:OSH|BASH_IT)_THEME)='powerline-multiline'$",
@@ -2711,7 +2711,7 @@ def journey(exe: Path, root: Path, verdict: Verdict,
 
     # ── J3: activation — source the rc in a live session, zero syntax errors.
     step = verdict.step(
-        "J3", "activation: source ~/.niubashrc, zero syntax errors")
+        "J3", "activation: source ~/.native-shellrc, zero syntax errors")
     s3 = Session([str(exe)], home, env,
                  raw_log=verdict.transcripts / "J3.raw.ansi", label="J3",
                  delivery_log=verdict.delivery_events)
@@ -2720,19 +2720,19 @@ def journey(exe: Path, root: Path, verdict: Verdict,
                    prompt_alive(s3, "J3_ALIVE"))
         # source loads the theme loaders; its own completion wait below
         # is 60s, so the anchor bound matches it.
-        s3.send_line("source ~/.niubashrc", anchor_timeout=60)
+        s3.send_line("source ~/.native-shellrc", anchor_timeout=60)
         # The marker only prints after the source finished (theme loaders
         # included); it is the completion signal, not decoration.
         s3.send_line("echo J3_SRC_DONE")
         try:
             s3.wait_for("J3_SRC_DONE", timeout=60)
-            step.check("source ~/.niubashrc completed", True)
+            step.check("source ~/.native-shellrc completed", True)
         except TimeoutError as err:
-            step.check("source ~/.niubashrc completed", False, str(err))
+            step.check("source ~/.native-shellrc completed", False, str(err))
         drain_notices(s3)
         verdict.capture("J3-after-source", s3)
         verdict_for_syntax_errors(
-            step, "zero syntax errors after source ~/.niubashrc",
+            step, "zero syntax errors after source ~/.native-shellrc",
             all_syntax_errors(s3))
     finally:
         s3.close()
@@ -2762,7 +2762,7 @@ def journey(exe: Path, root: Path, verdict: Verdict,
             nag_lines = [line for line in body.splitlines()
                          if "awaiting-trust" in line]
             # The documented nag: one line per still-untrusted declared
-            # source. Since niubash#171 the `full` collection lands EIGHT
+            # source. Since native-shell#171 the `full` collection lands EIGHT
             # sources and only oh-my-bash is trusted by the theme pick, so
             # the bound derives from the sandbox registry (the same state
             # sync --bootstrap reads) instead of a literal that every
@@ -2770,7 +2770,7 @@ def journey(exe: Path, root: Path, verdict: Verdict,
             # still-untrusted source, and the unique set may not exceed it
             # (the screen render and the raw stream can each hold a copy).
             untrusted_ids = set()
-            registry_path = home / ".niubash" / "sources" / "registry.toml"
+            registry_path = home / ".native-shell" / "sources" / "registry.toml"
             if registry_path.is_file():
                 registry = tomllib.loads(
                     registry_path.read_text(encoding="utf-8"))
@@ -2902,7 +2902,7 @@ def journey(exe: Path, root: Path, verdict: Verdict,
         # wait_for + 0.3s sleep is not an output anchor, and on slow
         # runners the next line appended to the unsubmitted input. One
         # send cannot glue with itself.
-        s6.send_line("echo J6_ALIVE && niu plugin trust bash-completion",
+        s6.send_line("echo J6_ALIVE && native-shell plugin trust bash-completion",
                      anchor_timeout=90)
         try:
             s6.wait_for("J6_ALIVE", timeout=STARTUP_TIMEOUT)
@@ -2913,21 +2913,21 @@ def journey(exe: Path, root: Path, verdict: Verdict,
         # The trust step's own expected-output wait is 90s; the anchor
         # bound matches it so a slow trust run expires the anchor, not
         # the sequencing (run 37153503706's 90s timeout was the glue).
-        s6.send_line("niu plugin trust bash-completion", anchor_timeout=90)
+        s6.send_line("native-shell plugin trust bash-completion", anchor_timeout=90)
         try:
             s6.wait_for("is now trusted", timeout=90)
-            step.check("`niu plugin trust bash-completion` reported trusted",
+            step.check("`native-shell plugin trust bash-completion` reported trusted",
                        True)
         except TimeoutError as err:
-            step.check("`niu plugin trust bash-completion` reported trusted",
+            step.check("`native-shell plugin trust bash-completion` reported trusted",
                        False, str(err))
-        s6.send_line("source ~/.niubashrc", anchor_timeout=60)
+        s6.send_line("source ~/.native-shellrc", anchor_timeout=60)
         s6.send_line("echo J6_SRC_DONE")
         try:
             s6.wait_for("J6_SRC_DONE", timeout=60)
-            step.check("source ~/.niubashrc completed after trust", True)
+            step.check("source ~/.native-shellrc completed after trust", True)
         except TimeoutError as err:
-            step.check("source ~/.niubashrc completed after trust", False,
+            step.check("source ~/.native-shellrc completed after trust", False,
                        str(err))
         drain_notices(s6)
         verdict.capture("J6-after-trust-source", s6)
@@ -2963,7 +2963,7 @@ def journey(exe: Path, root: Path, verdict: Verdict,
         s6b.close()
     step.finish()
 
-    # ── J7: the theme gallery's live prompt preview (niubash#170). When the
+    # ── J7: the theme gallery's live prompt preview (native-shell#170). When the
     # highlight moves, the pane below the menu renders that theme's ACTUAL
     # prompt — the real PS1 expanded with that theme's config — in place of
     # the old static sentence. Bounded: a hung theme degrades to
@@ -3118,13 +3118,13 @@ def read_bytes(path: Path) -> bytes:
     return path.read_bytes() if path.is_file() else b""
 
 
-RC_BEGIN_MARK = "# >>> niu source {sid} (managed by `niu plugin enable/disable`) >>>"
-RC_END_MARK = "# <<< niu source {sid} <<<"
+RC_BEGIN_MARK = "# >>> native-shell source {sid} (managed by `native-shell plugin enable/disable`) >>>"
+RC_END_MARK = "# <<< native-shell source {sid} <<<"
 
 
 def rc_managed_block(rc_text: str, source_id: str):
     """One managed source block INCLUDING its marker lines — the exact text
-    a user sees in ~/.niubashrc — or None. Mirrors the product's marker
+    a user sees in ~/.native-shellrc — or None. Mirrors the product's marker
     spelling (plugins/assets.rs begin_marker/end_marker)."""
     begin = RC_BEGIN_MARK.format(sid=source_id)
     end = RC_END_MARK.format(sid=source_id)
@@ -3159,14 +3159,14 @@ def loader_text_for(home: Path) -> str:
     """The generated plugin loader (the #359 activation plane). Its source
     sections carry the SAME BODY the retired rc managed blocks did (theme
     line, selection arrays, guarded loader snippet — loader.rs), wrapped in
-    the loader's own `# --- niu plugin source: <id> ---` markers, so the
+    the loader's own `# --- native-shell plugin source: <id> ---` markers, so the
     managed-block assertions below parse this file through the
     loader_managed_block* helpers."""
-    return read_text(home / ".niubash" / "generated" / "plugins.niu")
+    return read_text(home / ".native-shell" / "generated" / "plugins.nsh")
 
 
-LOADER_BEGIN_MARK = "# --- niu plugin source: {sid} ---"
-LOADER_END_MARK = "# --- end niu plugin source: {sid} ---"
+LOADER_BEGIN_MARK = "# --- native-shell plugin source: {sid} ---"
+LOADER_END_MARK = "# --- end native-shell plugin source: {sid} ---"
 
 
 def loader_managed_block(loader_text: str, source_id: str):
@@ -3249,7 +3249,7 @@ def journal_value(journal_text: str, key: str):
 
 
 def fresh_terminal(exe, home, env, verdict, label: str) -> Session:
-    """A fresh niu terminal in the sandbox — the user's 'open a new window'."""
+    """A fresh native-shell terminal in the sandbox — the user's 'open a new window'."""
     return Session([str(exe)], home, env,
                    raw_log=verdict.transcripts / f"{label}.raw.ansi",
                    label=label, delivery_log=verdict.delivery_events)
@@ -3285,7 +3285,7 @@ def gallery_walk_to(session: Session, candidates):
     """DOWN-walk the wizard theme gallery until the highlighted row names one
     of `candidates`; the J2 walk's dynamics (no per-key resend — a repaint
     can lag a delivered arrow — poll the highlight; settle + re-verify
-    before the Enter so a racing Enter picks what niu actually has).
+    before the Enter so a racing Enter picks what native-shell actually has).
     Returns the matched candidate name, or None."""
     if isinstance(candidates, str):
         candidates = [candidates]
@@ -3305,7 +3305,7 @@ def gallery_walk_to(session: Session, candidates):
 
 def wizard_rerun(session: Session, verdict: Verdict, step, capture: str,
                  pick, expect_current: str = None):
-    """One `niu setup` re-run inside a live REPL session (setup_wizard.rs
+    """One `native-shell setup` re-run inside a live REPL session (setup_wizard.rs
     rerun_wizard — 'Reconfigure your interactive prompt/plugins. Existing
     rc will be backed up.'). pick=None answers the gallery's
     'Skip - keep my current theme' (the highlighted default); a name or
@@ -3314,7 +3314,7 @@ def wizard_rerun(session: Session, verdict: Verdict, step, capture: str,
     providers) takes its highlighted default via Enter. Returns the theme
     name the run picked (None = Skip). Every key is gated on the wizard's
     own screens; delivery hardening comes from send_line/answer."""
-    session.send_line("niu setup", anchor=False)
+    session.send_line("native-shell setup", anchor=False)
     session.wait_for("Reconfigure your interactive prompt/plugins", timeout=90)
     session.wait_for("Pick a theme", timeout=180)
     verdict.capture(capture, session)
@@ -3344,14 +3344,14 @@ def wizard_rerun(session: Session, verdict: Verdict, step, capture: str,
         session.answer(ENTER)
     session.wait_for("TAB completion style?", timeout=60)
     # Q2.6 runs on every re-run too; the current effective style is
-    # pre-highlighted, so Enter is a no-op pick (niubash#322's missing
+    # pre-highlighted, so Enter is a no-op pick (native-shell#322's missing
     # step, same as the J2 and d3 fixes). Quiesce before every menu
     # answer: an Enter landing inside the menu's own draw can be
     # swallowed (the local stall of 2026-10-19).
     session.wait_quiescent()
     session.answer(ENTER)
-    # Q3 is conditional (niubash#230): a bundle that already carries
-    # niu-git (opt/niugit) skips the question silently — nothing to
+    # Q3 is conditional (native-shell#230): a bundle that already carries
+    # niu-git (opt/native-git) skips the question silently — nothing to
     # answer, the flow moves straight to Q4. Wait briefly; the J2 walk
     # runs the same shape. On a bare install the menu appears and takes
     # its highlighted Skip default.
@@ -3361,7 +3361,7 @@ def wizard_rerun(session: Session, verdict: Verdict, step, capture: str,
         session.answer(ENTER)  # Skip — the default; never auto-installs
     except TimeoutError:
         step.note("niu-git question skipped: the bundle already carries "
-                  "niu-git (niubash#230) — nothing to answer")
+                  "niu-git (native-shell#230) — nothing to answer")
     session.wait_for("External completion providers", timeout=60)
     session.wait_quiescent()
     session.answer(ENTER)  # Skip — the default; no carapace rc snippet
@@ -3375,8 +3375,8 @@ def wizard_rerun(session: Session, verdict: Verdict, step, capture: str,
         session.wait_for("restore the previous rc", timeout=30)
         step.check("undo receipt names the rc restore (cp line)", True)
         if picked is not None:
-            session.wait_for("niu plugin disable", timeout=30)
-            step.check("undo receipt names `niu plugin disable` for the pick",
+            session.wait_for("native-shell plugin disable", timeout=30)
+            step.check("undo receipt names `native-shell plugin disable` for the pick",
                        True)
     except TimeoutError as err:
         step.check("finish screen printed the undo receipts", False, str(err))
@@ -3391,7 +3391,7 @@ def hop_terminal_asserts(step, verdict: Verdict, exe, home, env, tag: str,
     fresh-terminal leg: the generated loader's managed block rewritten to
     the pick (the #359 activation plane; the rc carries only the ownership
     note), exactly one framework's theme variable, journal + backup
-    receipts, and — the niu#168 gate — the pick STICKING across the
+    receipts, and — the native-shell#168 gate — the pick STICKING across the
     terminal (loader + spec agree). Green expected since wt72/themeback
     landed (1.3.4); a red is a plain #168 regression — the wt73 label
     retired with the fix."""
@@ -3444,7 +3444,7 @@ def hop_terminal_asserts(step, verdict: Verdict, exe, home, env, tag: str,
         else:
             check_with_known_fail(
                 step, f"{tag}: fresh terminal renders a themed prompt",
-                f"niu#168 theme rebound: the fresh "
+                f"native-shell#168 theme rebound: the fresh "
                 f"terminal's prompt fell back to the default shape because "
                 f"the pick was already re-materialized away")
         drain_notices(terminal)
@@ -3468,7 +3468,7 @@ def hop_terminal_asserts(step, verdict: Verdict, exe, home, env, tag: str,
     else:
         check_with_known_fail(
             step, f"{tag}: the pick sticks (loader + spec agree)",
-            f"niu#168 theme ownership disagrees: "
+            f"native-shell#168 theme ownership disagrees: "
             f"after the fresh terminal the loader carries "
             f"{sorted(rc_theme_vars(loader).items())} while the spec's oh-my-bash "
             f"entry declares theme = {declared!r} (picked {picked!r}) — the "
@@ -3485,17 +3485,17 @@ def phase_p4(exe, home, env, verdict, seed=None, state=None):
     routing (#168 mechanics / wt61 G2). Runs on the base gate's sandbox:
     theme A ('powerline-multiline') active in rc + spec from J2's pick.
     (seed/state are the shared runner protocol; P4 walks the live files.)"""
-    rc_path = home / ".niubashrc"
-    spec_path = home / ".niubash" / "plugins.toml"
-    journal_path = home / ".niubash" / "setup-journal.toml"
+    rc_path = home / ".native-shellrc"
+    spec_path = home / ".native-shell" / "plugins.toml"
+    journal_path = home / ".native-shell" / "setup-journal.toml"
     theme_a = "powerline-multiline"   # the base gate's J2 pick
     hop_b_candidates = ["edsonarios", "agnoster", "brainy", "hawaii50",
                         "iterate"]  # any second gallery theme (spec names one)
     dual_theme = "powerbash10k"       # ships in oh-my-bash AND bash-it
 
-    # ── P4-S1 — re-run `niu setup` on the existing install: the gallery
+    # ── P4-S1 — re-run `native-shell setup` on the existing install: the gallery
     # names the current pick; the run ends with exactly one theme state.
-    step = verdict.step("P4-S1", "re-run `niu setup` on the existing install "
+    step = verdict.step("P4-S1", "re-run `native-shell setup` on the existing install "
                                  "(rerun_wizard)")
     block_a_original = None
     s1_failed = False
@@ -3538,7 +3538,7 @@ def phase_p4(exe, home, env, verdict, seed=None, state=None):
         else:
             check_with_known_fail(
                 step, "one theme state: loader block and spec agree on A",
-                f"niu#168 theme rebound: loader block "
+                f"native-shell#168 theme rebound: loader block "
                 f"theme vars {sorted(rc_theme_vars(loader_text_for(home)).items())}, "
                 f"spec declares {declared!r} — expected both to agree on "
                 f"{theme_a!r}")
@@ -3599,10 +3599,10 @@ def phase_p4(exe, home, env, verdict, seed=None, state=None):
     step.finish()
 
     # ── P4-S3 — execute the undo receipts the finish screen printed: the
-    # exact `cp` restore line + the `niu plugin disable` line, then verify
+    # exact `cp` restore line + the `native-shell plugin disable` line, then verify
     # the state and that nothing resurrects at the next sync (F4).
     step = verdict.step("P4-S3", "execute the undo receipts (cp restore + "
-                                 "`niu plugin disable`)")
+                                 "`native-shell plugin disable`)")
     disable_error = ""
     try:
         journal = read_text(journal_path)
@@ -3619,8 +3619,8 @@ def phase_p4(exe, home, env, verdict, seed=None, state=None):
             undo.send_line(f"cp {backup} {rc_path}", anchor_timeout=30)
             step.check("the cp receipt restored the previous rc byte-for-byte",
                        read_bytes(rc_path) == backup_bytes)
-            # Receipt 2: the exact `niu plugin disable <theme>` line.
-            undo.send_line(f"niu plugin disable {theme_pick}",
+            # Receipt 2: the exact `native-shell plugin disable <theme>` line.
+            undo.send_line(f"native-shell plugin disable {theme_pick}",
                            anchor_timeout=90)
             try:
                 undo.wait_for("removed from the spec", timeout=30)
@@ -3667,7 +3667,7 @@ def phase_p4(exe, home, env, verdict, seed=None, state=None):
         try:
             step.check("session after the undo boots",
                        prompt_alive(verify, "P4S3_SYNC_READY"))
-            verify.send_line("niu plugin sync", anchor_timeout=90)
+            verify.send_line("native-shell plugin sync", anchor_timeout=90)
             block_after = loader_managed_block(loader_text_for(home),
                                                "oh-my-bash") or ""
             s3_check("nothing resurrects at the next sync (F4)",
@@ -3696,7 +3696,7 @@ def phase_p4(exe, home, env, verdict, seed=None, state=None):
             step.check("live session ready", prompt_alive(wizard, "P4S4_READY"))
             # The dual-framework precondition: a gallery lists trusted
             # sources only, so bash-it's themes join only after its trust.
-            wizard.send_line("niu plugin trust bash-it", anchor_timeout=90)
+            wizard.send_line("native-shell plugin trust bash-it", anchor_timeout=90)
             try:
                 wizard.wait_for("is now trusted", timeout=90)
                 step.check("bash-it trusted (both frameworks' themes are in "
@@ -3737,7 +3737,7 @@ def phase_p4(exe, home, env, verdict, seed=None, state=None):
             check_with_known_fail(
                 step, "spec framework attribution agrees with the loader "
                       "managed block",
-                f"niu#168 theme ownership disagrees: "
+                f"native-shell#168 theme ownership disagrees: "
                 f"the loader managed block carries OSH_THEME='{dual_theme}' but the "
                 f"spec's oh-my-bash entry declares theme = {declared_omb!r} "
                 f"and the bash-it entry {declared_bashit!r} — the wizard's "
@@ -3769,7 +3769,7 @@ def phase_p4(exe, home, env, verdict, seed=None, state=None):
             check_with_known_fail(
                 step, "second terminal does not flip the framework or lose "
                       "the pick",
-                f"niu#168 theme rebound: after the "
+                f"native-shell#168 theme rebound: after the "
                 f"second terminal the loader carries "
                 f"{sorted(vars_later.items())} — expected "
                 f"OSH_THEME='{dual_theme}' in the oh-my-bash managed block only")
@@ -3783,15 +3783,15 @@ def phase_p4(exe, home, env, verdict, seed=None, state=None):
 @register_phase("P7")
 def phase_p7(exe, home, env, verdict, seed=None, state=None):
     """journey-spec P7 — the documented power-user workflow: hand-edit
-    `~/.niubash/plugins.toml` + `niu plugin sync` (plugins-guide 'Merge
+    `~/.native-shell/plugins.toml` + `native-shell plugin sync` (plugins-guide 'Merge
     semantics: spec vs your hand edits', design §14.6), its corruption
     behavior (a wedged startup bricks every terminal — the hang class),
     and #168's inverse invariant (sync claims only what the spec declares).
     Theme-agnostic by design: it runs after whatever state P4 (or the bare
     base gate) left, snapshotting bytes before each mutation.
     (seed/state are the shared runner protocol; P7 writes the live files.)"""
-    rc_path = home / ".niubashrc"
-    spec_path = home / ".niubash" / "plugins.toml"
+    rc_path = home / ".native-shellrc"
+    spec_path = home / ".native-shell" / "plugins.toml"
     fixture_root = home / "plugin-fixtures" / "tinysh"
     fixture_root.mkdir(parents=True, exist_ok=True)
     (fixture_root / "tiny.sh").write_text(
@@ -3817,7 +3817,7 @@ def phase_p7(exe, home, env, verdict, seed=None, state=None):
                       f"target = '{fixture_root.as_posix()}'\n"
                       f"enable = ['tiny.sh']\n").encode("utf-8")
         spec_path.write_bytes(spec_before + hand_entry)
-        session.send_line("niu plugin sync", anchor_timeout=120)
+        session.send_line("native-shell plugin sync", anchor_timeout=120)
         try:
             session.wait_for("awaiting-trust", timeout=90)
             step.check("sync installed the hand-declared source untrusted "
@@ -3826,7 +3826,7 @@ def phase_p7(exe, home, env, verdict, seed=None, state=None):
             step.check("sync installed the hand-declared source untrusted "
                        "(awaiting-trust row)", False, str(err))
         try:
-            session.wait_for("niu plugin trust tinysh", timeout=30)
+            session.wait_for("native-shell plugin trust tinysh", timeout=30)
             step.check("sync printed the exact trust verb for the new source",
                        True)
         except TimeoutError as err:
@@ -3837,7 +3837,7 @@ def phase_p7(exe, home, env, verdict, seed=None, state=None):
                    b"id = 'tinysh'" in spec_after)
         step.check("the untrusted install left the rc byte-identical",
                    read_bytes(rc_path) == rc_stable)
-        session.send_line("niu plugin sync", anchor_timeout=120)
+        session.send_line("native-shell plugin sync", anchor_timeout=120)
         step.check("second sync: rc byte-identical (no-op)",
                    read_bytes(rc_path) == rc_stable)
         step.check("second sync: spec byte-identical (no-op)",
@@ -3861,7 +3861,7 @@ def phase_p7(exe, home, env, verdict, seed=None, state=None):
     # documented hand_added ∪ next(spec) rule, §14.6).
     step = verdict.step("P7-S2", "sync merge semantics: hand + wizard entries "
                                  "coexist; hand-added selection survives")
-    loader_file = home / ".niubash" / "generated" / "plugins.niu"
+    loader_file = home / ".native-shell" / "generated" / "plugins.nsh"
     try:
         # The #359 plane: managed source blocks — including the wizard's
         # oh-my-bash entry with its plugins=() selection — live in the
@@ -3874,7 +3874,7 @@ def phase_p7(exe, home, env, verdict, seed=None, state=None):
             raise AssertionError("no oh-my-bash managed block to hand-edit "
                                  "in the generated loader")
         # The hand edit anchors on the LOADER's own marker spelling
-        # (`# --- niu plugin source: <id> ---`, loader.rs section_begin) —
+        # (`# --- native-shell plugin source: <id> ---`, loader.rs section_begin) —
         # not the retired rc spelling; the release-39249382423 red was the
         # rc anchor no-oping inside the loader file.
         marker_line = LOADER_BEGIN_MARK.format(sid="oh-my-bash")
@@ -3887,7 +3887,7 @@ def phase_p7(exe, home, env, verdict, seed=None, state=None):
                                  "block carries no "
                                  f"{marker_line!r} anchor")
         loader_file.write_bytes(loader_hand.encode("utf-8"))
-        session.send_line("niu plugin sync", anchor_timeout=120)
+        session.send_line("native-shell plugin sync", anchor_timeout=120)
         try:
             session.wait_for("selection materialized", timeout=90)
         except TimeoutError:
@@ -3922,7 +3922,7 @@ def phase_p7(exe, home, env, verdict, seed=None, state=None):
                    and spec_entry(spec_now, "bash-completion") is not None)
         step.check("the sync left the spec file byte-identical",
                    read_bytes(spec_path) == spec_before)
-        session.send_line("niu plugin sync", anchor_timeout=120)
+        session.send_line("native-shell plugin sync", anchor_timeout=120)
         step.check("second sync: loader byte-identical (hand entry stays "
                    "hand-added, not re-merged)",
                    read_bytes(loader_file) == loader_after_bytes)
@@ -3947,10 +3947,10 @@ def phase_p7(exe, home, env, verdict, seed=None, state=None):
         rc_stable = read_bytes(rc_path)
         spec_good = read_bytes(spec_path)
         spec_path.write_bytes(spec_good[:40])
-        session.send_line("niu plugin sync", anchor_timeout=30)
+        session.send_line("native-shell plugin sync", anchor_timeout=30)
         raw = session.raw_stripped()
         step.check("the failed sync printed a readable error",
-                   "niu:" in raw or "TOML" in raw or "toml" in raw)
+                   "native-shell:" in raw or "TOML" in raw or "toml" in raw)
         step.check("no panic anywhere in the session",
                    "panicked" not in raw)
         step.check("the failed sync did not touch the rc",
@@ -3961,7 +3961,7 @@ def phase_p7(exe, home, env, verdict, seed=None, state=None):
             # The boot bound a human sees, measured from the FIRST BYTE (the
             # banner): the spawn/scheduling lag before it is this machine's,
             # never the product's. The wedge class this step guards (startup
-            # bricked by a corrupt spec — the niu#145 hang family via the
+            # bricked by a corrupt spec — the native-shell#145 hang family via the
             # plugin path) never renders a prompt at all, so any hard bound
             # catches it; the number absorbs documented machine load, because
             # the rc's loaders + the bootstrap child starve on CPU like
@@ -4017,7 +4017,7 @@ def phase_p7(exe, home, env, verdict, seed=None, state=None):
             # explicit sync (asserted above). What must never happen is
             # the wedge-class fallout: a panic or a failed/degraded storm.
             storm = [line for line in boot_raw.splitlines()
-                     if re.search(r"niu plugin sync: (failed|degraded)\b",
+                     if re.search(r"native-shell plugin sync: (failed|degraded)\b",
                                   line)]
             step.check("the corrupt-spec boot stays quiet and clean (the "
                        "loader is the boot plane; no panic, no failed/"
@@ -4032,7 +4032,7 @@ def phase_p7(exe, home, env, verdict, seed=None, state=None):
                    read_bytes(rc_path) == rc_stable)
         # Restore the good spec; the explicit verb recovers cleanly.
         spec_path.write_bytes(spec_good)
-        session.send_line("niu plugin sync && echo P7S3_RECOVERED",
+        session.send_line("native-shell plugin sync && echo P7S3_RECOVERED",
                           anchor_timeout=120)
         try:
             session.wait_for("P7S3_RECOVERED", timeout=60)
@@ -4055,7 +4055,7 @@ def phase_p7(exe, home, env, verdict, seed=None, state=None):
         spec_before = read_bytes(spec_path)
         hand_key = b"\nnote_field = 'hand-added by the journey'\n"
         spec_path.write_bytes(spec_before + hand_key)
-        session.send_line("niu plugin sync && echo P7S4_SYNC_OK",
+        session.send_line("native-shell plugin sync && echo P7S4_SYNC_OK",
                           anchor_timeout=120)
         try:
             session.wait_for("P7S4_SYNC_OK", timeout=60)
@@ -4123,7 +4123,7 @@ def phase_p8(exe, home, env, verdict, seed, state):
 
 # ── Sandbox path + hygiene guards (issue #428 + #449 follow-ups) ────────────
 # Root cause 1: the repo convention writes Windows paths git-bash style
-# (`/d/tmp/x`), and git/niu translate that — but a bare Python script has
+# (`/d/tmp/x`), and git/native-shell translate that — but a bare Python script has
 # no translation layer: pathlib reads `/d/...` as a DRIVE-RELATIVE path
 # (root `\` on the current drive), so with the cwd on D: the sandbox
 # landed at `D:\d\tmp\...` — the literal `/d` became a junk first
@@ -4261,8 +4261,8 @@ def _looks_like_sandbox(target: Path) -> tuple[bool, str]:
     if target.name.lower().startswith("journey-"):
         return True, "journey-* directory name"
     try:
-        if (target / "home" / ".niubash").is_dir():
-            return True, "contains home/.niubash"
+        if (target / "home" / ".native-shell").is_dir():
+            return True, "contains home/.native-shell"
     except OSError:
         return True, "DACL denies enumeration (#428 signature)"
     try:
@@ -4278,7 +4278,7 @@ def _looks_like_sandbox(target: Path) -> tuple[bool, str]:
         return True, "keep-sandbox parent of journey-* directories"
     return (False,
             "does not look like a journey sandbox (expected a 'journey-*' "
-            "directory name, a 'home/.niubash' tree, or 'journey-*' child "
+            "directory name, a 'home/.native-shell' tree, or 'journey-*' child "
             "directories)")
 
 
@@ -4327,8 +4327,8 @@ def main() -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(
         description="The Golden User Journey gate (owner directive 2026-10-04)")
-    parser.add_argument("niu", type=Path, nargs="?", default=None,
-                        help="path to the built niu.exe (required unless "
+    parser.add_argument("native_shell", metavar="native-shell", type=Path, nargs="?", default=None,
+                        help="path to the built native-shell.exe (required unless "
                              "--cleanup-sandbox is given)")
     parser.add_argument("--artifacts", type=Path, default=None,
                         help="where verdict + transcripts go "
@@ -4386,13 +4386,13 @@ def main() -> int:
                   f"to {args.artifacts} (same #428 guard)")
 
     # The cleanup verb stands alone: it runs before anything that needs
-    # the niu binary, so debris from older runs can be cleared without a
+    # the native-shell binary, so debris from older runs can be cleared without a
     # build at hand.
     if args.cleanup_sandbox is not None:
         return cleanup_sandbox_verb(args.cleanup_sandbox)
 
-    if args.niu is None:
-        parser.error("the niu.exe argument is required (unless "
+    if args.native_shell is None:
+        parser.error("the native-shell.exe argument is required (unless "
                      "--cleanup-sandbox is given)")
 
     global STRESS_DELAY_MS
@@ -4420,9 +4420,9 @@ def main() -> int:
         return 2
     phases = sorted(PHASE_RUNNERS) if "all" in selected \
         else list(dict.fromkeys(p for p in selected if p in PHASE_RUNNERS))
-    exe = args.niu.resolve()
+    exe = args.native_shell.resolve()
     if not exe.is_file():
-        print(f"SKIP: niu binary not found: {exe}")
+        print(f"SKIP: native-shell binary not found: {exe}")
         return 2
     if shutil.which("git") is None:
         print("SKIP: git not on PATH (the journey clones real origins)")
@@ -4441,15 +4441,15 @@ def main() -> int:
         args.keep_sandbox.mkdir(parents=True, exist_ok=True)
         print(f"keep-sandbox landing: {args.keep_sandbox}")
     sandbox_parent = (args.keep_sandbox or Path(tempfile.gettempdir())).resolve()
-    # ABSOLUTE on purpose: a relative sandbox home doubles inside niu's
-    # path joins (observed 2026-10-03: rc written to <home>/<home>/.niubashrc).
+    # ABSOLUTE on purpose: a relative sandbox home doubles inside native-shell's
+    # path joins (observed 2026-10-03: rc written to <home>/<home>/.native-shellrc).
     sandbox = Path(tempfile.mkdtemp(prefix="journey-", dir=sandbox_parent)).resolve()
     # The landing is never silent (#428): a misread /d/... used to strand
     # the tree a full drive-relative level down with no on-screen trace.
     print(f"sandbox: {sandbox}")
 
     (artifacts / "run.json").write_text(
-        json.dumps({"niu": str(exe), "sandbox": str(sandbox),
+        json.dumps({"native-shell": str(exe), "sandbox": str(sandbox),
                     "started_utc": now_utc(), "pid": os.getpid(),
                     "stress_delay_ms": STRESS_DELAY_MS,
                     "phases": ["base"] + phases,

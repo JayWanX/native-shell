@@ -1,4 +1,4 @@
-//! niubash#474: the `--encoded-command` verbatim handoff accepts two more
+//! native-shell#474: the `--encoded-command` verbatim handoff accepts two more
 //! spellings — `-EncodedCommand`, the PowerShell spelling matched
 //! case-insensitively like every PowerShell parameter name (so tooling that
 //! already emits `pwsh -EncodedCommand <b64>` command lines plugs in
@@ -11,26 +11,30 @@
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
 fn run(args: &[&str]) -> Output {
-    Command::new(niu_binary())
+    Command::new(native_shell_binary())
         .args(args)
-        .env_remove("NIU_ENV")
+        .env_remove("NATIVE_SHELL_ENV")
         .env_remove("BASH_ENV")
         .stdin(Stdio::null())
         .output()
-        .expect("spawn niu")
+        .expect("spawn native-shell")
 }
 
 /// Standard RFC 4648 base64, so the tests need no `base64` utility in PATH.
@@ -130,7 +134,7 @@ fn missing_argument_reports_identically_under_every_spelling() {
 
 #[test]
 fn aliases_keep_leading_invocation_flags() {
-    // The niubash#390 contract holds under the aliases too: `-e` before the
+    // The native-shell#390 contract holds under the aliases too: `-e` before the
     // alias must still reach the shell (errexit aborts before `echo AFTER`).
     let command = "false; echo AFTER";
     let plain = run(&["-e", "-c", command]);
@@ -170,6 +174,9 @@ fn help_groups_the_verbatim_handoff_spellings() {
         "-EncodedCommand",
         "--ec",
     ] {
-        assert!(stdout.contains(needle), "niu --help is missing `{needle}`");
+        assert!(
+            stdout.contains(needle),
+            "native-shell --help is missing `{needle}`"
+        );
     }
 }

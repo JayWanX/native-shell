@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble and pack the Microsoft Store MSIX for Niubash.
+"""Assemble and pack the Microsoft Store MSIX for NativeShell.
 
 Run from the repository root:
 
@@ -7,23 +7,23 @@ Run from the repository root:
         --identity-name "<Package/Identity Name from Partner Center>" \
         --publisher "CN=XXXXXXXX-XXXX-..." \
         [--publisher-display-name "unixwin"] \
-        [--winuxcmd-dir <dir containing winuxcmd.exe + command links>] \
+        [--winuxcmd-dir <dir containing native-cmd.exe + command links>] \
         [--bundle-dir <extra payload copied into the package>]
 
 What it does:
   1. Reads the package version from Cargo.toml and appends ".0" (the Store
      reserves the fourth version segment).
   2. Renders installer/msix/AppxManifest.xml with the Partner Center identity.
-  3. Generates the visual assets from assets/niubash-icon-256.png (Pillow).
+  3. Generates the visual assets from assets/native-shell-icon-256.png (Pillow).
   4. Assembles the layout under target/msix/layout and packs it with
-     makeappx.exe into target/msix/Niubash_<version>_x64.msix.
+     makeappx.exe into target/msix/NativeShell_<version>_x64.msix.
 
 Notes:
   - Only relative paths are used inside the script; caller-supplied paths
     may be absolute.
   - The Store build must stay green: no PATH modification, no system setting
-    changes. `niu` is exposed via the AppExecutionAlias declared in the
-    manifest, and bundled command links must be resolved by niu relative to
+    changes. `native-shell` is exposed via the AppExecutionAlias declared in the
+    manifest, and bundled command links must be resolved by native-shell relative to
     its own executable location.
   - The output .msix is unsigned; the Store re-signs on submission. To
     install locally for testing, sign it yourself first.
@@ -40,7 +40,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_TEMPLATE = REPO_ROOT / "installer" / "msix" / "AppxManifest.xml"
-ICON_SOURCE = REPO_ROOT / "assets" / "niubash-icon-256.png"
+ICON_SOURCE = REPO_ROOT / "assets" / "native-shell-icon-256.png"
 CARGO_TOML = REPO_ROOT / "Cargo.toml"
 LAYOUT_DIR = REPO_ROOT / "target" / "msix" / "layout"
 OUTPUT_DIR = REPO_ROOT / "target" / "msix"
@@ -55,16 +55,16 @@ VISUAL_ASSETS = [
 ]
 
 WELCOME = """\
-Niubash — Windows-native, bash-compatible shell.
+NativeShell — Windows-native, bash-compatible shell.
 
-Interactive start : niu
-Quick check       : niu --version
-Shell scripts     : niu script.sh
+Interactive start : native-shell
+Quick check       : native-shell --version
+Shell scripts     : native-shell script.sh
 
 Store build notes:
-  - All bundled commands live inside this package next to niu.exe.
+  - All bundled commands live inside this package next to native-shell.exe.
   - No system settings are modified; configuration stays under the user
-    profile (~/.niubashrc).
+    profile (~/.native-shellrc).
 """
 
 
@@ -115,7 +115,7 @@ def generate_visual_assets() -> None:
 
 
 def copy_payload(args: argparse.Namespace) -> None:
-    shutil.copy2(args.niu_exe, LAYOUT_DIR / "niu.exe")
+    shutil.copy2(args.native_shell_exe, LAYOUT_DIR / "native-shell.exe")
 
     if args.winuxcmd_dir:
         dest = LAYOUT_DIR / "winuxcmd"
@@ -161,7 +161,7 @@ def find_makeappx() -> str:
 
 
 def pack(version: str, makeappx: str) -> Path:
-    output = OUTPUT_DIR / f"Niubash_{version}_x64.msix"
+    output = OUTPUT_DIR / f"NativeShell_{version}_x64.msix"
     subprocess.run(
         [makeappx, "pack", "/d", str(LAYOUT_DIR), "/p", str(output), "/o"],
         check=True,
@@ -178,17 +178,17 @@ def main() -> None:
                         help='Publisher subject, e.g. "CN=XXXXXXXX-..."')
     parser.add_argument("--publisher-display-name", default="unixwin",
                         help="Publisher display name shown in the Store")
-    parser.add_argument("--niu-exe", type=Path,
-                        default=REPO_ROOT / "target" / "release" / "niu.exe",
-                        help="Release niu.exe to package (default: target/release/niu.exe)")
+    parser.add_argument("--native-shell-exe", type=Path,
+                        default=REPO_ROOT / "target" / "release" / "native-shell.exe",
+                        help="Release native-shell.exe to package (default: target/release/native-shell.exe)")
     parser.add_argument("--winuxcmd-dir", type=Path, default=None,
-                        help="Directory with winuxcmd.exe + command links to bundle")
+                        help="Directory with native-cmd.exe + command links to bundle")
     parser.add_argument("--bundle-dir", type=Path, default=None,
                         help="Extra payload directory copied into the package")
     args = parser.parse_args()
 
-    if not args.niu_exe.exists():
-        raise SystemExit(f"error: {args.niu_exe} not found; build first with "
+    if not args.native_shell_exe.exists():
+        raise SystemExit(f"error: {args.native_shell_exe} not found; build first with "
                          "scripts/build.py or scripts/build-with-vs.ps1")
 
     if LAYOUT_DIR.exists():

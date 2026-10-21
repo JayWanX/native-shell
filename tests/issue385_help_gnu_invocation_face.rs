@@ -1,4 +1,4 @@
-//! niubash#385 death gate: `niu --help` must carry the complete GNU bash
+//! native-shell#385 death gate: `native-shell --help` must carry the complete GNU bash
 //! invocation surface, in the `bash --help` (GNU 5.3) shape, and the list it
 //! carries must be exactly the parser's accepted long-option set.
 //!
@@ -12,28 +12,32 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
-fn niu_help() -> String {
-    let output = Command::new(niu_binary())
+fn native_shell_help() -> String {
+    let output = Command::new(native_shell_binary())
         .arg("--help")
-        .env_remove("NIU_INVOKED_AS")
+        .env_remove("NATIVE_SHELL_INVOKED_AS")
         .stdin(Stdio::null())
         .output()
-        .expect("spawn niu --help");
+        .expect("spawn native-shell --help");
     assert!(
         output.status.success(),
-        "niu --help failed: {:?}",
+        "native-shell --help failed: {:?}",
         output.status.code()
     );
     String::from_utf8_lossy(&output.stdout).into_owned()
@@ -41,14 +45,14 @@ fn niu_help() -> String {
 
 /// The GNU face leads: usage pair, every GNU long option, both shell-option
 /// lines, the value-carrying annotations, and the tail notes — the `bash
-/// --help` block order (GNU 5.3 show_shell_usage), adapted to the niu face.
+/// --help` block order (GNU 5.3 show_shell_usage), adapted to the native-shell face.
 #[test]
 fn help_opens_with_the_complete_gnu_invocation_face() {
-    let help = niu_help();
+    let help = native_shell_help();
     let required = [
-        // Usage pair (GNU 5.3 wording, niu program word).
-        "Usage:  niu [GNU long option] [option] ...",
-        "        niu [GNU long option] [option] script-file ...",
+        // Usage pair (GNU 5.3 wording, native-shell program word).
+        "Usage:  native-shell [GNU long option] [option] ...",
+        "        native-shell [GNU long option] [option] script-file ...",
         // GNU long options, complete list — one assert per option so a red
         // names the exact flag that went missing.
         "    --debug",
@@ -77,10 +81,10 @@ fn help_opens_with_the_complete_gnu_invocation_face() {
         "-s reads commands from standard input",
         "--init-file and --rcfile each",
         // Tail notes.
-        "Type `niu -c \"help set\"` for more information about shell options.",
-        "Type `niu -c help` for more information about shell builtin commands.",
-        "Report bugs at <https://github.com/unixwin/niubash/issues>.",
-        "Niubash home page: <https://github.com/unixwin/niubash>.",
+        "Type `native-shell -c \"help set\"` for more information about shell options.",
+        "Type `native-shell -c help` for more information about shell builtin commands.",
+        "Report bugs at <https://github.com/JayWanX/native-shell/issues>.",
+        "NativeShell home page: <https://github.com/JayWanX/native-shell>.",
         // The restricted invocation face is advertised in both spellings.
         "    --restricted",
         "-r, --restricted",
@@ -88,8 +92,8 @@ fn help_opens_with_the_complete_gnu_invocation_face() {
     for marker in required {
         assert!(
             help.contains(marker),
-            "niu --help lost the GNU invocation-face line `{marker}` \
-             (niubash#385 death gate):\n{help}"
+            "native-shell --help lost the GNU invocation-face line `{marker}` \
+             (native-shell#385 death gate):\n{help}"
         );
     }
 }
@@ -98,10 +102,10 @@ fn help_opens_with_the_complete_gnu_invocation_face() {
 /// product Options block, and the usage pair comes first of all.
 #[test]
 fn help_orders_the_gnu_face_before_the_product_block() {
-    let help = niu_help();
-    let banner = help.find("Niubash ").expect("version banner");
+    let help = native_shell_help();
+    let banner = help.find("Native Shell ").expect("version banner");
     let usage = help
-        .find("Usage:  niu [GNU long option]")
+        .find("Usage:  native-shell [GNU long option]")
         .expect("GNU usage");
     let long_header = help.find("GNU long options:").expect("GNU long options");
     let shell_header = help.find("Shell options:").expect("Shell options");
@@ -120,12 +124,12 @@ fn help_orders_the_gnu_face_before_the_product_block() {
 /// does not accept: one too many is as wrong as one too few.
 #[test]
 fn help_manifest_matches_the_parser_long_option_table() {
-    let help = niu_help();
+    let help = native_shell_help();
     for name in rubash::usage::LONG_OPTIONS {
         assert!(
             help.contains(&format!("    --{name}")),
-            "parser accepts --{name} but niu --help does not list it \
-             (niubash#385 death gate):\n{help}"
+            "parser accepts --{name} but native-shell --help does not list it \
+             (native-shell#385 death gate):\n{help}"
         );
     }
     let listed = help
@@ -135,8 +139,8 @@ fn help_manifest_matches_the_parser_long_option_table() {
     assert_eq!(
         listed,
         rubash::usage::LONG_OPTIONS.len(),
-        "niu --help lists {listed} long options but the parser table has {} \
-         (niubash#385 death gate):\n{help}",
+        "native-shell --help lists {listed} long options but the parser table has {} \
+         (native-shell#385 death gate):\n{help}",
         rubash::usage::LONG_OPTIONS.len()
     );
 }
@@ -160,14 +164,14 @@ fn help_never_lists_an_option_the_invocation_rejects() {
         let parsed = rubash::invocation::ShellInvocation::parse(&argv);
         assert!(
             parsed.is_ok(),
-            "--{name} is in niu --help but ShellInvocation::parse rejects it: {parsed:?}"
+            "--{name} is in native-shell --help but ShellInvocation::parse rejects it: {parsed:?}"
         );
     }
-    let help = niu_help();
+    let help = native_shell_help();
     assert!(
         !help.contains("--interactive"),
-        "niu --help advertises --interactive but the invocation rejects it \
-         (GNU parity; niubash#385 death gate):\n{help}"
+        "native-shell --help advertises --interactive but the invocation rejects it \
+         (GNU parity; native-shell#385 death gate):\n{help}"
     );
 }
 
@@ -178,12 +182,12 @@ fn help_never_lists_an_option_the_invocation_rejects() {
 #[test]
 fn restricted_invocation_flags_are_accepted_and_enforced() {
     let probe = |argv: &[&str]| {
-        let output = Command::new(niu_binary())
+        let output = Command::new(native_shell_binary())
             .args(argv)
-            .env_remove("NIU_INVOKED_AS")
+            .env_remove("NATIVE_SHELL_INVOKED_AS")
             .stdin(Stdio::null())
             .output()
-            .expect("spawn niu");
+            .expect("spawn native-shell");
         (
             output.status.code(),
             String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -201,7 +205,7 @@ fn restricted_invocation_flags_are_accepted_and_enforced() {
         );
         assert!(
             !stderr.contains("invalid shell option name"),
-            "{flag} was routed into the shopt space (niubash#385 regression): {stderr}"
+            "{flag} was routed into the shopt space (native-shell#385 regression): {stderr}"
         );
     }
 

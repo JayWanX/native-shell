@@ -1,9 +1,9 @@
-//! Integration: the theme-preview child channel (niubash#170).
+//! Integration: the theme-preview child channel (native-shell#170).
 //!
 //! `plugins::theme_preview::render_theme` spawns a throwaway
-//! `niu -c` child that sources the theme's managed block and prints the
+//! `native-shell -c` child that sources the theme's managed block and prints the
 //! rendered PS1 between markers. These cases run the REAL pipeline — the
-//! real niu binary (via `NIU_PREVIEW_NIU_EXE`), the real fixture loader
+//! real native-shell binary (via `NATIVE_SHELL_PREVIEW_NATIVE_SHELL_EXE`), the real fixture loader
 //! tree, the real engine expansion — against a sandboxed registry:
 //!
 //! - a working theme renders its face (through the interactive marker the
@@ -18,8 +18,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use niubash_runtime::plugins::sources::{self, SourceInstallRequest};
-use niubash_runtime::plugins::theme_preview::{
+use native_shell_runtime::plugins::sources::{self, SourceInstallRequest};
+use native_shell_runtime::plugins::theme_preview::{
     preview_lines, render_theme, PreviewOutcome, ThemePreviewRequest, RENDER_TIMEOUT,
 };
 
@@ -91,10 +91,16 @@ impl PreviewSandbox {
         let _guards = vec![
             EnvGuard::set("HOME", &host_to_shell_style_path(&home)),
             EnvGuard::unset("USERPROFILE"),
-            EnvGuard::set("NIU_PLUGIN_SOURCES_ROOT", &sources_root.to_string_lossy()),
-            // The preview children must run the freshly built niu, not this
+            EnvGuard::set(
+                "NATIVE_SHELL_PLUGIN_SOURCES_ROOT",
+                &sources_root.to_string_lossy(),
+            ),
+            // The preview children must run the freshly built native-shell, not this
             // test harness (what `current_exe` would resolve to).
-            EnvGuard::set("NIU_PREVIEW_NIU_EXE", env!("CARGO_BIN_EXE_niu")),
+            EnvGuard::set(
+                "NATIVE_SHELL_PREVIEW_NATIVE_SHELL_EXE",
+                env!("CARGO_BIN_EXE_native-shell"),
+            ),
         ];
 
         // Stage the fixture tree OUTSIDE the sources root: `add_source`
@@ -106,7 +112,7 @@ impl PreviewSandbox {
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sources/oh-my-bash"),
             &staged,
         );
-        // Representative preview themes (niubash#170 classes) written into
+        // Representative preview themes (native-shell#170 classes) written into
         // the staged copy — the repo fixture stays untouched.
         write_theme(
             &staged,
@@ -199,7 +205,7 @@ fn preview_renders_the_theme_face_through_the_child_channel() {
         "the theme's own glyph must survive byte-for-byte: {joined:?}"
     );
     assert!(
-        !joined.contains("__NIU_PS1"),
+        !joined.contains("__NATIVE_SHELL_PS1"),
         "markers must be stripped: {joined:?}"
     );
 }

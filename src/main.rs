@@ -1,21 +1,21 @@
-//! niu entry point (the niubash shell)
+//! native-shell entry point (the native-shell shell)
 //!
 //! Usage:
-//!   niu                  → interactive REPL
-//!   niu -c "command"     → execute one command, print exit code, exit
-//!   niu -C "command"     → execute one REPL-style command, then exit
-//!   niu script.sh        → execute a script file
-//!   niu --help | -h      → usage
-//!   niu --version        → version (niubash / rubash / winuxcmd)
-//!   niu setup            → re-run the interactive setup wizard
-//!   niu plugin discover → read-only overview of external plugin sources
-//!   niu plugin source <cmd> → manage external plugin-manager sources
-//!   niu --completion-probe "line" [cursor] → print REPL completions
-//!   niu --install-wt-profile → add/update the Windows Terminal profile
-//!   niu --install-wt-shortcuts → desktop/Start-menu shortcuts (WT form
-//!     `wt.exe -p Niubash` when WT + profile are present, conhost otherwise)
-//!   niu --self-update → download and run the latest installer
-//!   self-update / update-niubash → REPL commands for Niubash self-update
+//!   native-shell                  → interactive REPL
+//!   native-shell -c "command"     → execute one command, print exit code, exit
+//!   native-shell -C "command"     → execute one REPL-style command, then exit
+//!   native-shell script.sh        → execute a script file
+//!   native-shell --help | -h      → usage
+//!   native-shell --version        → version (native-shell / rubash / winuxcmd)
+//!   native-shell setup            → re-run the interactive setup wizard
+//!   native-shell plugin discover → read-only overview of external plugin sources
+//!   native-shell plugin source <cmd> → manage external plugin-manager sources
+//!   native-shell --completion-probe "line" [cursor] → print REPL completions
+//!   native-shell --install-wt-profile → add/update the Windows Terminal profile
+//!   native-shell --install-wt-shortcuts → desktop/Start-menu shortcuts (WT form
+//!     `wt.exe -p NativeShell` when WT + profile are present, conhost otherwise)
+//!   native-shell --self-update → download and run the latest installer
+//!   self-update / update-native-shell → REPL commands for NativeShell self-update
 
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
@@ -25,7 +25,7 @@ use rubash::invocation::ShellInvocation;
 
 /// #125/#140: std `println!`/`print!` panic on any stdout write error, and
 /// this binary builds with `panic = "abort"`, so a reader closing the pipe
-/// (`niu --version | head -1`; Windows reports os error 232 = ERROR_NO_DATA
+/// (`native-shell --version | head -1`; Windows reports os error 232 = ERROR_NO_DATA
 /// rather than EPIPE) aborts the launcher mid-output. Shadow both macros
 /// file-wide with writers that follow the engine's closed-pipe rule
 /// (`is_closed_output_io_error`: BrokenPipe or raw os error 232) — write
@@ -91,21 +91,21 @@ mod skill;
 // bounded only by the real stack. Debug frames in the engine's call chain
 // run ~150KB each; 512MiB (reserved, not committed) covers func4.sub's
 // FUNCNEST=0 recursion to f=201 with headroom — mirrors rubash's main.rs.
-const NIU_MAIN_STACK_SIZE: usize = 512 * 1024 * 1024;
+const NATIVE_SHELL_MAIN_STACK_SIZE: usize = 512 * 1024 * 1024;
 
 fn main() -> ExitCode {
     // Restore the console (raw mode, cursor) on the panic path before the
     // default hook reports; with `panic = "abort"` this is the last code
     // that runs because no Drop guards execute.
-    niubash_runtime::panic_restore::install_panic_hook();
+    native_shell_runtime::panic_restore::install_panic_hook();
     let code = std::thread::Builder::new()
         .name("niu-main".to_string())
-        .stack_size(NIU_MAIN_STACK_SIZE)
+        .stack_size(NATIVE_SHELL_MAIN_STACK_SIZE)
         .spawn(run_main)
-        .expect("spawn niubash main thread")
+        .expect("spawn native-shell main thread")
         .join()
         .unwrap_or_else(|_| ExitCode::from(1));
-    // niubash#245: before the process tears down its threads, let the
+    // native-shell#245: before the process tears down its threads, let the
     // piped-stdout pump (when installed) forward everything still in
     // flight — the main-return path of every non-interactive run drains
     // here so normal runs never lose buffered output.
@@ -113,12 +113,12 @@ fn main() -> ExitCode {
     code
 }
 
-/// niubash#379: does this invocation plausibly want its console? False only
+/// native-shell#379: does this invocation plausibly want its console? False only
 /// when the run is provably non-interactive — anything else keeps the
 /// window (a false positive just preserves today's behavior).
 ///
-/// - bare `niu` on a terminal stdin: the desktop/shortcut face — the user
-///   opened this window on purpose (an agent's bare `niu` over pipes reads
+/// - bare `native-shell` on a terminal stdin: the desktop/shortcut face — the user
+///   opened this window on purpose (an agent's bare `native-shell` over pipes reads
 ///   stdin instead, non-terminal);
 /// - `-i`/`--interactive`/`-l`/`--login` in the leading option run: an
 ///   explicit request for an interactive session.
@@ -126,11 +126,11 @@ fn main() -> ExitCode {
 /// The option run is walked with the SAME `classify_leading_option_word`
 /// rules `launcher_dispatch_index` uses (GNU `parse_shell_options`): a
 /// value-taking option consumes its next argv word, so in
-/// `niu --rcfile <rc> -i` / `niu -o vi -i` the trailing `-i` is an option
-/// (interactive), not an operand — while in `niu --rcfile -i` the `-i` IS
+/// `native-shell --rcfile <rc> -i` / `native-shell -o vi -i` the trailing `-i` is an option
+/// (interactive), not an operand — while in `native-shell --rcfile -i` the `-i` IS
 /// the rcfile value and never counts. A `-c`/`-s` word, an operand, or
 /// `--` ends the run: words after that are positional, never flags
-/// (`niu script.sh -i` stays non-interactive).
+/// (`native-shell script.sh -i` stays non-interactive).
 fn interactive_launch_wanted(args: &[String]) -> bool {
     use std::io::IsTerminal;
     let rest = if args.is_empty() { &[][..] } else { &args[1..] };
@@ -161,33 +161,33 @@ fn interactive_launch_wanted(args: &[String]) -> bool {
 }
 
 fn run_main() -> ExitCode {
-    // niubash#379: before anything else runs, drop a console Windows
+    // native-shell#379: before anything else runs, drop a console Windows
     // auto-allocated for this process alone — a console-less invoker that
-    // plainly spawns `niu -c`/`niu script.sh` gets a visible window that
+    // plainly spawns `native-shell -c`/`native-shell script.sh` gets a visible window that
     // outlives the whole command. Interactive launches keep theirs.
     if !interactive_launch_wanted(&std::env::args().collect::<Vec<_>>()) {
-        niubash_runtime::console_guard::release_orphan_console();
+        native_shell_runtime::console_guard::release_orphan_console();
     }
 
-    // niubash#245: guard a piped stdout for non-interactive executions
+    // native-shell#245: guard a piped stdout for non-interactive executions
     // BEFORE anything can write (Rust caches the stdio handle on first
     // use, so the interposition must land first). A reader that closes
-    // the pipe must terminate niu — one diagnostic, status 1 — instead
+    // the pipe must terminate native-shell — one diagnostic, status 1 — instead
     // of letting an unbounded producer loop on per-write failures.
     let mut args: Vec<String> = std::env::args().collect();
     // rubash#873 companion: consume the engine's background-wrapper spawn
     // handshake (`--internal-bg-wrapper=<nonce>` argv flag + the matching
     // __RUBASH_BACKGROUND_WRAPPER env nonce) before any launcher dispatch
-    // sees argv. The rubash engine inside niu spawns wrapper respawns for
+    // sees argv. The rubash engine inside native-shell spawns wrapper respawns for
     // background jobs addressed to this very binary; its spawn site
     // attaches the niu-CLI-specific flag only when the host CLI declared
     // itself a consumer (this call), so skipping it would leak the flag
     // into our GNU-aligned option parser —
     // `bash: --internal-bg-wrapper=<nonce>: invalid option` + usage, rc 2 —
-    // and kill every wrapper respawn (niubash master CI,
+    // and kill every wrapper respawn (native-shell master CI,
     // tests/background_spawn_args.rs). The call also arms the in-process
     // wrapper role when both channels agree, keeping the #737
-    // dies-with-the-wrapper cascade live for niu the way rubash's own
+    // dies-with-the-wrapper cascade live for native-shell the way rubash's own
     // main() has it. For plain invocations this is just the env scrub.
     rubash::builtins::kill::consume_background_wrapper_handshake(&mut args);
     piped_stdout::install_for_argv(&args);
@@ -199,20 +199,20 @@ fn run_main() -> ExitCode {
         .init();
 
     // Install Ctrl+C handler (best-effort)
-    niubash_runtime::ctrl_c::install();
-    niubash_runtime::console_guard::prefer_utf8_code_page();
-    niubash_runtime::console_guard::enable_vt_output();
+    native_shell_runtime::ctrl_c::install();
+    native_shell_runtime::console_guard::prefer_utf8_code_page();
+    native_shell_runtime::console_guard::enable_vt_output();
 
-    // Expose the host binary path so rubash's bash shim can forward to niu.
+    // Expose the host binary path so rubash's bash shim can forward to native-shell.
     // WINUXSH_SHELL is a deprecated bridge for current rubash upstream.
     // Invoked through a `bash`/`sh` hardlink, `current_exe()` is that face; the
     // contract these variables carry is the shell itself, so report the real
-    // `niu.exe` of this installation while `$BASH`/`$SHELL` keep following the
+    // `native-shell.exe` of this installation while `$BASH`/`$SHELL` keep following the
     // invoked name (GNU: $BASH names the shell that is running).
     if let Ok(invoked) = std::env::current_exe() {
-        let shell = niubash_runtime::shell_links::resolved_shell_path(&invoked);
+        let shell = native_shell_runtime::shell_links::resolved_shell_path(&invoked);
         if let Some(path) = shell.to_str() {
-            std::env::set_var("NIU_SHELL", path);
+            std::env::set_var("NATIVE_SHELL_BIN", path);
             std::env::set_var("WINUXSH_SHELL", path);
         }
     }
@@ -226,18 +226,18 @@ fn run_main() -> ExitCode {
     }
 
     // `--cwd-state <file>`: restore the recorded directory before anything
-    // else runs — niu's own startup, a relative script path, and
+    // else runs — native-shell's own startup, a relative script path, and
     // `source_non_interactive_env` must all see the directory the caller
     // last left behind. The scan only ever strips a prefix group of its own
     // flags, so positional parameters and bash-style options are untouched.
     let mut args = match extract_cwd_state_options(&args) {
         Ok(args) => args,
         Err(error) => {
-            eprintln!("niu: {error}");
+            eprintln!("native-shell: {error}");
             return ExitCode::from(1);
         }
     };
-    // rubash#362 (niubash#362): an over-long `-c` script from a respawned
+    // rubash#362 (native-shell#362): an over-long `-c` script from a respawned
     // async `&` child arrives named by __RUBASH_CMD_FILE (the engine's spawn
     // side wrote it to a temp file because the serialized function table
     // overflows the Windows command line). Splice it back into argv here,
@@ -250,7 +250,7 @@ fn run_main() -> ExitCode {
         if is_broken_pipe_error(&e) {
             return ExitCode::from(1);
         }
-        eprintln!("niu: {}", e);
+        eprintln!("native-shell: {}", e);
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS
@@ -258,7 +258,7 @@ fn run_main() -> ExitCode {
 
 fn run(args: &[String]) -> anyhow::Result<()> {
     if args.len() < 2 {
-        return if niubash_runtime::terminal::stdio_is_interactive() {
+        return if native_shell_runtime::terminal::stdio_is_interactive() {
             run_repl()
         } else {
             run_stdin_script()
@@ -290,11 +290,11 @@ fn run(args: &[String]) -> anyhow::Result<()> {
             // non-option operand, and the shell does not re-dispatch on the
             // first word alone. A launcher-owned word therefore keeps its
             // meaning wherever it appears among the leading options
-            // (niubash#148): `niu --norc -C 'cmd'` used to fall through to
+            // (native-shell#148): `native-shell --norc -C 'cmd'` used to fall through to
             // the engine parser here, which has no REPL-command -C (GNU -C
             // is noclobber) and then treated the command string as a script
             // path. Words after the launcher flag's own argument keep GNU
-            // operand semantics, so `niu -C 'cmd' --norc` still binds
+            // operand semantics, so `native-shell -C 'cmd' --norc` still binds
             // --norc as $0 exactly like `bash -c 'cmd' --norc`.
             if let Some(index) = launcher_dispatch_index(args) {
                 return dispatch_launcher_word(args, index);
@@ -317,25 +317,25 @@ fn run(args: &[String]) -> anyhow::Result<()> {
             };
         }
         // The leading word is itself a launcher word (or the legacy
-        // `niu -c -l cmd` shape kept above): dispatch on argv[1].
+        // `native-shell -c -l cmd` shape kept above): dispatch on argv[1].
         return dispatch_launcher_word(args, 1);
     }
     if shell_face_name(args).is_none() {
         match first.as_str() {
             "setup" | "configure" => {
-                // niubash#195: `--help`/`-h` is a usage request, never a wizard
+                // native-shell#195: `--help`/`-h` is a usage request, never a wizard
                 // run — always answer in plain text so piped output stays clean.
                 if args[2..].iter().any(|arg| arg == "-h" || arg == "--help") {
                     show_setup_usage();
                     return Ok(());
                 }
                 return match setup_preset_arg(&args[2..]) {
-                    Some(name) => niubash_runtime::setup_wizard::apply_preset(&name),
-                    None => niubash_runtime::setup_wizard::rerun_wizard(),
+                    Some(name) => native_shell_runtime::setup_wizard::apply_preset(&name),
+                    None => native_shell_runtime::setup_wizard::rerun_wizard(),
                 };
             }
-            "font" => return niubash_runtime::fonts::run_font_command(),
-            "doctor" => return niubash_runtime::doctor::run_doctor(skill::SKILL_FILES),
+            "font" => return native_shell_runtime::fonts::run_font_command(),
+            "doctor" => return native_shell_runtime::doctor::run_doctor(skill::SKILL_FILES),
             "config" => return run_config_command(&args[2..]),
             "plugin" => return run_plugin_command(args),
             "skill" => return skill::run_skill_command(args),
@@ -345,7 +345,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     }
     // Treat as a script file to execute
     {
-        let mut shell = niubash_runtime::Shell::new()?;
+        let mut shell = native_shell_runtime::Shell::new()?;
         // GNU shell.c:1572-1601 (open_shell_script): the script name is
         // tried as given; when that fails and the name has no path
         // separator it is searched in $PATH (findcmd.c find_path_file) —
@@ -360,7 +360,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         if !script.exists() {
             // shell.c shell_execve on a name that is neither option,
             // builtin, nor file: ENOENT surface, EX_NOTFOUND (127).
-            eprintln!("niu: {}: No such file or directory", first);
+            eprintln!("native-shell: {}: No such file or directory", first);
             piped_stdout::finish_and_exit(127);
         }
         // general.c:718-741 check_binary_file: NUL in the first line(s)
@@ -375,7 +375,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         shell.set_script_name(first);
         shell.executor.inherit_process_stdin();
         shell.enable_process_stdin_pipeline_bridge();
-        // niubash#399: a login-marked argv[0] (`-niu script`) sources the
+        // native-shell#399: a login-marked argv[0] (`-niu script`) sources the
         // login profile chain here, and an `exit` in any sourced startup
         // file ends the invocation with its status before the script runs.
         if let Some(status) = shell.source_non_interactive_env() {
@@ -390,12 +390,12 @@ fn run(args: &[String]) -> anyhow::Result<()> {
 }
 
 /// The shell face of this invocation, when `argv[0]` (or the forwarding shim's
-/// `NIU_INVOKED_AS`) names one. A shell reached as `bash`/`sh`/`ash`/`rbash`
-/// must behave like one: Niubash's product verbs are not shell words, and GNU
+/// `NATIVE_SHELL_INVOKED_AS`) names one. A shell reached as `bash`/`sh`/`ash`/`rbash`
+/// must behave like one: NativeShell's product verbs are not shell words, and GNU
 /// bash reads the first non-option word as the script to run - `bash setup`
-/// runs a file named `setup`, it does not open a wizard (unixwin/niubash#377).
+/// runs a file named `setup`, it does not open a wizard (JayWanX/native-shell#377).
 fn shell_face_name(args: &[String]) -> Option<String> {
-    let invoked = std::env::var("NIU_INVOKED_AS")
+    let invoked = std::env::var("NATIVE_SHELL_INVOKED_AS")
         .ok()
         .or_else(|| args.first().cloned());
     rubash::usage::invocation_help_name(invoked.as_deref())
@@ -419,7 +419,7 @@ enum LeadingOptionWord {
 /// too, so `-eo pipefail` is `-e` plus `-o` whose value is the following
 /// word. A cluster containing `c`/`s` hands the next operand to the engine
 /// (`-lc 'cmd'`), and an unknown letter stays a single word the engine
-/// rejects (niubash#390).
+/// rejects (native-shell#390).
 fn classify_leading_option_word(word: &str) -> LeadingOptionWord {
     match word {
         // End of options: the next word is the script operand.
@@ -463,7 +463,7 @@ fn classify_leading_option_word(word: &str) -> LeadingOptionWord {
 /// (the short alias) matched exactly, plus the PowerShell spelling
 /// `-EncodedCommand` matched case-insensitively — like every PowerShell
 /// parameter name — so tooling that already emits `pwsh -EncodedCommand
-/// <b64>` command lines reaches the same route unchanged (niubash#474). The
+/// <b64>` command lines reaches the same route unchanged (native-shell#474). The
 /// comparison is against the whole word only, so the single-dash cluster
 /// space is untouched: `-ec` keeps its GNU `-e -c` meaning.
 fn is_encoded_command_word(word: &str) -> bool {
@@ -514,7 +514,7 @@ fn dispatch_launcher_word(args: &[String], index: usize) -> anyhow::Result<()> {
     let word = args[index].as_str();
     let leading_options = &args[1..index];
     let rest = &args[index + 1..];
-    // niubash#585 host half (the engine half is rubash#596, printed through
+    // native-shell#585 host half (the engine half is rubash#596, printed through
     // the shared `rubash::usage` since rubash#606): GNU keys --help and
     // --version off argv[0]'s basename, so `bash --help` answers with the
     // GNU usage form and `bash --version` with the GNU version banner, byte
@@ -554,8 +554,8 @@ fn dispatch_launcher_word(args: &[String], index: usize) -> anyhow::Result<()> {
         "--relink-shells" => {
             // The installer, the WinuxCmd link provider and a portable unzip
             // call this after laying the tree down, and after an update
-            // replaced niu.exe: the shell faces become hardlinks to the real
-            // binary instead of forwarding shims (unixwin/niubash#377).
+            // replaced native-shell.exe: the shell faces become hardlinks to the real
+            // binary instead of forwarding shims (JayWanX/native-shell#377).
             relink_shell_faces(rest)?;
             Ok(())
         }
@@ -564,7 +564,7 @@ fn dispatch_launcher_word(args: &[String], index: usize) -> anyhow::Result<()> {
             // reconciles names recorded in `.wpm` state, which the bundled
             // install deliberately does not ship, so the package shims
             // (`usr\bin\awk.exe`, `gawk.exe`) would stay on the previous
-            // winuxcmd.exe image after an upgrade (unixwin/niubash#468).
+            // native-cmd.exe image after an upgrade (JayWanX/native-shell#468).
             relink_bundled_shims(rest)?;
             Ok(())
         }
@@ -575,7 +575,7 @@ fn dispatch_launcher_word(args: &[String], index: usize) -> anyhow::Result<()> {
             // on the way in. Decode it and re-enter the engine's `-c` route
             // with the leading invocation flags kept in front, so `-e`,
             // `-u`, `-o pipefail`, `-eu`, `--norc`, ... reach the shell
-            // exactly as they do for an unencoded `-c` (niubash#390). Words
+            // exactly as they do for an unencoded `-c` (native-shell#390). Words
             // after the payload keep GNU `-c` operand meaning ($0 plus
             // positional parameters), matching the unencoded form.
             let Some(payload) = rest.first() else {
@@ -589,7 +589,7 @@ fn dispatch_launcher_word(args: &[String], index: usize) -> anyhow::Result<()> {
             invocation_args.extend(rest[1..].iter().cloned());
             // A rejected leading option must use the engine route's GNU
             // surface (shell.c:874-881): "bash: <option>: invalid option"
-            // plus the usage block, rc 2 — not the launcher's "niu:" prefix.
+            // plus the usage block, rc 2 — not the launcher's "native-shell:" prefix.
             if let Err(message) = ShellInvocation::parse(&invocation_args) {
                 eprintln!("bash: {message}");
                 if message.contains("invalid option") {
@@ -600,19 +600,19 @@ fn dispatch_launcher_word(args: &[String], index: usize) -> anyhow::Result<()> {
             run_shell_invocation(&invocation_args)
         }
         "-C" | "--repl-command" => run_repl_command(word, leading_options, rest),
-        // Only reachable for the legacy `niu -c -l <cmd>` shape: a plain
+        // Only reachable for the legacy `native-shell -c -l <cmd>` shape: a plain
         // leading -c routes to the engine parser above.
         "-c" => {
             let command_mode = parse_legacy_command_mode(rest)?;
-            let mut shell = niubash_runtime::Shell::new_one_shot()?;
-            niubash_runtime::startup_trace::tick("-c: Shell::new");
+            let mut shell = native_shell_runtime::Shell::new_one_shot()?;
+            native_shell_runtime::startup_trace::tick("-c: Shell::new");
             shell.executor.inherit_process_stdin();
             shell.enable_process_stdin_pipeline_bridge();
             shell
                 .executor
                 .set_env("BASH_EXECUTION_STRING", command_mode.command);
             // Same -c diagnostic tag as the plain invocation route
-            // (niubash#160): `$0: -c: line N:` parser diagnostics.
+            // (native-shell#160): `$0: -c: line N:` parser diagnostics.
             shell.executor.set_env("__RUBASH_IS_C", "1");
             if let Some(command_name) = command_mode.command_name {
                 shell.set_script_name(command_name);
@@ -621,9 +621,9 @@ fn dispatch_launcher_word(args: &[String], index: usize) -> anyhow::Result<()> {
                     .set_positional_params(command_mode.positional_params.to_vec());
             }
             let code = shell.execute_script(command_mode.command)?;
-            niubash_runtime::startup_trace::tick("-c: execute_script");
+            native_shell_runtime::startup_trace::tick("-c: execute_script");
             let code = shell.finish_with_exit_trap(code)?;
-            niubash_runtime::startup_trace::tick("-c: exit trap");
+            native_shell_runtime::startup_trace::tick("-c: exit trap");
             finish_one_shot(&shell, code);
             Ok(())
         }
@@ -637,7 +637,7 @@ struct LegacyCommandMode<'a> {
     positional_params: &'a [String],
 }
 
-/// `niu -c [-l|--login] <command> [name [params...]]` — the legacy shape kept
+/// `native-shell -c [-l|--login] <command> [name [params...]]` — the legacy shape kept
 /// for the `-c -l` combination. `rest` starts right after the `-c` word.
 fn parse_legacy_command_mode(rest: &[String]) -> anyhow::Result<LegacyCommandMode<'_>> {
     let mut index = 0;
@@ -666,7 +666,7 @@ fn run_shell_invocation(args: &[String]) -> anyhow::Result<()> {
     // setup writes BASH_ARGV0 back into the environment).
     let inherited_argv0 = std::env::var("BASH_ARGV0").ok().filter(|v| !v.is_empty());
     let invocation =
-        ShellInvocation::parse(args).map_err(|error| anyhow::anyhow!("niu: {}", error))?;
+        ShellInvocation::parse(args).map_err(|error| anyhow::anyhow!("native-shell: {}", error))?;
 
     if invocation.dump_strings {
         let input = invocation_input(&invocation)?;
@@ -686,13 +686,13 @@ fn run_shell_invocation(args: &[String]) -> anyhow::Result<()> {
     // Script files and piped stdin keep the full constructor: their rc
     // semantics are the plain ones and their startup is amortized.
     let mut shell = if invocation.read_stdin {
-        niubash_runtime::Shell::new_for_stdin_script()?
+        native_shell_runtime::Shell::new_for_stdin_script()?
     } else if invocation.command.is_some() && !invocation.interactive {
-        niubash_runtime::Shell::new_one_shot()?
+        native_shell_runtime::Shell::new_one_shot()?
     } else {
-        niubash_runtime::Shell::new()?
+        native_shell_runtime::Shell::new()?
     };
-    niubash_runtime::startup_trace::tick("invocation: Shell::new");
+    native_shell_runtime::startup_trace::tick("invocation: Shell::new");
     shell.no_rc = invocation.no_rc;
     shell.no_profile = invocation.no_profile;
     shell.rc_file = invocation.rc_file.clone().map(PathBuf::from);
@@ -706,7 +706,7 @@ fn run_shell_invocation(args: &[String]) -> anyhow::Result<()> {
                 eprintln!("bash: line 0: {error}");
                 piped_stdout::finish_and_exit(2);
             }
-            anyhow::anyhow!("niu: {error}")
+            anyhow::anyhow!("native-shell: {error}")
         })?;
     shell.executor.inherit_process_stdin();
     shell.enable_process_stdin_pipeline_bridge();
@@ -718,7 +718,7 @@ fn run_shell_invocation(args: &[String]) -> anyhow::Result<()> {
         // the shell.c:1214-1220 non-interactive BASH_ENV branch (the
         // shell.c:1156 sshd bashrc case is compiled out of the reference
         // build — see source_non_interactive_env). A login shell (`-l`,
-        // niubash#399) sources the profile chain instead of either, and an
+        // native-shell#399) sources the profile chain instead of either, and an
         // `exit` in any of these startup files ends the invocation with its
         // status before the command string runs.
         if invocation.interactive {
@@ -728,7 +728,7 @@ fn run_shell_invocation(args: &[String]) -> anyhow::Result<()> {
         } else if let Some(status) = shell.source_non_interactive_env() {
             finish_startup_exit(&mut shell, status);
         }
-        niubash_runtime::startup_trace::tick("invocation: setup done");
+        native_shell_runtime::startup_trace::tick("invocation: setup done");
         // GNU shell.c: $0 for -c is the word after the command string, or
         // $BASH_ARGV0 from the environment when exported by the caller.
         if let Some(argv0) = inherited_argv0.clone() {
@@ -740,9 +740,9 @@ fn run_shell_invocation(args: &[String]) -> anyhow::Result<()> {
         // __RUBASH_IS_C is already live here: invocation.apply_to_executor_before_startup
         // (rubash invocation.rs:273-275) sets it for every command string,
         // so parser diagnostics take the `$0: -c: line N:` shape (error.c
-        // get_name_for_error; niubash#160).
-        // niubash#170 theme-preview channel: a `-c` child gated by
-        // NIU_PRINT_RENDERED_PS1=1 (spawned by plugins::theme_preview) has
+        // get_name_for_error; native-shell#160).
+        // native-shell#170 theme-preview channel: a `-c` child gated by
+        // NATIVE_SHELL_PRINT_RENDERED_PS1=1 (spawned by plugins::theme_preview) has
         // just sourced a theme's managed block; print the session's rendered
         // PS1 between the preview markers — the prompt renders before any
         // EXIT trap in a real session, so the print lands before the trap.
@@ -750,24 +750,24 @@ fn run_shell_invocation(args: &[String]) -> anyhow::Result<()> {
         // treats a failing block like any other degradation.
         //
         // The gated child also carries the engine's interactive marker
-        // (exactly what the piped `niu -i` route sets, main.rs above): a
+        // (exactly what the piped `native-shell -i` route sets, main.rs above): a
         // theme loader guards on it — oh-my-bash.sh opens with
         // `case $- in *i*) ;; *) return ;;` — and the preview must render
         // the face an interactive session draws, not the bare script face.
-        if std::env::var_os(niubash_runtime::plugins::theme_preview::PRINT_RENDERED_PS1_ENV)
+        if std::env::var_os(native_shell_runtime::plugins::theme_preview::PRINT_RENDERED_PS1_ENV)
             .is_some_and(|value| value == "1")
         {
             shell.executor.set_env("__RUBASH_INTERACTIVE", "1");
         }
         let code = shell.execute_script(&command)?;
-        niubash_runtime::startup_trace::tick("invocation: execute_script");
-        if std::env::var_os(niubash_runtime::plugins::theme_preview::PRINT_RENDERED_PS1_ENV)
+        native_shell_runtime::startup_trace::tick("invocation: execute_script");
+        if std::env::var_os(native_shell_runtime::plugins::theme_preview::PRINT_RENDERED_PS1_ENV)
             .is_some_and(|value| value == "1")
         {
             shell.print_rendered_prompt_for_preview();
         }
         let code = shell.finish_with_exit_trap(code)?;
-        niubash_runtime::startup_trace::tick("invocation: exit trap");
+        native_shell_runtime::startup_trace::tick("invocation: exit trap");
         finish_one_shot(&shell, code);
         return Ok(());
     }
@@ -775,7 +775,7 @@ fn run_shell_invocation(args: &[String]) -> anyhow::Result<()> {
         // GNU: `bash -i script` is an interactive shell (forced_interactive)
         // and sources the rc file, not BASH_ENV (shell.c:1214 checks
         // interactive_shell == 0). `bash -l script` sources the login
-        // profile chain instead of either (niubash#399), and an `exit` in
+        // profile chain instead of either (native-shell#399), and an `exit` in
         // the sourced file ends the invocation with its status before the
         // script body runs.
         if invocation.interactive {
@@ -786,9 +786,9 @@ fn run_shell_invocation(args: &[String]) -> anyhow::Result<()> {
             finish_startup_exit(&mut shell, status);
         }
         shell.set_script_name(&script_name);
-        // niubash#406: a missing/unreadable script operand is the SHELL's
+        // native-shell#406: a missing/unreadable script operand is the SHELL's
         // diagnostic with the shell's statuses, not the launcher's raw
-        // `(os error 2)` + rc 1 — `niubash -- nosuch.sh` must answer like
+        // `(os error 2)` + rc 1 — `native-shell -- nosuch.sh` must answer like
         // `bash -- nosuch.sh` (`bash: nosuch.sh: No such file or
         // directory`, rc 127). The `_ =>` script branch below already does
         // this; the `--`/ShellInvocation route reaches here instead.
@@ -797,11 +797,11 @@ fn run_shell_invocation(args: &[String]) -> anyhow::Result<()> {
             Ok(content) => content,
             Err(error) => match error.kind() {
                 std::io::ErrorKind::NotFound => {
-                    eprintln!("niu: {script_name}: No such file or directory");
+                    eprintln!("native-shell: {script_name}: No such file or directory");
                     piped_stdout::finish_and_exit(127);
                 }
                 std::io::ErrorKind::PermissionDenied => {
-                    eprintln!("niu: {script_name}: Permission denied");
+                    eprintln!("native-shell: {script_name}: Permission denied");
                     piped_stdout::finish_and_exit(126);
                 }
                 _ => return Err(error.into()),
@@ -818,19 +818,19 @@ fn run_shell_invocation(args: &[String]) -> anyhow::Result<()> {
     // is recorded to engine history. The reedline product REPL cannot run
     // without a terminal, so delegate to the engine's interactive stdin
     // driver instead of enter_interactive()/run_repl.
-    if invocation.interactive && !niubash_runtime::terminal::stdio_is_interactive() {
+    if invocation.interactive && !native_shell_runtime::terminal::stdio_is_interactive() {
         shell.executor.set_env("__RUBASH_INTERACTIVE", "1");
         // This path renders prompts through the engine's interactive stdin
         // driver (which expands executor-env PS1 itself), so the foreign
         // inherited PS1 must be discarded here too, before run_startup_rc
-        // (unixwin/niubash#117; same rule as enter_interactive).
+        // (JayWanX/native-shell#117; same rule as enter_interactive).
         shell.discard_foreign_inherited_prompt();
         // GNU decides "interactive" from the -i flag, never from the shape
         // of stdin (shell.c:672 forced_interactive is set in option parsing,
         // before run_startup_files at shell.c:722 sources ~/.bashrc for an
         // interactive shell). The interactive startup rc — and --rcfile,
         // which the shell already carries — must therefore run on the piped
-        // -i path too (niubash#146), still before the interactive history
+        // -i path too (native-shell#146), still before the interactive history
         // setup, which shell.c:806-811 runs only after the startup files.
         if let Some(status) = shell.run_startup_rc() {
             finish_startup_exit(&mut shell, status);
@@ -841,11 +841,11 @@ fn run_shell_invocation(args: &[String]) -> anyhow::Result<()> {
     }
     // Bash -i forces an interactive shell even when stdin is not a terminal;
     // with no command or script, a terminal (or -i) means the REPL.
-    if invocation.interactive || niubash_runtime::terminal::stdio_is_interactive() {
+    if invocation.interactive || native_shell_runtime::terminal::stdio_is_interactive() {
         shell.enter_interactive();
-        return niubash_runtime::repl::run_repl(shell);
+        return native_shell_runtime::repl::run_repl(shell);
     }
-    // niubash#399: the piped non-interactive stdin route sources the login
+    // native-shell#399: the piped non-interactive stdin route sources the login
     // profile chain (`-l` over a pipe) or the BASH_ENV file, and an `exit`
     // in either ends the invocation with its status before stdin is read.
     if let Some(status) = shell.source_non_interactive_env() {
@@ -914,7 +914,9 @@ fn invocation_source_name(invocation: &ShellInvocation) -> String {
     if let Some(script) = &invocation.script {
         return script.clone();
     }
-    std::env::args().next().unwrap_or_else(|| "niu".to_string())
+    std::env::args()
+        .next()
+        .unwrap_or_else(|| "native-shell".to_string())
 }
 
 /// Collects `(line, raw body)` for every locale string in `input`, in source
@@ -1337,28 +1339,28 @@ fn script_arg_to_host_path(value: &str) -> PathBuf {
 
 fn run_repl() -> anyhow::Result<()> {
     self_update::maybe_print_update_hint();
-    let mut shell = niubash_runtime::Shell::new()?;
+    let mut shell = native_shell_runtime::Shell::new()?;
     shell.enter_interactive();
-    niubash_runtime::repl::run_repl(shell)
+    native_shell_runtime::repl::run_repl(shell)
 }
 
-/// `niu [-C|--repl-command] <command> [name [params...]]`: execute one
+/// `native-shell [-C|--repl-command] <command> [name [params...]]`: execute one
 /// REPL-style command and exit. `leading_options` are the shell option words
-/// that stood before the -C word (niubash#148); they are parsed with the
+/// that stood before the -C word (native-shell#148); they are parsed with the
 /// engine's `ShellInvocation` — the same surface the engine route uses — so
-/// `niu --norc -C 'cmd'` and `niu -C 'cmd'` see one consistent option model,
+/// `native-shell --norc -C 'cmd'` and `native-shell -C 'cmd'` see one consistent option model,
 /// with rc-affecting fields applied before the startup rc runs.
 fn run_repl_command(flag: &str, leading_options: &[String], rest: &[String]) -> anyhow::Result<()> {
     let Some(command) = rest.first() else {
         anyhow::bail!("{flag} requires an argument");
     };
-    if let Some(self_update_args) = niubash_runtime::repl::self_update_command_args(command) {
-        if let Some(code) = niubash_runtime::repl::spawn_self_update(&self_update_args) {
+    if let Some(self_update_args) = native_shell_runtime::repl::self_update_command_args(command) {
+        if let Some(code) = native_shell_runtime::repl::spawn_self_update(&self_update_args) {
             std::process::exit(code);
         }
     }
-    let mut shell = niubash_runtime::Shell::new()?;
-    niubash_runtime::startup_trace::tick("-C: Shell::new");
+    let mut shell = native_shell_runtime::Shell::new()?;
+    native_shell_runtime::startup_trace::tick("-C: Shell::new");
     if !leading_options.is_empty() {
         // Same option words, same GNU error surface as the engine route
         // below (shell.c:874-881): a rejected option is a usage error under
@@ -1398,11 +1400,11 @@ fn run_repl_command(flag: &str, leading_options: &[String], rest: &[String]) -> 
     if let Some(status) = shell.run_startup_rc() {
         finish_startup_exit(&mut shell, status);
     }
-    niubash_runtime::startup_trace::tick("-C: startup rc");
+    native_shell_runtime::startup_trace::tick("-C: startup rc");
     shell.run_precmd_hooks();
-    niubash_runtime::startup_trace::tick("-C: precmd hooks");
+    native_shell_runtime::startup_trace::tick("-C: precmd hooks");
     let code = shell.execute_interactive_line(command)?;
-    niubash_runtime::startup_trace::tick("-C: execute_interactive_line");
+    native_shell_runtime::startup_trace::tick("-C: execute_interactive_line");
     if code != 0 {
         std::process::exit(code);
     }
@@ -1410,9 +1412,9 @@ fn run_repl_command(flag: &str, leading_options: &[String], rest: &[String]) -> 
 }
 
 fn run_stdin_script() -> anyhow::Result<()> {
-    let mut shell = niubash_runtime::Shell::new_for_stdin_script()?;
+    let mut shell = native_shell_runtime::Shell::new_for_stdin_script()?;
     shell.executor.inherit_process_stdin();
-    // unixwin/niubash#431: bind the diagnostic/$0 name the way the engine's
+    // JayWanX/native-shell#431: bind the diagnostic/$0 name the way the engine's
     // own stdin driver does for `-s` (rubash script_driver run_stdin_script):
     // GNU never rebinds $0 for a stdin script (shell.c:1613 is the
     // script-FILE rebind), so the name stays argv[0] verbatim and parser
@@ -1429,7 +1431,7 @@ fn run_stdin_script() -> anyhow::Result<()> {
             .executor
             .set_env("__RUBASH_SCRIPT_NAME", argv0.as_str());
     }
-    // niubash#399: a login-marked argv[0] (`-niu < script`) sources the
+    // native-shell#399: a login-marked argv[0] (`-niu < script`) sources the
     // login profile chain; an `exit` in any sourced startup file ends the
     // invocation with its status before the first script line is read.
     if let Some(status) = shell.source_non_interactive_env() {
@@ -1440,7 +1442,7 @@ fn run_stdin_script() -> anyhow::Result<()> {
     // Physical lines fully consumed by the reader so far. GNU's reader_loop
     // keeps one line counter across the whole stdin stream, so a diagnostic
     // in the Nth gathered batch reports the absolute physical line
-    // (unixwin/niubash#431: `cat f431.sh | niu` with `(printf a;\nprintf
+    // (JayWanX/native-shell#431: `cat f431.sh | native-shell` with `(printf a;\nprintf
     // b);\n)` must blame `line 3`, like `bash -s` on the same stream).
     let mut lines_read = 0usize;
 
@@ -1476,7 +1478,7 @@ fn run_stdin_script() -> anyhow::Result<()> {
         }
         pending.push(line.to_string());
         let script = pending.join("\n");
-        if !niubash_runtime::repl::is_script_input_complete(&script) {
+        if !native_shell_runtime::repl::is_script_input_complete(&script) {
             continue;
         }
 
@@ -1624,11 +1626,11 @@ bash [GNU long option] [option] script-file ...
 
 fn print_usage() {
     println!(
-        "Niubash {} \u{2014} a bash-compatible shell that feels at home on Windows.",
+        "Native Shell {} \u{2014} a bash-compatible shell that feels at home on Windows.",
         env!("CARGO_PKG_VERSION")
     );
     println!();
-    // The GNU invocation face leads (niubash#385): the product help used to
+    // The GNU invocation face leads (native-shell#385): the product help used to
     // bury (or omit) the flags the engine actually parses, so every GNU
     // long/shell option now comes first, in the `bash --help` order and
     // GNU 5.3 wording. Both lists below are generated from the parser-side
@@ -1636,14 +1638,14 @@ fn print_usage() {
     // argv parser walks), so this face cannot advertise a flag the parser
     // rejects, nor forget one it accepts. The binary invoked as `bash`/`sh`
     // answers with the byte-for-byte GNU form instead (show_shell_help).
-    println!("Usage:  niu [GNU long option] [option] ...");
-    println!("        niu [GNU long option] [option] script-file ...");
-    println!("        niu -c <cmd>         Run a command then exit");
-    println!("        niu -C <cmd>         Run one REPL-style command then exit");
-    println!("        niu setup           Re-run prompt/plugin setup");
-    println!("        niu font            Nerd Font detection & install recommendations");
-    println!("        niu doctor          Health-check the installation");
-    println!("        niu <script> [args]  Run a script file");
+    println!("Usage:  native-shell [GNU long option] [option] ...");
+    println!("        native-shell [GNU long option] [option] script-file ...");
+    println!("        native-shell -c <cmd>         Run a command then exit");
+    println!("        native-shell -C <cmd>         Run one REPL-style command then exit");
+    println!("        native-shell setup           Re-run prompt/plugin setup");
+    println!("        native-shell font            Nerd Font detection & install recommendations");
+    println!("        native-shell doctor          Health-check the installation");
+    println!("        native-shell <script> [args]  Run a script file");
     println!();
     println!("GNU long options:");
     for name in rubash::usage::LONG_OPTIONS {
@@ -1662,10 +1664,10 @@ fn print_usage() {
     println!("    -s reads commands from standard input; --init-file and --rcfile each");
     println!("    take <file>, replacing the default startup file (profile chain / rc).");
     println!();
-    println!("Type `niu -c \"help set\"` for more information about shell options.");
-    println!("Type `niu -c help` for more information about shell builtin commands.");
-    println!("Report bugs at <https://github.com/unixwin/niubash/issues>.");
-    println!("Niubash home page: <https://github.com/unixwin/niubash>.");
+    println!("Type `native-shell -c \"help set\"` for more information about shell options.");
+    println!("Type `native-shell -c help` for more information about shell builtin commands.");
+    println!("Report bugs at <https://github.com/JayWanX/native-shell/issues>.");
+    println!("NativeShell home page: <https://github.com/JayWanX/native-shell>.");
     println!();
     println!("Options:");
     println!("  -h, --help                Show this help");
@@ -1686,7 +1688,7 @@ fn print_usage() {
     // Generated from rubash::usage::SHORT_OPTIONS — the same table the
     // parser's accepted-letter set derives from — so the product help lists
     // every working short option and cannot drift from the parser again
-    // (niubash#385; the long list lives in the GNU invocation face above,
+    // (native-shell#385; the long list lives in the GNU invocation face above,
     // generated from rubash::usage::LONG_OPTIONS since b40ad8a).
     for option in rubash::usage::SHORT_OPTIONS {
         let mut spec = format!("-{}", option.letter);
@@ -1705,17 +1707,17 @@ fn print_usage() {
     println!("  byte-for-byte GNU usage form: `bash --help`.");
     println!();
     println!("  --install-wt-profile      Add/update the Windows Terminal profile");
-    println!("      --set-default         Also set Niubash as the WT default profile");
+    println!("      --set-default         Also set NativeShell as the WT default profile");
     println!("      --quiet               Suppress non-error profile output");
     println!("  --install-wt-shortcuts    Rewrite desktop/Start-menu shortcuts (WT form");
-    println!("                            `wt.exe -p Niubash` when WT is detected)");
+    println!("                            `wt.exe -p NativeShell` when WT is detected)");
     println!("      --update-only         Only touch shortcut files that already exist");
     println!("      --quiet               Suppress non-error shortcut output");
     println!("  --self-update             Download and run the latest release installer");
     println!("      --check               Only report the latest release");
     println!("      --dry-run             Download installer without running it");
-    println!("  self-update               REPL command: update Niubash and exit this shell");
-    println!("  update-niubash            Alias for self-update");
+    println!("  self-update               REPL command: update NativeShell and exit this shell");
+    println!("  update-native-shell            Alias for self-update");
     println!();
     println!("  plugin add <id|owner/repo|url|path>");
     println!("                            Install an external plugin source (untrusted)");
@@ -1741,20 +1743,22 @@ fn print_usage() {
     println!();
     println!("  --completion-probe <line> [cursor]  Debug: print completion candidates");
     println!();
-    println!("Configuration: ~/.niubashrc for interactive startup (primary-only; no automatic legacy migration)");
+    println!("Configuration: ~/.native-shellrc for interactive startup (primary-only; no automatic legacy migration)");
     println!();
     println!("Environment:");
     println!(
-        "  NIU_ENV=<file>          Non-interactive init file sourced by -c, scripts, and stdin"
+        "  NATIVE_SHELL_ENV=<file>          Non-interactive init file sourced by -c, scripts, and stdin"
     );
     println!(
         "                          before running the command (bash BASH_ENV is also honored,"
     );
     println!(
-        "                          NIU_ENV takes precedence). Unset by default, keeping -c fast."
+        "                          NATIVE_SHELL_ENV takes precedence). Unset by default, keeping -c fast."
     );
-    println!("  BASH_ENV=<file>         GNU bash compatible: same as NIU_ENV, lower precedence.");
-    println!("  NIU_LANG=<lang>         Setup wizard language (zh / en). Falls back to the");
+    println!("  BASH_ENV=<file>         GNU bash compatible: same as NATIVE_SHELL_ENV, lower precedence.");
+    println!(
+        "  NATIVE_SHELL_LANG=<lang>         Setup wizard language (zh / en). Falls back to the"
+    );
     println!("                          Windows UI language, then LC_ALL/LANG.");
 }
 
@@ -1786,14 +1790,14 @@ fn run_plugin_command(args: &[String]) -> anyhow::Result<()> {
         "mirror" | "mirrors" => run_plugin_mirror_command(&args[3..]),
         // Menu-level UI (lazy view IA): sections by state, verbs from the
         // command table, actions through the same runtime calls.
-        "ui" => niubash_runtime::plugins::ui::run_ui(),
+        "ui" => native_shell_runtime::plugins::ui::run_ui(),
         // The external ecosystem is first-class (owner ruling 2026-10-02):
         // vim-plug/lazy.nvim-style verbs over the real manager assets.
         "add" => run_plugin_add_command(&args[3..]),
         "list" => run_plugin_list_command(&args[3..]),
         "enable" => run_plugin_enable_command(&args[3..], true),
         "disable" => run_plugin_enable_command(&args[3..], false),
-        // niubash#359: the read-only migration diagnostic — reports the rc's
+        // native-shell#359: the read-only migration diagnostic — reports the rc's
         // legacy managed blocks, publishes the candidate loader generation,
         // and NEVER writes the rc.
         "migrate-rc" => run_plugin_migrate_rc_command(&args[3..]),
@@ -1804,29 +1808,29 @@ fn run_plugin_command(args: &[String]) -> anyhow::Result<()> {
         "sync" => run_plugin_sync_command(&args[3..]),
         "clean" => run_plugin_clean_command(&args[3..]),
         // The built-in pack/bundle subcommands retired with the plugin
-        // stack (niubash#145).
+        // stack (native-shell#145).
         "info" | "search" | "themes" | "bundle" | "doctor" | "review" | "use" => {
             anyhow::bail!(
-                "plugin '{}' retired with the built-in plugin/theme stack (niubash#145); \
-                 see `niu plugin --help` for the external ecosystem",
+                "plugin '{}' retired with the built-in plugin/theme stack (native-shell#145); \
+                 see `native-shell plugin --help` for the external ecosystem",
                 subcommand
             )
         }
         // The downloaded-tools channel retired with the download driver
         // (owner ruling 2026-10-04): executable tools install through your
         // system package manager (wpm first on Windows, native managers
-        // elsewhere) — `niu plugin add <recipe-id>` prints the commands.
+        // elsewhere) — `native-shell plugin add <recipe-id>` prints the commands.
         "tool" | "tools" => anyhow::bail!(
-            "plugin tool retired with the download retraction (niu carries zero download \
+            "plugin tool retired with the download retraction (native-shell carries zero download \
              responsibility); executable tools install via your package manager — \
-             see `niu plugin add <recipe-id>` for the commands, or remove an old \
-             download-era install by deleting ~/.niubash/tools/<id>"
+             see `native-shell plugin add <recipe-id>` for the commands, or remove an old \
+             download-era install by deleting ~/.native-shell/tools/<id>"
         ),
         unknown => anyhow::bail!("unknown plugin subcommand '{}'", unknown),
     }
 }
 
-/// `niu plugin discover`: a dry, read-only overview of the external plugin
+/// `native-shell plugin discover`: a dry, read-only overview of the external plugin
 /// ecosystem. Shows installed sources (with their ready/untrusted/degraded
 /// state) and the known plugin managers that are *not* installed yet —
 /// without installing, trusting, sourcing, or writing anything. Every
@@ -1840,11 +1844,11 @@ fn run_plugin_discover_command(args: &[String]) -> anyhow::Result<()> {
     }
     println!(
         "{}",
-        niubash_runtime::text_style::bold("Niubash plugin ecosystem")
+        native_shell_runtime::text_style::bold("NativeShell plugin ecosystem")
     );
     println!(
         "{}",
-        niubash_runtime::text_style::dim(
+        native_shell_runtime::text_style::dim(
             "  read-only overview — nothing is installed, sourced, or changed"
         )
     );
@@ -1852,37 +1856,37 @@ fn run_plugin_discover_command(args: &[String]) -> anyhow::Result<()> {
 
     println!(
         "{}",
-        niubash_runtime::text_style::cyan("Plugin sources (external plugin managers)")
+        native_shell_runtime::text_style::cyan("Plugin sources (external plugin managers)")
     );
-    let statuses = niubash_runtime::plugins::sources::list_sources();
+    let statuses = native_shell_runtime::plugins::sources::list_sources();
     if statuses.is_empty() {
         println!("  (none installed)");
     }
     for status in &statuses {
         let marker = match status.state.as_str() {
-            "ready" => niubash_runtime::text_style::green("ready"),
-            "untrusted" => niubash_runtime::text_style::yellow("untrusted"),
-            _ => niubash_runtime::text_style::red("degraded"),
+            "ready" => native_shell_runtime::text_style::green("ready"),
+            "untrusted" => native_shell_runtime::text_style::yellow("untrusted"),
+            _ => native_shell_runtime::text_style::red("degraded"),
         };
         let assets = status
             .asset_count
             .map(|count| format!(" ({count} assets)"))
             .unwrap_or_default();
         let gutted_hint = if status.state == "ready" && status.asset_count == Some(0) {
-            niubash_runtime::text_style::dim(&format!(
-                "\n     no assets found in the tree — verify with `niu plugin source verify {}`",
+            native_shell_runtime::text_style::dim(&format!(
+                "\n     no assets found in the tree — verify with `native-shell plugin source verify {}`",
                 status.record.id
             ))
         } else {
             String::new()
         };
-        // niubash#297: a drifted trusted tree is named as such, with the way
+        // native-shell#297: a drifted trusted tree is named as such, with the way
         // out — not folded into the generic degraded marker.
         let drift_hint = if status.degraded_reason.as_deref()
-            == Some(niubash_runtime::plugins::sources::DEGRADED_DRIFTED)
+            == Some(native_shell_runtime::plugins::sources::DEGRADED_DRIFTED)
         {
-            niubash_runtime::text_style::yellow(&format!(
-                "\n     tree drifted from the lockfile pin — review: niu plugin source verify {}; repair: niu plugin restore {}",
+            native_shell_runtime::text_style::yellow(&format!(
+                "\n     tree drifted from the lockfile pin — review: native-shell plugin source verify {}; repair: native-shell plugin restore {}",
                 status.record.id, status.record.id
             ))
         } else {
@@ -1901,9 +1905,12 @@ fn run_plugin_discover_command(args: &[String]) -> anyhow::Result<()> {
     }
     println!();
 
-    println!("{}", niubash_runtime::text_style::cyan("Available sources"));
+    println!(
+        "{}",
+        native_shell_runtime::text_style::cyan("Available sources")
+    );
     let mut listed = 0usize;
-    for adapter in niubash_runtime::plugins::sources::builtin_source_adapters() {
+    for adapter in native_shell_runtime::plugins::sources::builtin_source_adapters() {
         if statuses
             .iter()
             .any(|status| status.record.id == adapter.id())
@@ -1913,15 +1920,15 @@ fn run_plugin_discover_command(args: &[String]) -> anyhow::Result<()> {
         let add_hint = match adapter.default_origin() {
             Some(origin) => {
                 format!(
-                    "niu plugin add {}   ({})",
+                    "native-shell plugin add {}   ({})",
                     adapter.id(),
-                    niubash_runtime::text_style::dim(origin)
+                    native_shell_runtime::text_style::dim(origin)
                 )
             }
             None => format!(
-                "niu plugin add {} --path <dir>   ({})",
+                "native-shell plugin add {} --path <dir>   ({})",
                 adapter.id(),
-                niubash_runtime::text_style::dim(
+                native_shell_runtime::text_style::dim(
                     adapter.install_note().unwrap_or("local installs only")
                 )
             ),
@@ -1932,29 +1939,29 @@ fn run_plugin_discover_command(args: &[String]) -> anyhow::Result<()> {
             adapter.license(),
             adapter.summary()
         );
-        println!("  {}", niubash_runtime::text_style::dim(&add_hint));
+        println!("  {}", native_shell_runtime::text_style::dim(&add_hint));
         listed += 1;
     }
     if listed == 0 {
         println!(
             "  {}",
-            niubash_runtime::text_style::dim("(every known manager is already installed)")
+            native_shell_runtime::text_style::dim("(every known manager is already installed)")
         );
     }
     println!();
-    // niubash#179 L05-1: the wizard's empty-gallery note and the finish
-    // screen both promise that `niu plugin discover` browses sources &
+    // native-shell#179 L05-1: the wizard's empty-gallery note and the finish
+    // screen both promise that `native-shell plugin discover` browses sources &
     // themes — so discover must actually enumerate the theme layer.
     println!(
         "{}",
-        niubash_runtime::text_style::cyan("Themes (from trusted sources)")
+        native_shell_runtime::text_style::cyan("Themes (from trusted sources)")
     );
-    let themes = niubash_runtime::plugins::sources::source_theme_entries();
+    let themes = native_shell_runtime::plugins::sources::source_theme_entries();
     if themes.is_empty() {
         println!(
             "  {}",
-            niubash_runtime::text_style::dim(
-                "(none yet — install a source with `niu plugin add`, then `niu plugin trust <id>`)"
+            native_shell_runtime::text_style::dim(
+                "(none yet — install a source with `native-shell plugin add`, then `native-shell plugin trust <id>`)"
             )
         );
     }
@@ -1962,8 +1969,8 @@ fn run_plugin_discover_command(args: &[String]) -> anyhow::Result<()> {
         println!(
             "  {:<28} {}",
             theme.name,
-            niubash_runtime::text_style::dim(&format!(
-                "{} ({})  enable: `niu plugin enable {}`",
+            native_shell_runtime::text_style::dim(&format!(
+                "{} ({})  enable: `native-shell plugin enable {}`",
                 theme.adapter_display, theme.source_id, theme.name
             ))
         );
@@ -1971,17 +1978,17 @@ fn run_plugin_discover_command(args: &[String]) -> anyhow::Result<()> {
     println!();
     println!(
         "{}",
-        niubash_runtime::text_style::dim(
+        native_shell_runtime::text_style::dim(
             "Themes render through the bash-compatible PS1 channel; the built-in \
-             plugin/theme stack is retired (niubash#145)."
+             plugin/theme stack is retired (native-shell#145)."
         )
     );
     Ok(())
 }
 
-/// `niu plugin source <verb>` — external plugin-manager sources
+/// `native-shell plugin source <verb>` — external plugin-manager sources
 /// (oh-my-bash loader, bash-it, bpkg) as first-class plugin origins.
-/// Design: docs/planning/oh-my-niu-ecosystem.md §11-§12.
+/// Design: docs/planning/oh-my-native-shell-ecosystem.md §11-§12.
 fn run_plugin_source_command(args: &[String]) -> anyhow::Result<()> {
     let Some(verb) = args.first() else {
         print_plugin_source_usage();
@@ -2005,7 +2012,7 @@ fn run_plugin_source_command(args: &[String]) -> anyhow::Result<()> {
 }
 
 fn print_plugin_source_usage() {
-    println!("Usage:  niu plugin source <command>");
+    println!("Usage:  native-shell plugin source <command>");
     println!();
     println!("External plugin-manager sources (oh-my-bash loader, bash-it, bpkg).");
     println!("Sources install untrusted; assets activate only after trust.");
@@ -2016,7 +2023,7 @@ fn print_plugin_source_usage() {
     println!("                          Install a source tree (untrusted). <path> is a");
     println!("                          local directory or .sh/.bash file — snapshot-");
     println!("                          copied in; file:///<path> clones via git");
-    println!("                          instead (niubash#300)");
+    println!("                          instead (native-shell#300)");
     println!("  trust <id>              Review and activate a source's assets");
     println!("  remove <id>             Uninstall a source tree and its record");
     println!("  update [<id>] [--ref <ref>] [--checksum <sha256>]");
@@ -2028,22 +2035,22 @@ fn print_plugin_source_usage() {
     println!("                          (updates then re-gate until re-signed)");
 }
 
-/// `niu plugin source sign <id>` — the local-signature trust tier: verify
+/// `native-shell plugin source sign <id>` — the local-signature trust tier: verify
 /// the tree, sign its digest with the machine-local key, and mark the
 /// source trusted at the stricter policy.
 fn run_plugin_source_sign_command(args: &[String]) -> anyhow::Result<()> {
     let Some(id) = args.first() else {
         anyhow::bail!("plugin source sign requires a source id");
     };
-    let record = niubash_runtime::plugins::sources::sign_source(id)?;
+    let record = native_shell_runtime::plugins::sources::sign_source(id)?;
     println!(
         "{} source '{}' at the local-signature tier",
-        niubash_runtime::text_style::green("Signed"),
+        native_shell_runtime::text_style::green("Signed"),
         record.id
     );
     println!(
         "  key fingerprint {}",
-        niubash_runtime::text_style::dim(
+        native_shell_runtime::text_style::dim(
             record
                 .signature
                 .as_ref()
@@ -2053,7 +2060,7 @@ fn run_plugin_source_sign_command(args: &[String]) -> anyhow::Result<()> {
     );
     println!(
         "  {}",
-        niubash_runtime::text_style::dim(
+        native_shell_runtime::text_style::dim(
             "any update that changes the tree re-enters the trust gate until re-signed"
         )
     );
@@ -2069,7 +2076,7 @@ struct PluginSourceArgs {
     path: Option<String>,
     url: Option<String>,
     id: Option<String>,
-    /// `--timeout <seconds>` (niubash#293): per-run fetch budget override.
+    /// `--timeout <seconds>` (native-shell#293): per-run fetch budget override.
     timeout: Option<std::time::Duration>,
 }
 
@@ -2164,7 +2171,7 @@ fn resolve_source_install_request(args: PluginSourceArgs) -> anyhow::Result<Plug
     let (adapter, origin) = match (&args.target, &explicit_origin) {
         (Some(target), Some(origin)) => {
             // Target names a known adapter kind.
-            let known = niubash_runtime::plugins::sources::adapter_for(target).is_some();
+            let known = native_shell_runtime::plugins::sources::adapter_for(target).is_some();
             if !known {
                 anyhow::bail!(
                     "unknown source kind '{}'; {}",
@@ -2183,14 +2190,14 @@ fn resolve_source_install_request(args: PluginSourceArgs) -> anyhow::Result<Plug
             }
             // The positional is the origin (git url / GitHub shorthand /
             // local directory or file); a bare adapter id resolves to its
-            // catalog origin so `niu plugin add oh-my-bash` just works.
-            if niubash_runtime::plugins::sources::adapter_for(target).is_some()
+            // catalog origin so `native-shell plugin add oh-my-bash` just works.
+            if native_shell_runtime::plugins::sources::adapter_for(target).is_some()
                 && !std::path::Path::new(target).exists()
                 && !target.contains('/')
                 && !target.contains('\\')
                 && !target.contains("://")
             {
-                if let Some(entry) = niubash_runtime::plugins::catalog::catalog_entry(target) {
+                if let Some(entry) = native_shell_runtime::plugins::catalog::catalog_entry(target) {
                     return Ok(PluginSourceRequest {
                         adapter: Some(entry.id.to_string()),
                         origin: entry.origin.to_string(),
@@ -2204,26 +2211,28 @@ fn resolve_source_install_request(args: PluginSourceArgs) -> anyhow::Result<Plug
                     "source '{target}' needs an origin: add --url <git-url> or --path <dir>"
                 );
             }
-            // niubash#300: a bare LOCAL PATH is a first-class form —
+            // native-shell#300: a bare LOCAL PATH is a first-class form —
             // snapshot-copied in like `file://`, no git semantics. One that
             // does not exist must fail honestly here, not as a baffling
             // `git clone` status 128 after the trust-boundary banner —
             // unless the spec already declares that spelling, which is the
             // more accurate diagnosis (the stranded-declaration refusal
-            // with the `sync --prune` hint, niubash#174/#176) and fires
+            // with the `sync --prune` hint, native-shell#174/#176) and fires
             // before any fetch in the add flow.
             if looks_like_local_path(target) && !std::path::Path::new(target).exists() {
                 let stable = stable_local_target(target);
-                let declared = niubash_runtime::plugins::spec::load_spec()
+                let declared = native_shell_runtime::plugins::spec::load_spec()
                     .ok()
                     .flatten()
                     .is_some_and(|spec| {
                         // The user's raw spelling (the shape a stranded
                         // declaration carries) and the stabilized form
                         // both count as "already declared".
-                        niubash_runtime::plugins::sync::declared_entry(&spec, target, None, &stable)
-                            .is_some()
-                            || niubash_runtime::plugins::sync::declared_entry(
+                        native_shell_runtime::plugins::sync::declared_entry(
+                            &spec, target, None, &stable,
+                        )
+                        .is_some()
+                            || native_shell_runtime::plugins::sync::declared_entry(
                                 &spec, &stable, None, &stable,
                             )
                             .is_some()
@@ -2260,13 +2269,13 @@ struct PluginSourceRequest {
     ref_name: Option<String>,
     expected_checksum: Option<String>,
     id: Option<String>,
-    /// `--timeout <seconds>` (niubash#293): rides into the install request.
+    /// `--timeout <seconds>` (native-shell#293): rides into the install request.
     timeout: Option<std::time::Duration>,
 }
 
 impl PluginSourceRequest {
-    fn to_install_request(&self) -> niubash_runtime::plugins::sources::SourceInstallRequest {
-        niubash_runtime::plugins::sources::SourceInstallRequest {
+    fn to_install_request(&self) -> native_shell_runtime::plugins::sources::SourceInstallRequest {
+        native_shell_runtime::plugins::sources::SourceInstallRequest {
             adapter: self.adapter.clone(),
             origin: self.origin.clone(),
             ref_name: self.ref_name.clone(),
@@ -2281,7 +2290,7 @@ impl PluginSourceRequest {
 }
 
 fn supported_sources_hint() -> String {
-    let ids: Vec<&str> = niubash_runtime::plugins::sources::builtin_source_adapters()
+    let ids: Vec<&str> = native_shell_runtime::plugins::sources::builtin_source_adapters()
         .iter()
         .map(|adapter| adapter.id())
         .collect();
@@ -2294,7 +2303,7 @@ fn supported_sources_hint() -> String {
 fn print_source_trust_boundary(id: &str, request: &PluginSourceRequest) {
     println!(
         "{}: fetching third-party shell code",
-        niubash_runtime::text_style::yellow("Trust boundary")
+        native_shell_runtime::text_style::yellow("Trust boundary")
     );
     println!("  source:   {}", id);
     println!("  origin:   {}", request.origin);
@@ -2303,7 +2312,7 @@ fn print_source_trust_boundary(id: &str, request: &PluginSourceRequest) {
     }
     println!(
         "  license:  {}",
-        niubash_runtime::plugins::sources::adapter_for(id)
+        native_shell_runtime::plugins::sources::adapter_for(id)
             .map(|adapter| adapter.license())
             .unwrap_or("(detected after fetch)")
     );
@@ -2312,7 +2321,7 @@ fn print_source_trust_boundary(id: &str, request: &PluginSourceRequest) {
     }
     println!(
         "  {}",
-        niubash_runtime::text_style::dim(
+        native_shell_runtime::text_style::dim(
             "fetched code is inert until you review and trust it; nothing is sourced yet"
         )
     );
@@ -2326,13 +2335,13 @@ fn run_plugin_source_add_command(args: &[String]) -> anyhow::Result<()> {
         .clone()
         .unwrap_or_else(|| "(auto-detect)".to_string());
     print_source_trust_boundary(&display_id, &request);
-    let record = niubash_runtime::plugins::sources::add_source(request.to_install_request())?;
+    let record = native_shell_runtime::plugins::sources::add_source(request.to_install_request())?;
     println!(
         "{} source '{}' ({}) into {}",
-        niubash_runtime::text_style::green("Installed"),
+        native_shell_runtime::text_style::green("Installed"),
         record.id,
-        niubash_runtime::text_style::dim(&record.version),
-        niubash_runtime::text_style::dim(&record.path.display().to_string())
+        native_shell_runtime::text_style::dim(&record.version),
+        native_shell_runtime::text_style::dim(&record.path.display().to_string())
     );
     println!(
         "license {} | tree sha256 {}",
@@ -2340,18 +2349,18 @@ fn run_plugin_source_add_command(args: &[String]) -> anyhow::Result<()> {
     );
     print_first_fetch_warning(&record);
     println!("the source is untrusted; review it, then run:");
-    println!("  niu plugin source trust {}", record.id);
+    println!("  native-shell plugin source trust {}", record.id);
     Ok(())
 }
 
-/// niubash#298: the checksum pin covers every fetch AFTER the first — the
+/// native-shell#298: the checksum pin covers every fetch AFTER the first — the
 /// first delivery itself only had one when the user pinned `--checksum` or
 /// the origin is a curated catalog entry. A remote unpinned non-catalog
 /// first fetch is warned about here, and the state stays recorded in the
 /// registry (`first_fetch_verified`, visible in `plugin list --json`).
 /// Local snapshots have no network delivery, so they are recorded but not
 /// nagged about.
-fn print_first_fetch_warning(record: &niubash_runtime::plugins::sources::SourceRecord) {
+fn print_first_fetch_warning(record: &native_shell_runtime::plugins::sources::SourceRecord) {
     if record.first_fetch_verified {
         return;
     }
@@ -2361,10 +2370,10 @@ fn print_first_fetch_warning(record: &niubash_runtime::plugins::sources::SourceR
     }
     println!(
         "  {}",
-        niubash_runtime::text_style::yellow(&format!(
+        native_shell_runtime::text_style::yellow(&format!(
             "first fetch of '{}' was NOT integrity-verified (no --checksum pin, non-catalog \
              origin): the recorded checksum now locks this exact tree — review it with \
-             `niu plugin source verify {}`; a plaintext/mirrored transport could have \
+             `native-shell plugin source verify {}`; a plaintext/mirrored transport could have \
              rewritten the first delivery",
             record.url, record.id
         ))
@@ -2373,32 +2382,36 @@ fn print_first_fetch_warning(record: &niubash_runtime::plugins::sources::SourceR
 
 fn run_plugin_source_list_command(args: &[String]) -> anyhow::Result<()> {
     let json = args.iter().any(|arg| arg == "--json");
-    let statuses = niubash_runtime::plugins::sources::list_sources();
+    let statuses = native_shell_runtime::plugins::sources::list_sources();
     if json {
         println!("{}", serde_json::to_string_pretty(&statuses)?);
         return Ok(());
     }
     println!(
         "{}",
-        niubash_runtime::text_style::bold("Niubash plugin sources")
+        native_shell_runtime::text_style::bold("NativeShell plugin sources")
     );
     println!(
         "{}",
-        niubash_runtime::text_style::dim("  (external plugin managers; untrusted until trusted)")
+        native_shell_runtime::text_style::dim(
+            "  (external plugin managers; untrusted until trusted)"
+        )
     );
     if statuses.is_empty() {
-        println!("(no sources installed; add one with niu plugin source add <id|url|path>)");
+        println!(
+            "(no sources installed; add one with native-shell plugin source add <id|url|path>)"
+        );
         return Ok(());
     }
     for status in statuses {
         let marker = match status.degraded_reason.as_deref() {
-            Some(reason) if reason == niubash_runtime::plugins::sources::DEGRADED_DRIFTED => {
-                niubash_runtime::text_style::red("drifted (pin mismatch)")
+            Some(reason) if reason == native_shell_runtime::plugins::sources::DEGRADED_DRIFTED => {
+                native_shell_runtime::text_style::red("drifted (pin mismatch)")
             }
-            Some(_) => niubash_runtime::text_style::red("degraded (native fallback active)"),
+            Some(_) => native_shell_runtime::text_style::red("degraded (native fallback active)"),
             None => match status.state.as_str() {
-                "ready" => niubash_runtime::text_style::green("ready"),
-                _ => niubash_runtime::text_style::yellow("untrusted"),
+                "ready" => native_shell_runtime::text_style::green("ready"),
+                _ => native_shell_runtime::text_style::yellow("untrusted"),
             },
         };
         let assets = status
@@ -2417,18 +2430,18 @@ fn run_plugin_source_list_command(args: &[String]) -> anyhow::Result<()> {
             marker,
             status.record.id,
             status.record.version,
-            niubash_runtime::text_style::dim(&assets),
-            niubash_runtime::text_style::dim(&status.record.path.display().to_string())
+            native_shell_runtime::text_style::dim(&assets),
+            native_shell_runtime::text_style::dim(&status.record.path.display().to_string())
         );
-        // niubash#297: the drift state must come with its way out, spelled
+        // native-shell#297: the drift state must come with its way out, spelled
         // the same way sync names it.
         if status.degraded_reason.as_deref()
-            == Some(niubash_runtime::plugins::sources::DEGRADED_DRIFTED)
+            == Some(native_shell_runtime::plugins::sources::DEGRADED_DRIFTED)
         {
             println!(
                 "     {}",
-                niubash_runtime::text_style::yellow(&format!(
-                    "tree no longer matches the lockfile pin — review: niu plugin source verify {}; repair: niu plugin restore {}",
+                native_shell_runtime::text_style::yellow(&format!(
+                    "tree no longer matches the lockfile pin — review: native-shell plugin source verify {}; repair: native-shell plugin restore {}",
                     status.record.id, status.record.id
                 ))
             );
@@ -2442,14 +2455,17 @@ fn run_plugin_source_trust_command(args: &[String]) -> anyhow::Result<()> {
         anyhow::bail!("plugin source trust requires a source id");
     };
     // Review summary before flipping the execution gate (§12.2).
-    let statuses = niubash_runtime::plugins::sources::list_sources();
+    let statuses = native_shell_runtime::plugins::sources::list_sources();
     let Some(status) = statuses.iter().find(|status| status.record.id == *id) else {
-        anyhow::bail!("unknown source '{}'; run niu plugin source add first", id);
+        anyhow::bail!(
+            "unknown source '{}'; run native-shell plugin source add first",
+            id
+        );
     };
-    let verify = niubash_runtime::plugins::sources::verify_source(id)?;
+    let verify = native_shell_runtime::plugins::sources::verify_source(id)?;
     println!(
         "{} source '{}' review",
-        niubash_runtime::text_style::bold("Trust"),
+        native_shell_runtime::text_style::bold("Trust"),
         status.record.id
     );
     println!("  origin:   {}", status.record.url);
@@ -2459,24 +2475,24 @@ fn run_plugin_source_trust_command(args: &[String]) -> anyhow::Result<()> {
         "  checksum: {} ({})",
         status.record.checksum_sha256,
         if verify.verified {
-            niubash_runtime::text_style::green("verified")
+            native_shell_runtime::text_style::green("verified")
         } else if verify.degraded {
-            niubash_runtime::text_style::red("tree missing")
+            native_shell_runtime::text_style::red("tree missing")
         } else {
-            niubash_runtime::text_style::red("MISMATCH")
+            native_shell_runtime::text_style::red("MISMATCH")
         }
     );
     println!("  path:     {}", status.record.path.display());
     if verify.degraded {
         anyhow::bail!("cannot trust a degraded source (tree missing)");
     }
-    let trusted = niubash_runtime::plugins::sources::trust_source(id)?;
+    let trusted = native_shell_runtime::plugins::sources::trust_source(id)?;
     println!(
         "{} '{}' is now trusted; its themes/assets join the catalog",
-        niubash_runtime::text_style::green("Trusted:"),
+        native_shell_runtime::text_style::green("Trusted:"),
         trusted.id
     );
-    println!("restart niu (or reload ~/.niubashrc) for the change to take effect");
+    println!("restart native-shell (or reload ~/.native-shellrc) for the change to take effect");
     Ok(())
 }
 
@@ -2484,12 +2500,12 @@ fn run_plugin_source_remove_command(args: &[String]) -> anyhow::Result<()> {
     let Some(id) = args.first() else {
         anyhow::bail!("plugin source remove requires a source id");
     };
-    let path = niubash_runtime::plugins::sources::remove_source(id)?;
+    let path = native_shell_runtime::plugins::sources::remove_source(id)?;
     println!(
         "{} source '{}' ({})",
-        niubash_runtime::text_style::green("Removed"),
+        native_shell_runtime::text_style::green("Removed"),
         id,
-        niubash_runtime::text_style::dim(&path.display().to_string())
+        native_shell_runtime::text_style::dim(&path.display().to_string())
     );
     Ok(())
 }
@@ -2498,17 +2514,17 @@ fn run_plugin_source_update_command(args: &[String]) -> anyhow::Result<()> {
     let parsed = parse_plugin_source_args(args)?;
     let Some(id) = parsed.target.clone() else {
         // No id: update every git-origin source to its ref's tip (the
-        // pre-14.6 meaning of bare `niu plugin sync`).
-        let outcomes = niubash_runtime::plugins::sync::update_all_to_ref_tip();
+        // pre-14.6 meaning of bare `native-shell plugin sync`).
+        let outcomes = native_shell_runtime::plugins::sync::update_all_to_ref_tip();
         if outcomes.is_empty() {
             println!("(no sources installed)");
             return Ok(());
         }
         for outcome in outcomes {
             let marker = match outcome.outcome.as_str() {
-                "updated" => niubash_runtime::text_style::green("updated"),
-                "skipped" => niubash_runtime::text_style::yellow("skipped"),
-                _ => niubash_runtime::text_style::red("failed"),
+                "updated" => native_shell_runtime::text_style::green("updated"),
+                "skipped" => native_shell_runtime::text_style::yellow("skipped"),
+                _ => native_shell_runtime::text_style::red("failed"),
             };
             println!("  {marker} {:<15} {}", outcome.id, outcome.detail);
         }
@@ -2528,18 +2544,18 @@ fn run_plugin_source_update_command(args: &[String]) -> anyhow::Result<()> {
         timeout: parsed.timeout,
     };
     let summary =
-        niubash_runtime::plugins::sources::update_source(&id, request.to_install_request())?;
+        native_shell_runtime::plugins::sources::update_source(&id, request.to_install_request())?;
     println!(
         "{} source '{}' to {}",
-        niubash_runtime::text_style::green("Updated"),
+        native_shell_runtime::text_style::green("Updated"),
         summary.id,
-        niubash_runtime::text_style::dim(&summary.version)
+        native_shell_runtime::text_style::dim(&summary.version)
     );
     println!("tree sha256 {}", summary.checksum_sha256);
     if summary.previous.is_some() {
         println!(
-            "{} niu plugin source rollback {}",
-            niubash_runtime::text_style::dim("undo:"),
+            "{} native-shell plugin source rollback {}",
+            native_shell_runtime::text_style::dim("undo:"),
             summary.id
         );
     }
@@ -2550,12 +2566,12 @@ fn run_plugin_source_rollback_command(args: &[String]) -> anyhow::Result<()> {
     let Some(id) = args.first() else {
         anyhow::bail!("plugin source rollback requires a source id");
     };
-    let summary = niubash_runtime::plugins::sources::rollback_source(id)?;
+    let summary = native_shell_runtime::plugins::sources::rollback_source(id)?;
     println!(
         "{} source '{}' to {}",
-        niubash_runtime::text_style::green("Rolled back"),
+        native_shell_runtime::text_style::green("Rolled back"),
         summary.id,
-        niubash_runtime::text_style::dim(&summary.version)
+        native_shell_runtime::text_style::dim(&summary.version)
     );
     Ok(())
 }
@@ -2564,7 +2580,7 @@ fn run_plugin_source_verify_command(args: &[String]) -> anyhow::Result<()> {
     let Some(id) = args.first() else {
         anyhow::bail!("plugin source verify requires a source id");
     };
-    let report = niubash_runtime::plugins::sources::verify_source(id)?;
+    let report = native_shell_runtime::plugins::sources::verify_source(id)?;
     if report.degraded {
         anyhow::bail!(
             "source '{}' tree is missing ({})",
@@ -2582,21 +2598,21 @@ fn run_plugin_source_verify_command(args: &[String]) -> anyhow::Result<()> {
     }
     println!(
         "{} source '{}' tree checksum {}",
-        niubash_runtime::text_style::green("Verified"),
+        native_shell_runtime::text_style::green("Verified"),
         report.id,
         report.recorded_checksum
     );
     Ok(())
 }
 
-/// `niu plugin add <catalog-id | owner/repo | url | path>` — the
+/// `native-shell plugin add <catalog-id | owner/repo | url | path>` — the
 /// vim-plug/lazy.nvim front door, declarative since §14.6.3: the entry is
-/// appended to `~/.niubash/plugins.toml` and `niu plugin sync` installs it
+/// appended to `~/.native-shell/plugins.toml` and `native-shell plugin sync` installs it
 /// (fetch gate only; everything lands untrusted). Catalog ids resolve to
 /// their official origin, `owner/repo` expands to GitHub; wild repos and
 /// bpkg trees come in the same way (auto-detected layout, per-plugin id).
 fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
-    // `add -h` is a help request, not an unknown-option error (niubash#176):
+    // `add -h` is a help request, not an unknown-option error (native-shell#176):
     // the verb-level flags render here, the plugin-level usage one level up.
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
         print_plugin_add_usage();
@@ -2610,14 +2626,14 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
     // spec-declaring flow below: the spec stays their source of truth.
     if parsed.target.is_some() && parsed.url.is_none() && parsed.path.is_none() {
         let target = parsed.target.clone().unwrap();
-        if niubash_runtime::plugins::catalog::catalog_entry(&target).is_none()
-            && niubash_runtime::plugins::recipes::recipe(&target).is_some()
+        if native_shell_runtime::plugins::catalog::catalog_entry(&target).is_none()
+            && native_shell_runtime::plugins::recipes::recipe(&target).is_some()
         {
             return run_plugin_recipe_add(&target);
         }
     }
     let mut request = resolve_source_install_request(parsed.clone())?;
-    // A local directory wins over the catalog (niubash#176): a cwd that
+    // A local directory wins over the catalog (native-shell#176): a cwd that
     // happens to contain an `oh-my-bash/` tree must not be silently
     // re-resolved to the official GitHub origin — the user spelled a local
     // path, and the path is stabilized below so later syncs (run from any
@@ -2625,15 +2641,16 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
     if std::path::Path::new(&request.origin).exists() {
         request.origin = stable_local_target(&request.origin);
     }
-    // Catalog shorthand first: `niu plugin add oh-my-bash` knows the origin
+    // Catalog shorthand first: `native-shell plugin add oh-my-bash` knows the origin
     // — but only for spellings that are NOT a local path (guarded above).
     if request.adapter.is_none() && !std::path::Path::new(&request.origin).exists() {
-        if let Some(entry) = niubash_runtime::plugins::catalog::catalog_entry(&request.origin) {
+        if let Some(entry) = native_shell_runtime::plugins::catalog::catalog_entry(&request.origin)
+        {
             request.adapter = Some(entry.id.to_string());
             request.origin = entry.origin.to_string();
         }
     }
-    request.origin = niubash_runtime::plugins::sources::normalize_origin(&request.origin);
+    request.origin = native_shell_runtime::plugins::sources::normalize_origin(&request.origin);
 
     // Spec entry target: the *reproducible origin*, in the user's spelling
     // when that spelling resolves back to the same origin. When an explicit
@@ -2642,7 +2659,7 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
     // GitHub URL at sync time and clone from the network instead of the
     // user's tree. The id stays pinned (the catalog/adapter id), so
     // enable/disable and later syncs match the record directly.
-    let mut spec = niubash_runtime::plugins::spec::load_spec()?.unwrap_or_default();
+    let mut spec = native_shell_runtime::plugins::spec::load_spec()?.unwrap_or_default();
     let explicit_origin = parsed.url.clone().or_else(|| parsed.path.clone());
     let entry_target = explicit_origin.unwrap_or_else(|| {
         parsed
@@ -2651,7 +2668,7 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
             .filter(|target| !target.is_empty())
             .unwrap_or_else(|| request.origin.clone())
     });
-    // A local path target is stored cwd-independent (niubash#176): the raw
+    // A local path target is stored cwd-independent (native-shell#176): the raw
     // relative spelling (`./omb`, a bare dir name) would strand the spec
     // entry the moment sync runs from another directory.
     let entry_target = if std::path::Path::new(&entry_target).exists() {
@@ -2665,7 +2682,7 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
     // origin tail and binds it back into the spec on first run.
     let entry_id = request.id.clone().or_else(|| {
         request.adapter.as_deref().and_then(|kind| {
-            let adapter = niubash_runtime::plugins::sources::adapter_for(kind)?;
+            let adapter = native_shell_runtime::plugins::sources::adapter_for(kind)?;
             (!adapter.per_install_id()).then(|| kind.to_string())
         })
     });
@@ -2677,33 +2694,33 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
         .adapter
         .clone()
         .filter(|kind| !kind.is_empty() && entry_id.as_deref() != Some(kind.as_str()));
-    if let Some((existing, installed)) = niubash_runtime::plugins::sync::declared_entry_state(
+    if let Some((existing, installed)) = native_shell_runtime::plugins::sync::declared_entry_state(
         &spec,
         &entry_target,
         entry_id.as_deref(),
         &request.origin,
     ) {
-        // The removal hint must work for the state it names (niubash#176):
+        // The removal hint must work for the state it names (native-shell#176):
         // a stranded declaration (declared, never installed) has no source
-        // to remove — `niu plugin source remove` would just fail, and
-        // `niu plugin sync --prune` is the way out (wt83 #174).
+        // to remove — `native-shell plugin source remove` would just fail, and
+        // `native-shell plugin sync --prune` is the way out (wt83 #174).
         let removal_hint = if installed {
-            format!("`niu plugin source remove {existing}` uninstalls")
+            format!("`native-shell plugin source remove {existing}` uninstalls")
         } else {
             "the entry is declared but not installed (a stranded declaration) — \
-             `niu plugin sync --prune` removes it"
+             `native-shell plugin sync --prune` removes it"
                 .to_string()
         };
         anyhow::bail!(
             "'{}' is already declared in {} (entry target '{}'); \
              enable/disable manage it, {removal_hint}",
             existing,
-            niubash_runtime::plugins::spec::spec_path().display(),
+            native_shell_runtime::plugins::spec::spec_path().display(),
             entry_target,
         );
     }
     spec.sources
-        .push(niubash_runtime::plugins::spec::SpecSource {
+        .push(native_shell_runtime::plugins::spec::SpecSource {
             target: entry_target.clone(),
             id: entry_id.clone(),
             kind: entry_kind,
@@ -2711,7 +2728,7 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
             theme: None,
             enable: Vec::new(),
         });
-    niubash_runtime::plugins::spec::save_spec(&spec)?;
+    native_shell_runtime::plugins::spec::save_spec(&spec)?;
 
     // Fetch gate notice, then the reconciliation that installs it. The
     // registry snapshot taken first is how "declared (already installed)"
@@ -2720,7 +2737,7 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
     // url, path) and whichever path found it (entry resolution or the
     // reconciler's identity adoption).
     let registry_before: Vec<(String, String)> =
-        niubash_runtime::plugins::sources::read_source_registry()
+        native_shell_runtime::plugins::sources::read_source_registry()
             .into_iter()
             .map(|record| (record.id, record.installed_at))
             .collect();
@@ -2733,7 +2750,7 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
     // reconciler could see it; any failure below takes it back out — a
     // failed add must not leave a spec strand no verb can remove.
     let rollback_declaration = |err: anyhow::Error| -> anyhow::Error {
-        match niubash_runtime::plugins::sync::remove_declared_entry(
+        match native_shell_runtime::plugins::sync::remove_declared_entry(
             &entry_target,
             entry_id.as_deref(),
         ) {
@@ -2745,20 +2762,20 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
     };
     // The user's `--checksum` rides into the reconciler's install request
     // (wt83 #173): the fetch refuses a mismatched tree, exactly like
-    // `niu plugin source add --checksum` always did. Absent, the fetch
+    // `native-shell plugin source add --checksum` always did. Absent, the fetch
     // gate + untrusted landing stay the only guards.
-    let report = match niubash_runtime::plugins::sync::sync_spec(
-        niubash_runtime::plugins::sync::SyncOptions {
+    let report = match native_shell_runtime::plugins::sync::sync_spec(
+        native_shell_runtime::plugins::sync::SyncOptions {
             prune: false,
             checksum_pin: request
                 .expected_checksum
                 .clone()
                 .map(|checksum| (entry_target.clone(), checksum)),
-            // `--timeout <seconds>` (niubash#293): bounds this add's fetch
+            // `--timeout <seconds>` (native-shell#293): bounds this add's fetch
             // so a dead origin fails (and rolls the declaration back)
-            // instead of hanging until the user kills niu.
+            // instead of hanging until the user kills native-shell.
             timeout: request.timeout,
-            ..niubash_runtime::plugins::sync::SyncOptions::default()
+            ..native_shell_runtime::plugins::sync::SyncOptions::default()
         },
     ) {
         Ok(report) => report,
@@ -2772,7 +2789,7 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
         row.action == "failed"
             && (Some(row.id.as_str()) == entry_id.as_deref() || row.id == entry_target)
     }) {
-        let removed = niubash_runtime::plugins::sync::remove_declared_entry(
+        let removed = native_shell_runtime::plugins::sync::remove_declared_entry(
             &entry_target,
             entry_id.as_deref(),
         )
@@ -2797,10 +2814,10 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
     // own row first (the same (id, target) match the failed-install
     // rollback above uses); the last-eligible scan stays as the fallback
     // for reports that never named the entry.
-    let names_this_add = |row: &niubash_runtime::plugins::sync::SyncRow| {
+    let names_this_add = |row: &native_shell_runtime::plugins::sync::SyncRow| {
         Some(row.id.as_str()) == entry_id.as_deref() || row.id == entry_target
     };
-    let eligible = |row: &niubash_runtime::plugins::sync::SyncRow| {
+    let eligible = |row: &native_shell_runtime::plugins::sync::SyncRow| {
         row.action == "awaiting-trust" || row.action == "activated" || row.action == "unchanged"
     };
     let new_id = report
@@ -2814,7 +2831,7 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
         .as_ref()
         .map(|id| {
             let adopted_by_report = report.adopted.iter().any(|adopted| adopted == id);
-            let installed_before = niubash_runtime::plugins::sources::read_source_registry()
+            let installed_before = native_shell_runtime::plugins::sources::read_source_registry()
                 .into_iter()
                 .any(|record| {
                     record.id == *id
@@ -2825,24 +2842,24 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
         })
         .unwrap_or(false);
     if let Some(id) = &new_id {
-        if let Some(record) = niubash_runtime::plugins::sources::read_source_registry()
+        if let Some(record) = native_shell_runtime::plugins::sources::read_source_registry()
             .into_iter()
             .find(|record| record.id == *id)
         {
             if adopted_existing {
                 println!(
                     "{} source '{}' — declared in the spec (already installed at {})",
-                    niubash_runtime::text_style::green("Declared"),
+                    native_shell_runtime::text_style::green("Declared"),
                     record.id,
-                    niubash_runtime::text_style::dim(&record.path.display().to_string())
+                    native_shell_runtime::text_style::dim(&record.path.display().to_string())
                 );
             } else {
                 println!(
                     "{} source '{}' ({}) into {}",
-                    niubash_runtime::text_style::green("Installed"),
+                    native_shell_runtime::text_style::green("Installed"),
                     record.id,
-                    niubash_runtime::text_style::dim(&record.version),
-                    niubash_runtime::text_style::dim(&record.path.display().to_string())
+                    native_shell_runtime::text_style::dim(&record.version),
+                    native_shell_runtime::text_style::dim(&record.path.display().to_string())
                 );
                 println!(
                     "license {} | tree sha256 {}",
@@ -2852,21 +2869,21 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
                 if let Some(commit) = &record.commit_sha {
                     println!(
                         "pinned commit {} ({})",
-                        niubash_runtime::text_style::dim(commit),
-                        niubash_runtime::text_style::dim(
-                            "niu plugin restore restores exactly this"
+                        native_shell_runtime::text_style::dim(commit),
+                        native_shell_runtime::text_style::dim(
+                            "native-shell plugin restore restores exactly this"
                         )
                     );
                 }
             }
             if !record.trusted {
                 println!("the source is untrusted; review it, then run:");
-                println!("  niu plugin trust {}", record.id);
+                println!("  native-shell plugin trust {}", record.id);
                 println!(
                     "  {}",
-                    niubash_runtime::text_style::dim(&format!(
-                        "then activate it (or single assets) with `niu plugin enable {}` \
-                         (wild sources pick files: `niu plugin enable {}/<file>.bash`)",
+                    native_shell_runtime::text_style::dim(&format!(
+                        "then activate it (or single assets) with `native-shell plugin enable {}` \
+                         (wild sources pick files: `native-shell plugin enable {}/<file>.bash`)",
                         record.id, record.id
                     ))
                 );
@@ -2878,33 +2895,33 @@ fn run_plugin_add_command(args: &[String]) -> anyhow::Result<()> {
 }
 
 /// Print the reconciler's rows in one stable shape.
-fn print_sync_rows(rows: &[niubash_runtime::plugins::sync::SyncRow]) {
+fn print_sync_rows(rows: &[native_shell_runtime::plugins::sync::SyncRow]) {
     for row in rows {
         let marker = match row.action.as_str() {
             "installed" | "activated" | "removed" => {
-                niubash_runtime::text_style::green(&row.action)
+                native_shell_runtime::text_style::green(&row.action)
             }
             "awaiting-trust" | "deactivated" | "unchanged" | "merged" | "reconciled" => {
-                niubash_runtime::text_style::yellow(&row.action)
+                native_shell_runtime::text_style::yellow(&row.action)
             }
-            "degraded" => niubash_runtime::text_style::yellow(&row.action),
-            "deferred" => niubash_runtime::text_style::dim(&row.action),
-            _ => niubash_runtime::text_style::red(&row.action),
+            "degraded" => native_shell_runtime::text_style::yellow(&row.action),
+            "deferred" => native_shell_runtime::text_style::dim(&row.action),
+            _ => native_shell_runtime::text_style::red(&row.action),
         };
         println!("  {marker} {:<18} {}", row.id, row.detail);
     }
 }
 
-fn print_undeclared_hints(report: &niubash_runtime::plugins::sync::SyncReport) {
+fn print_undeclared_hints(report: &native_shell_runtime::plugins::sync::SyncReport) {
     if report.undeclared.is_empty() {
         return;
     }
     println!(
         "{}",
-        niubash_runtime::text_style::yellow("installed but not declared in the spec:")
+        native_shell_runtime::text_style::yellow("installed but not declared in the spec:")
     );
     for id in &report.undeclared {
-        println!("  {id}  (keep by declaring it, or `niu plugin sync --prune`)");
+        println!("  {id}  (keep by declaring it, or `native-shell plugin sync --prune`)");
     }
 }
 
@@ -2936,7 +2953,7 @@ fn run_plugin_recipe_command(args: &[String]) -> anyhow::Result<()> {
 }
 
 fn print_plugin_recipe_usage() {
-    println!("Usage:  niu plugin recipe <command>");
+    println!("Usage:  native-shell plugin recipe <command>");
     println!();
     println!("  list [--category <c>] [--json]   Index rows (bash-ecosystem assets)");
     println!("  show <id>                        One recipe: driver, license, state");
@@ -2944,7 +2961,7 @@ fn print_plugin_recipe_usage() {
     println!();
     println!("Categories: manager theme plugin alias completion prompt");
     println!("Drivers:    git (tree source) · package (recipe recommends your");
-    println!("            package manager — niu downloads nothing) · info-only");
+    println!("            package manager — native-shell downloads nothing) · info-only");
 }
 
 fn run_plugin_recipe_list_command(args: &[String]) -> anyhow::Result<()> {
@@ -2956,7 +2973,7 @@ fn run_plugin_recipe_list_command(args: &[String]) -> anyhow::Result<()> {
             category = iter.next().cloned();
         }
     }
-    let rows: Vec<serde_json::Value> = niubash_runtime::plugins::recipes::recipes()
+    let rows: Vec<serde_json::Value> = native_shell_runtime::plugins::recipes::recipes()
         .iter()
         .filter(|recipe| {
             category
@@ -2971,13 +2988,13 @@ fn run_plugin_recipe_list_command(args: &[String]) -> anyhow::Result<()> {
                 "license": recipe.license,
                 "url": recipe.url,
                 "driver": match &recipe.driver {
-                    Some(niubash_runtime::plugins::recipes::RecipeDriver::Git { .. }) => "git",
-                    Some(niubash_runtime::plugins::recipes::RecipeDriver::Download { .. }) => {
+                    Some(native_shell_runtime::plugins::recipes::RecipeDriver::Git { .. }) => "git",
+                    Some(native_shell_runtime::plugins::recipes::RecipeDriver::Download { .. }) => {
                         "package"
                     }
                     None => "",
                 },
-                "state": format!("{:?}", niubash_runtime::plugins::recipes::recipe_state(&recipe.id)),
+                "state": format!("{:?}", native_shell_runtime::plugins::recipes::recipe_state(&recipe.id)),
             })
         })
         .collect();
@@ -2987,11 +3004,13 @@ fn run_plugin_recipe_list_command(args: &[String]) -> anyhow::Result<()> {
     }
     println!(
         "{}",
-        niubash_runtime::text_style::bold("Niubash plugin recipe index")
+        native_shell_runtime::text_style::bold("NativeShell plugin recipe index")
     );
     println!(
         "{}",
-        niubash_runtime::text_style::dim("  data rows — install with `niu plugin add <id>`")
+        native_shell_runtime::text_style::dim(
+            "  data rows — install with `native-shell plugin add <id>`"
+        )
     );
     println!();
     for row in &rows {
@@ -3004,17 +3023,17 @@ fn run_plugin_recipe_list_command(args: &[String]) -> anyhow::Result<()> {
     }
     println!(
         "{}",
-        niubash_runtime::text_style::dim(&format!("{} recipes", rows.len()))
+        native_shell_runtime::text_style::dim(&format!("{} recipes", rows.len()))
     );
     Ok(())
 }
 
 fn run_plugin_recipe_show_command(id: &str) -> anyhow::Result<()> {
-    use niubash_runtime::plugins::recipes::{RecipeDriver, RecipeState};
-    let recipe = niubash_runtime::plugins::recipes::recipe(id).ok_or_else(|| {
-        anyhow::anyhow!("unknown recipe '{id}'; browse with `niu plugin recipe list`")
+    use native_shell_runtime::plugins::recipes::{RecipeDriver, RecipeState};
+    let recipe = native_shell_runtime::plugins::recipes::recipe(id).ok_or_else(|| {
+        anyhow::anyhow!("unknown recipe '{id}'; browse with `native-shell plugin recipe list`")
     })?;
-    println!("{}", niubash_runtime::text_style::bold(&recipe.id));
+    println!("{}", native_shell_runtime::text_style::bold(&recipe.id));
     println!("  category  {}", recipe.category.as_str());
     println!("  summary   {}", recipe.summary);
     println!("  license   {}", recipe.license);
@@ -3036,35 +3055,35 @@ fn run_plugin_recipe_show_command(id: &str) -> anyhow::Result<()> {
         Some(RecipeDriver::Download { version, .. }) => {
             println!("  driver    package-manager recommendation ({version})");
             println!(
-                "            (niu does not download binaries — download retraction 2026-10-04)"
+                "            (native-shell does not download binaries — download retraction 2026-10-04)"
             );
         }
-        None => println!("  driver    (info-only — no niu install driver)"),
+        None => println!("  driver    (info-only — no native-shell install driver)"),
     }
     if let Some(manager) = &recipe.manager {
         println!("  manager   {manager} (asset rides on this source)");
     }
     println!(
         "  state     {}",
-        match niubash_runtime::plugins::recipes::recipe_state(id) {
+        match native_shell_runtime::plugins::recipes::recipe_state(id) {
             RecipeState::Available => "not installed".to_string(),
             RecipeState::ManagerAsset { manager_state } => format!("manager: {manager_state}"),
             RecipeState::InfoOnly => "info-only".to_string(),
         }
     );
     println!();
-    println!("  niu plugin add {id}");
+    println!("  native-shell plugin add {id}");
     Ok(())
 }
 
-/// Shared install path for `niu plugin add <recipe-id>` and
-/// `niu plugin recipe add <id>`: run the driver, then print what happened
+/// Shared install path for `native-shell plugin add <recipe-id>` and
+/// `native-shell plugin recipe add <id>`: run the driver, then print what happened
 /// and the next verbs (health-style "name the repair", study §10.1).
 fn run_plugin_recipe_add(id: &str) -> anyhow::Result<()> {
-    let report = niubash_runtime::plugins::recipes::install(id)?;
+    let report = native_shell_runtime::plugins::recipes::install(id)?;
     println!(
         "{}",
-        niubash_runtime::text_style::green(&format!("recipe '{}':", report.recipe_id))
+        native_shell_runtime::text_style::green(&format!("recipe '{}':", report.recipe_id))
     );
     println!("  {}", report.summary);
     if !report.next.is_empty() {
@@ -3076,7 +3095,7 @@ fn run_plugin_recipe_add(id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `niu plugin distro <verb>` — collections (LazyVim extras pattern):
+/// `native-shell plugin distro <verb>` — collections (LazyVim extras pattern):
 /// data manifests of recipe ids; built-in or imported; apply never
 /// auto-trusts (study §8/§10.2).
 fn run_plugin_distro_command(args: &[String]) -> anyhow::Result<()> {
@@ -3090,15 +3109,15 @@ fn run_plugin_distro_command(args: &[String]) -> anyhow::Result<()> {
             Ok(())
         }
         "list" => {
-            use niubash_runtime::plugins::distros::{collections, CollectionOrigin};
+            use native_shell_runtime::plugins::distros::{collections, CollectionOrigin};
             let listings = collections();
             println!(
                 "{}",
-                niubash_runtime::text_style::bold("Niubash plugin collections")
+                native_shell_runtime::text_style::bold("NativeShell plugin collections")
             );
             println!(
                 "{}",
-                niubash_runtime::text_style::dim(
+                native_shell_runtime::text_style::dim(
                     "  apply installs recipes; trust stays an explicit review step"
                 )
             );
@@ -3122,7 +3141,7 @@ fn run_plugin_distro_command(args: &[String]) -> anyhow::Result<()> {
                     .collect();
                 println!(
                     "  {}",
-                    niubash_runtime::text_style::dim(&entries.join(", "))
+                    native_shell_runtime::text_style::dim(&entries.join(", "))
                 );
             }
             Ok(())
@@ -3131,10 +3150,10 @@ fn run_plugin_distro_command(args: &[String]) -> anyhow::Result<()> {
             let Some(origin) = args.get(1) else {
                 anyhow::bail!("plugin distro import requires a git repo or a directory")
             };
-            let collection = niubash_runtime::plugins::distros::import(origin)?;
+            let collection = native_shell_runtime::plugins::distros::import(origin)?;
             println!(
-                "{} collection '{}' ({} recipes) — apply with `niu plugin distro apply {}`",
-                niubash_runtime::text_style::green("Imported"),
+                "{} collection '{}' ({} recipes) — apply with `native-shell plugin distro apply {}`",
+                native_shell_runtime::text_style::green("Imported"),
                 collection.name,
                 collection.entry.len(),
                 collection.name
@@ -3145,10 +3164,10 @@ fn run_plugin_distro_command(args: &[String]) -> anyhow::Result<()> {
             let Some(name) = args.get(1) else {
                 anyhow::bail!("plugin distro remove requires a collection name")
             };
-            niubash_runtime::plugins::distros::remove(name)?;
+            native_shell_runtime::plugins::distros::remove(name)?;
             println!(
                 "{} collection '{name}'",
-                niubash_runtime::text_style::green("Removed")
+                native_shell_runtime::text_style::green("Removed")
             );
             Ok(())
         }
@@ -3163,10 +3182,10 @@ fn run_plugin_distro_command(args: &[String]) -> anyhow::Result<()> {
 }
 
 fn run_plugin_distro_apply(name: &str) -> anyhow::Result<()> {
-    let outcome = niubash_runtime::plugins::distros::apply(name)?;
+    let outcome = native_shell_runtime::plugins::distros::apply(name)?;
     println!(
         "{}",
-        niubash_runtime::text_style::green(&format!("collection '{}':", outcome.name))
+        native_shell_runtime::text_style::green(&format!("collection '{}':", outcome.name))
     );
     for report in &outcome.reports {
         println!("  - {}", report.summary);
@@ -3176,7 +3195,7 @@ fn run_plugin_distro_apply(name: &str) -> anyhow::Result<()> {
     for (recipe, error) in &outcome.failures {
         println!(
             "  {} {}: {}",
-            niubash_runtime::text_style::red("failed"),
+            native_shell_runtime::text_style::red("failed"),
             recipe,
             error
         );
@@ -3196,8 +3215,8 @@ fn run_plugin_distro_apply(name: &str) -> anyhow::Result<()> {
         }
         println!(
             "{}",
-            niubash_runtime::text_style::dim(
-                "sources stay untrusted until reviewed; restart niu after enabling"
+            native_shell_runtime::text_style::dim(
+                "sources stay untrusted until reviewed; restart native-shell after enabling"
             )
         );
     } else if outcome.failures.is_empty() {
@@ -3214,10 +3233,10 @@ fn run_plugin_distro_apply(name: &str) -> anyhow::Result<()> {
 }
 
 fn print_plugin_distro_usage() {
-    println!("Usage:  niu plugin distro <command>");
+    println!("Usage:  native-shell plugin distro <command>");
     println!();
     println!("  list                        Built-in + imported collections");
-    println!("  import <repo|path>          Import a collection (niu-collection.toml)");
+    println!("  import <repo|path>          Import a collection (native-shell-collection.toml)");
     println!("  remove <name>               Remove an imported collection");
     println!("  apply <name>                Install every recipe in the collection");
     println!();
@@ -3225,13 +3244,13 @@ fn print_plugin_distro_usage() {
     println!("completions) · full (both frameworks + hooks + fzf + starship)");
 }
 
-/// `niu plugin mirror` — the China-network git mirroring control face
+/// `native-shell plugin mirror` — the China-network git mirroring control face
 /// (§14.8, git-only since the download retraction 2026-10-04). The
 /// pipeline is configurable, not curated: the user pastes a mirror URL
 /// they trust, `set` makes every plugin git fetch go through it via
 /// insteadOf, and the lockfile keeps canonical GitHub origins.
 fn run_plugin_mirror_command(args: &[String]) -> anyhow::Result<()> {
-    use niubash_runtime::plugins::mirrors;
+    use native_shell_runtime::plugins::mirrors;
     let Some(verb) = args.first() else {
         print_plugin_mirror_usage();
         return Ok(());
@@ -3246,7 +3265,7 @@ fn run_plugin_mirror_command(args: &[String]) -> anyhow::Result<()> {
                 Err(err) => {
                     println!(
                         "{} mirrors.toml unreadable: {err}",
-                        niubash_runtime::text_style::yellow("!")
+                        native_shell_runtime::text_style::yellow("!")
                     );
                     println!(
                         "  fix or delete {} (git fetches currently go direct)",
@@ -3258,19 +3277,19 @@ fn run_plugin_mirror_command(args: &[String]) -> anyhow::Result<()> {
                     if resolved.is_none() {
                         println!(
                             "{} direct connection (no mirror)",
-                            niubash_runtime::text_style::green("mirror:")
+                            native_shell_runtime::text_style::green("mirror:")
                         );
                     } else {
                         println!(
                             "{} custom mirror active",
-                            niubash_runtime::text_style::green("mirror:")
+                            native_shell_runtime::text_style::green("mirror:")
                         );
                         if let Some(base) = resolved.git_instead_of_base.as_deref() {
                             println!("  git         {base} (insteadOf https://github.com/)");
                         } else {
                             println!(
                                 "  {} active = custom but no git_instead_of set — fetches go direct",
-                                niubash_runtime::text_style::yellow("!")
+                                native_shell_runtime::text_style::yellow("!")
                             );
                         }
                         let unknown = mirrors::load_mirror_config()
@@ -3281,7 +3300,7 @@ fn run_plugin_mirror_command(args: &[String]) -> anyhow::Result<()> {
                         if unknown {
                             println!(
                                 "{} unknown 'active' value — degrading to direct",
-                                niubash_runtime::text_style::yellow("!")
+                                native_shell_runtime::text_style::yellow("!")
                             );
                         }
                     }
@@ -3289,8 +3308,8 @@ fn run_plugin_mirror_command(args: &[String]) -> anyhow::Result<()> {
                 }
             }
             println!();
-            println!("Set one with:    niu plugin mirror set <mirror-url>");
-            println!("Go direct with: niu plugin mirror set none");
+            println!("Set one with:    native-shell plugin mirror set <mirror-url>");
+            println!("Go direct with: native-shell plugin mirror set none");
             Ok(())
         }
         "set" => {
@@ -3317,11 +3336,11 @@ fn run_plugin_mirror_command(args: &[String]) -> anyhow::Result<()> {
                 mirrors::set_direct()?;
                 println!(
                     "{} git fetches now go direct",
-                    niubash_runtime::text_style::green("Set:")
+                    native_shell_runtime::text_style::green("Set:")
                 );
                 return Ok(());
             }
-            // niubash#298: a plaintext http:// mirror ships every git fetch
+            // native-shell#298: a plaintext http:// mirror ships every git fetch
             // (credentials, cookies, tree contents) unencrypted and
             // unauthenticated — setting one requires the explicit
             // --allow-plaintext confirm, in interactive and scripted runs
@@ -3331,14 +3350,14 @@ fn run_plugin_mirror_command(args: &[String]) -> anyhow::Result<()> {
                     "refusing to set a plaintext http:// mirror without confirmation: \
                      '{target}' ships every fetch unencrypted (and unauthenticated — a \
                      network actor can rewrite the trees git downloads). Re-run with \
-                     `niu plugin mirror set {target} --allow-plaintext` if you accept \
+                     `native-shell plugin mirror set {target} --allow-plaintext` if you accept \
                      this on a trusted network; prefer an https:// mirror."
                 );
             }
             let base = mirrors::set_custom_git_mirror(target)?;
             println!(
                 "{} git mirror {base}",
-                niubash_runtime::text_style::green("Set:")
+                native_shell_runtime::text_style::green("Set:")
             );
             println!(
                 "  plugin git fetches now rewrite https://github.com/ through it (insteadOf);"
@@ -3349,16 +3368,16 @@ fn run_plugin_mirror_command(args: &[String]) -> anyhow::Result<()> {
             );
             println!(
                 "  {}",
-                niubash_runtime::text_style::dim(
+                native_shell_runtime::text_style::dim(
                     "community mirrors may disappear at any time — verify the one you pasted"
                 )
             );
             if plaintext && target.to_ascii_lowercase().starts_with("http://") {
                 println!(
                     "  {}",
-                    niubash_runtime::text_style::yellow(
+                    native_shell_runtime::text_style::yellow(
                         "WARNING: plaintext http:// mirror — fetches are unencrypted and \
-                         unauthenticated; the tree checksum pin (`niu plugin source verify`) \
+                         unauthenticated; the tree checksum pin (`native-shell plugin source verify`) \
                          is the only tamper tripwire."
                     )
                 );
@@ -3369,14 +3388,14 @@ fn run_plugin_mirror_command(args: &[String]) -> anyhow::Result<()> {
     }
 }
 
-/// `niu config` — persisted user settings (`~/.niubash/config.toml`, the
+/// `native-shell config` — persisted user settings (`~/.native-shell/config.toml`, the
 /// mirrors.toml convention). Deliberately tiny: one flat file, two settings
-/// (the niubash#249 command-not-found hint policy, and since 1.4.1 the
+/// (the native-shell#249 command-not-found hint policy, and since 1.4.1 the
 /// `completion.style` TAB shape). Any read problem degrades to the default
 /// in the runtime; `get`/`list` surface values as resolved (file, overridden
-/// by the `NIU_` env variable).
+/// by the `NATIVE_SHELL_` env variable).
 fn run_config_command(args: &[String]) -> anyhow::Result<()> {
-    use niubash_runtime::config::{
+    use native_shell_runtime::config::{
         resolve_command_not_found_hint, resolve_completion_style, set_command_not_found_hint,
         set_completion_style, user_config_path, CommandNotFoundHint, CompletionStyle,
         CompletionStyleSource, COMMAND_NOT_FOUND_HINT_KEY, COMPLETION_STYLE_KEY,
@@ -3386,7 +3405,7 @@ fn run_config_command(args: &[String]) -> anyhow::Result<()> {
     // every mutating command prints it.
     fn print_completion_style_outcome(style: CompletionStyle, source: CompletionStyleSource) {
         let origin = match source {
-            CompletionStyleSource::Env => " (NIU_COMPLETION_STYLE overrides the file)",
+            CompletionStyleSource::Env => " (NATIVE_SHELL_COMPLETION_STYLE overrides the file)",
             CompletionStyleSource::ConfigFile => " (persisted)",
             CompletionStyleSource::Default => " (built-in default)",
         };
@@ -3406,13 +3425,13 @@ fn run_config_command(args: &[String]) -> anyhow::Result<()> {
             let (style, source) = resolve_completion_style();
             println!("  {COMPLETION_STYLE_KEY} = {}", style.as_str());
             if source == CompletionStyleSource::Env {
-                println!("    (overridden by NIU_COMPLETION_STYLE)");
+                println!("    (overridden by NATIVE_SHELL_COMPLETION_STYLE)");
             }
             Ok(())
         }
         Some("get") => {
             let Some(key) = args.get(1) else {
-                anyhow::bail!("config get requires a key (`niu config list` shows them)")
+                anyhow::bail!("config get requires a key (`native-shell config list` shows them)")
             };
             match key.as_str() {
                 COMMAND_NOT_FOUND_HINT_KEY => {
@@ -3424,14 +3443,14 @@ fn run_config_command(args: &[String]) -> anyhow::Result<()> {
                     Ok(())
                 }
                 unknown => anyhow::bail!(
-                    "unknown config key '{unknown}' (`niu config list` shows the valid keys)"
+                    "unknown config key '{unknown}' (`native-shell config list` shows the valid keys)"
                 ),
             }
         }
         Some("set") => {
             let Some(key) = args.get(1) else {
                 anyhow::bail!(
-                    "config set requires a key and a value (`niu config list` shows them)"
+                    "config set requires a key and a value (`native-shell config list` shows them)"
                 )
             };
             let Some(value) = args.get(2) else {
@@ -3447,11 +3466,11 @@ fn run_config_command(args: &[String]) -> anyhow::Result<()> {
                     set_command_not_found_hint(hint)?;
                     println!(
                         "{} {COMMAND_NOT_FOUND_HINT_KEY} = {}",
-                        niubash_runtime::text_style::green("Set:"),
+                        native_shell_runtime::text_style::green("Set:"),
                         hint.as_str()
                     );
                     if hint == CommandNotFoundHint::Wpm {
-                        println!("  new niu sessions suggest one `wpm search --name` line after a");
+                        println!("  new native-shell sessions suggest one `wpm search --name` line after a");
                         println!(
                             "  high-confidence near-miss (wpm only — never winget/scoop/choco)."
                         );
@@ -3469,7 +3488,7 @@ fn run_config_command(args: &[String]) -> anyhow::Result<()> {
                     set_completion_style(style)?;
                     println!(
                         "{} {COMPLETION_STYLE_KEY} = {}",
-                        niubash_runtime::text_style::green("Set:"),
+                        native_shell_runtime::text_style::green("Set:"),
                         style.as_str()
                     );
                     match style {
@@ -3486,31 +3505,31 @@ fn run_config_command(args: &[String]) -> anyhow::Result<()> {
                         ),
                     }
                     // The env variable outranks the file, so a stale
-                    // NIU_COMPLETION_STYLE would silently swallow this pick.
+                    // NATIVE_SHELL_COMPLETION_STYLE would silently swallow this pick.
                     let (effective, source) = resolve_completion_style();
                     if source == CompletionStyleSource::Env {
                         println!(
-                            "  note: NIU_COMPLETION_STYLE is set in this environment and wins:"
+                            "  note: NATIVE_SHELL_COMPLETION_STYLE is set in this environment and wins:"
                         );
                     }
                     print_completion_style_outcome(effective, source);
                     Ok(())
                 }
                 unknown => anyhow::bail!(
-                    "unknown config key '{unknown}' (`niu config list` shows the valid keys)"
+                    "unknown config key '{unknown}' (`native-shell config list` shows the valid keys)"
                 ),
             }
         }
         Some(unknown) => {
-            anyhow::bail!("unknown config subcommand '{unknown}' (try: niu config help)")
+            anyhow::bail!("unknown config subcommand '{unknown}' (try: native-shell config help)")
         }
     }
 }
 
 fn print_config_usage() {
-    println!("Usage:  niu config <command>");
+    println!("Usage:  native-shell config <command>");
     println!();
-    println!("Persisted user settings (~/.niubash/config.toml).");
+    println!("Persisted user settings (~/.native-shell/config.toml).");
     println!();
     println!("  get <key>          Print a setting's effective value");
     println!("  set <key> <value>  Persist a setting");
@@ -3519,28 +3538,31 @@ fn print_config_usage() {
     println!("Settings:");
     println!(
         "  {k}",
-        k = niubash_runtime::config::COMMAND_NOT_FOUND_HINT_KEY
+        k = native_shell_runtime::config::COMMAND_NOT_FOUND_HINT_KEY
     );
     println!("      Package-search suggestion printed after \"command not found\".");
     println!("      off (default) | wpm — wpm suggests one `wpm search --name`");
     println!("      line for high-confidence near-misses; third-party managers are");
-    println!("      never recommended (niubash#249).");
+    println!("      never recommended (native-shell#249).");
     println!();
-    println!("  {k}", k = niubash_runtime::config::COMPLETION_STYLE_KEY);
+    println!(
+        "  {k}",
+        k = native_shell_runtime::config::COMPLETION_STYLE_KEY
+    );
     println!("      Shape of the TAB completion UI. gnu (default) — TAB completes");
     println!("      the common prefix, a second TAB lists the candidates next to the");
     println!("      prompt like GNU readline. Alternatives: ide (VS Code popup),");
     println!("      column (zsh grid), list (fish vertical), inline (bash");
-    println!("      menu-complete). NIU_COMPLETION_STYLE overrides this file.");
+    println!("      menu-complete). NATIVE_SHELL_COMPLETION_STYLE overrides this file.");
 }
 
 fn print_plugin_mirror_usage() {
-    println!("Usage:  niu plugin mirror <command>");
+    println!("Usage:  native-shell plugin mirror <command>");
     println!();
     println!("Transport-layer git mirroring for plugin git fetches (the lockfile");
     println!("keeps canonical origins — the mirror only affects the network");
     println!("request). Configure any mirror you trust; community mirror");
-    println!("services are unsupported and may disappear. niu has no HTTP");
+    println!("services are unsupported and may disappear. native-shell has no HTTP");
     println!("download transport (download retraction 2026-10-04): mirrors are");
     println!("git-only.");
     println!();
@@ -3550,41 +3572,41 @@ fn print_plugin_mirror_usage() {
     println!("  set none                Go back to direct connection");
     println!();
     println!("A plaintext http:// mirror is refused without --allow-plaintext (it");
-    println!("ships every fetch unencrypted and unauthenticated — niubash#298).");
+    println!("ships every fetch unencrypted and unauthenticated — native-shell#298).");
     println!();
     println!("Config file (edit directly for exact control):");
-    println!("  schema = \"niubash:mirrors@0.1.0\"");
+    println!("  schema = \"native-shell:mirrors@0.1.0\"");
     println!("  active = \"custom\"");
     println!("  [github]");
     println!("  git_instead_of = \"https://your-git-mirror/\"    # git clone/fetch");
 }
 
-/// `niu plugin list [--json]` — sources, their assets, and activation
+/// `native-shell plugin list [--json]` — sources, their assets, and activation
 /// state (the first-class inventory of the external ecosystem).
 fn run_plugin_list_command(args: &[String]) -> anyhow::Result<()> {
     let json = args.iter().any(|arg| arg == "--json");
-    let overview = niubash_runtime::plugins::assets::asset_overview();
+    let overview = native_shell_runtime::plugins::assets::asset_overview();
     if json {
         println!("{}", serde_json::to_string_pretty(&overview)?);
         return Ok(());
     }
     println!(
         "{}",
-        niubash_runtime::text_style::bold("Niubash plugin ecosystem")
+        native_shell_runtime::text_style::bold("NativeShell plugin ecosystem")
     );
     if overview.is_empty() {
         println!(
-            "(no sources installed; browse with `niu plugin discover`, \
-             install with `niu plugin add <id|owner/repo|url|path>`)"
+            "(no sources installed; browse with `native-shell plugin discover`, \
+             install with `native-shell plugin add <id|owner/repo|url|path>`)"
         );
         return Ok(());
     }
     for report in overview {
         let status = &report.status;
         let marker = match status.state.as_str() {
-            "ready" => niubash_runtime::text_style::green("ready"),
-            "untrusted" => niubash_runtime::text_style::yellow("untrusted"),
-            _ => niubash_runtime::text_style::red("degraded"),
+            "ready" => native_shell_runtime::text_style::green("ready"),
+            "untrusted" => native_shell_runtime::text_style::yellow("untrusted"),
+            _ => native_shell_runtime::text_style::red("degraded"),
         };
         let trust = if status.record.trusted {
             format!("trusted: {}", status.record.trust_policy.as_str())
@@ -3597,23 +3619,26 @@ fn run_plugin_list_command(args: &[String]) -> anyhow::Result<()> {
             status.record.id,
             status.record.version,
             trust,
-            niubash_runtime::text_style::dim(&status.record.license)
+            native_shell_runtime::text_style::dim(&status.record.license)
         );
         if status.degraded {
             let drifted = status.degraded_reason.as_deref()
-                == Some(niubash_runtime::plugins::sources::DEGRADED_DRIFTED);
+                == Some(native_shell_runtime::plugins::sources::DEGRADED_DRIFTED);
             println!(
                 "     {}",
-                niubash_runtime::text_style::yellow(&format!(
+                native_shell_runtime::text_style::yellow(&format!(
                     "{} — {}",
                     status.degraded_reason.as_deref().unwrap_or("tree missing"),
                     if drifted {
                         format!(
-                            "review with `niu plugin source verify {}`, repair with `niu plugin restore {}`",
+                            "review with `native-shell plugin source verify {}`, repair with `native-shell plugin restore {}`",
                             status.record.id, status.record.id
                         )
                     } else {
-                        format!("repair with `niu plugin restore {}`", status.record.id)
+                        format!(
+                            "repair with `native-shell plugin restore {}`",
+                            status.record.id
+                        )
                     }
                 ))
             );
@@ -3622,8 +3647,8 @@ fn run_plugin_list_command(args: &[String]) -> anyhow::Result<()> {
         if !status.record.trusted {
             println!(
                 "     {}",
-                niubash_runtime::text_style::dim(&format!(
-                    "assets hidden until trust: `niu plugin trust {}`",
+                native_shell_runtime::text_style::dim(&format!(
+                    "assets hidden until trust: `native-shell plugin trust {}`",
                     status.record.id
                 ))
             );
@@ -3648,14 +3673,14 @@ fn run_plugin_list_command(args: &[String]) -> anyhow::Result<()> {
                 break;
             }
         }
-        // niubash#179 L05-3: a *gutted* tree (directory present, contents
+        // native-shell#179 L05-3: a *gutted* tree (directory present, contents
         // emptied) still reads "ready" here — the checksum state is the
         // only remaining truth, so name the verb that reports it.
         if lines.is_empty() {
             println!(
                 "     {}",
-                niubash_runtime::text_style::dim(&format!(
-                    "no assets found in the tree — verify with `niu plugin source verify {}`",
+                native_shell_runtime::text_style::dim(&format!(
+                    "no assets found in the tree — verify with `native-shell plugin source verify {}`",
                     status.record.id
                 ))
             );
@@ -3663,14 +3688,14 @@ fn run_plugin_list_command(args: &[String]) -> anyhow::Result<()> {
         if !lines.is_empty() {
             println!(
                 "     {}",
-                niubash_runtime::text_style::dim(&lines.join("  "))
+                native_shell_runtime::text_style::dim(&lines.join("  "))
             );
         }
         if !report.activated {
             println!(
                 "     {}",
-                niubash_runtime::text_style::dim(&format!(
-                    "not wired into ~/.niubashrc — `niu plugin enable {}`",
+                native_shell_runtime::text_style::dim(&format!(
+                    "not wired into ~/.native-shellrc — `native-shell plugin enable {}`",
                     status.record.id
                 ))
             );
@@ -3678,14 +3703,14 @@ fn run_plugin_list_command(args: &[String]) -> anyhow::Result<()> {
     }
     println!(
         "{}",
-        niubash_runtime::text_style::dim(
+        native_shell_runtime::text_style::dim(
             "* = enabled · themes/plugins/aliases/completions are the manager's own assets"
         )
     );
     Ok(())
 }
 
-/// `niu plugin enable|disable <target>` — source id, asset name, or
+/// `native-shell plugin enable|disable <target>` — source id, asset name, or
 /// `<source>/<asset>` qualified name.
 fn run_plugin_enable_command(args: &[String], enable: bool) -> anyhow::Result<()> {
     let Some(target) = args.first() else {
@@ -3697,44 +3722,44 @@ fn run_plugin_enable_command(args: &[String], enable: bool) -> anyhow::Result<()
     // Tools first (download-driver channel): their enable unit is a PATH
     // managed block; everything else is the asset layer.
     let outcome = if enable {
-        niubash_runtime::plugins::recipes::enable(target)?
+        native_shell_runtime::plugins::recipes::enable(target)?
     } else {
-        niubash_runtime::plugins::recipes::disable(target)?
+        native_shell_runtime::plugins::recipes::disable(target)?
     };
     println!(
         "{} {}",
         if enable {
-            niubash_runtime::text_style::green("Enabled:")
+            native_shell_runtime::text_style::green("Enabled:")
         } else {
-            niubash_runtime::text_style::green("Disabled:")
+            native_shell_runtime::text_style::green("Disabled:")
         },
         outcome.summary
     );
     println!(
         "  {} {}",
-        niubash_runtime::text_style::dim("undo:"),
+        native_shell_runtime::text_style::dim("undo:"),
         outcome.undo
     );
     println!(
         "  {}",
-        niubash_runtime::text_style::dim(
-            "restart niu (or reload ~/.niubashrc) for the change to take effect"
+        native_shell_runtime::text_style::dim(
+            "restart native-shell (or reload ~/.native-shellrc) for the change to take effect"
         )
     );
-    // niubash#359 transition note: the rc's legacy managed block keeps the
+    // native-shell#359 transition note: the rc's legacy managed block keeps the
     // generated loader off until the user removes it (double-execution
     // guard) — say so once, read-only.
-    if let Some(notice) = niubash_runtime::plugins::loader::migration_notice_if_needed() {
-        println!("  {}", niubash_runtime::text_style::yellow(&notice));
+    if let Some(notice) = native_shell_runtime::plugins::loader::migration_notice_if_needed() {
+        println!("  {}", native_shell_runtime::text_style::yellow(&notice));
     }
     Ok(())
 }
 
-/// `niu plugin migrate-rc` (niubash#359, design §4.1): the read-only
+/// `native-shell plugin migrate-rc` (native-shell#359, design §4.1): the read-only
 /// migration diagnostic. Scans the user rc for legacy managed blocks,
 /// publishes the candidate loader generation from the current manifest,
 /// and prints the removal guidance. `--diff` additionally writes the
-/// suggested post-migration rc under `~/.niubash/candidates/`. The user rc
+/// suggested post-migration rc under `~/.native-shell/candidates/`. The user rc
 /// itself is NEVER modified — the removal is always the user's own edit.
 fn run_plugin_migrate_rc_command(args: &[String]) -> anyhow::Result<()> {
     let mut want_candidate = false;
@@ -3742,36 +3767,36 @@ fn run_plugin_migrate_rc_command(args: &[String]) -> anyhow::Result<()> {
         match arg.as_str() {
             "--diff" => want_candidate = true,
             "-h" | "--help" => {
-                println!("usage: niu plugin migrate-rc [--diff]");
+                println!("usage: native-shell plugin migrate-rc [--diff]");
                 println!();
-                println!("  read-only: scans ~/.niubashrc for legacy managed plugin blocks,");
+                println!("  read-only: scans ~/.native-shellrc for legacy managed plugin blocks,");
                 println!("  publishes the candidate loader generation from the current");
                 println!("  manifest, and prints what to remove BY HAND. --diff also writes");
-                println!("  the suggested post-migration rc to ~/.niubash/candidates/.");
+                println!("  the suggested post-migration rc to ~/.native-shell/candidates/.");
                 println!("  This command never modifies your rc.");
                 return Ok(());
             }
             unknown => anyhow::bail!("unknown plugin migrate-rc option '{}'", unknown),
         }
     }
-    let rc_path = niubash_runtime::plugins::assets::rc_file();
+    let rc_path = native_shell_runtime::plugins::assets::rc_file();
     println!(
         "{}",
-        niubash_runtime::text_style::bold("niu plugin migrate-rc")
+        native_shell_runtime::text_style::bold("native-shell plugin migrate-rc")
     );
     println!(
         "  {}",
-        niubash_runtime::text_style::dim("read-only diagnostic — your rc is never written")
+        native_shell_runtime::text_style::dim("read-only diagnostic — your rc is never written")
     );
     println!();
-    let report = niubash_runtime::plugins::loader::migrate_rc(&rc_path, want_candidate)?;
+    let report = native_shell_runtime::plugins::loader::migrate_rc(&rc_path, want_candidate)?;
     if report.loader_held_off() && report.blocks.is_empty() {
         // CR F2: the guard trips on lines the id-anchored scan does not
         // attribute — name them, never print "clean" over a held-off
         // loader.
         println!(
             "  {} the startup guard holds the loader OFF for these marker lines:",
-            niubash_runtime::text_style::yellow("guard:")
+            native_shell_runtime::text_style::yellow("guard:")
         );
         for trip in &report.guard_trips {
             println!("    line {:>4}  {}", trip.line, trip.text);
@@ -3779,14 +3804,14 @@ fn run_plugin_migrate_rc_command(args: &[String]) -> anyhow::Result<()> {
     } else if report.blocks.is_empty() {
         println!(
             "  {} no legacy managed blocks in {} ({} lines)",
-            niubash_runtime::text_style::green("clean:"),
+            native_shell_runtime::text_style::green("clean:"),
             rc_path.display(),
             report.rc_lines
         );
     } else {
         println!(
             "  {} legacy managed block(s) in {}:",
-            niubash_runtime::text_style::yellow("found:"),
+            native_shell_runtime::text_style::yellow("found:"),
             rc_path.display()
         );
         for block in &report.blocks {
@@ -3800,8 +3825,8 @@ fn run_plugin_migrate_rc_command(args: &[String]) -> anyhow::Result<()> {
             let ownership = if block.spec_declared {
                 "declared — the loader generation carries its activation"
             } else {
-                "NOT declared — declare it first (`niu plugin sync --adopt` or \
-                 `niu plugin add`), or removing the block deactivates it"
+                "NOT declared — declare it first (`native-shell plugin sync --adopt` or \
+                 `native-shell plugin add`), or removing the block deactivates it"
             };
             println!(
                 "    lines {:>4}-{:>4}  source '{}' ({}; {})",
@@ -3813,14 +3838,14 @@ fn run_plugin_migrate_rc_command(args: &[String]) -> anyhow::Result<()> {
     if report.loader_published {
         println!(
             "  {} loader generation published: {}",
-            niubash_runtime::text_style::green("loader:"),
-            niubash_runtime::plugins::loader::loader_path().display()
+            native_shell_runtime::text_style::green("loader:"),
+            native_shell_runtime::plugins::loader::loader_path().display()
         );
     } else {
         println!(
             "  {} loader generation already current: {}",
-            niubash_runtime::text_style::green("loader:"),
-            niubash_runtime::plugins::loader::loader_path().display()
+            native_shell_runtime::text_style::green("loader:"),
+            native_shell_runtime::plugins::loader::loader_path().display()
         );
     }
     if report.loader_ids.is_empty() {
@@ -3832,13 +3857,13 @@ fn run_plugin_migrate_rc_command(args: &[String]) -> anyhow::Result<()> {
         println!();
         println!(
             "  {} suggested post-migration rc (review, then apply BY HAND):",
-            niubash_runtime::text_style::cyan("diff:")
+            native_shell_runtime::text_style::cyan("diff:")
         );
         println!("    {}", candidate.display());
     }
     if !report.blocks.is_empty() || report.loader_held_off() {
         println!();
-        println!("  next steps — niu never edits your rc, the removal is yours:");
+        println!("  next steps — native-shell never edits your rc, the removal is yours:");
         println!(
             "    1. delete the marked line ranges above from {} by hand",
             rc_path.display()
@@ -3850,54 +3875,54 @@ fn run_plugin_migrate_rc_command(args: &[String]) -> anyhow::Result<()> {
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "the ranges".to_string())
         });
-        println!("    2. restart niu — the generated loader takes over automatically");
+        println!("    2. restart native-shell — the generated loader takes over automatically");
     }
     Ok(())
 }
 
-/// `niu plugin restore [id]` — lockfile repair (lazy.nvim `:Lazy restore`):
+/// `native-shell plugin restore [id]` — lockfile repair (lazy.nvim `:Lazy restore`):
 /// rebuild every (or one) source tree exactly as pinned in the registry.
 fn run_plugin_restore_command(args: &[String]) -> anyhow::Result<()> {
     if let Some(id) = args.first() {
-        let outcome = niubash_runtime::plugins::sources::restore_source(id)?;
+        let outcome = native_shell_runtime::plugins::sources::restore_source(id)?;
         println!(
             "{} source '{}': {}",
-            niubash_runtime::text_style::green("Restored"),
+            native_shell_runtime::text_style::green("Restored"),
             outcome.id,
-            niubash_runtime::text_style::dim(&outcome.detail)
+            native_shell_runtime::text_style::dim(&outcome.detail)
         );
         return Ok(());
     }
-    let records = niubash_runtime::plugins::sources::read_source_registry();
+    let records = native_shell_runtime::plugins::sources::read_source_registry();
     if records.is_empty() {
         println!("(no sources installed)");
         return Ok(());
     }
     for record in records {
-        match niubash_runtime::plugins::sources::restore_source(&record.id) {
+        match native_shell_runtime::plugins::sources::restore_source(&record.id) {
             Ok(outcome) => println!(
                 "  {} {} ({})",
-                niubash_runtime::text_style::green("restored"),
+                native_shell_runtime::text_style::green("restored"),
                 outcome.id,
-                niubash_runtime::text_style::dim(&outcome.detail)
+                native_shell_runtime::text_style::dim(&outcome.detail)
             ),
             Err(err) => println!(
                 "  {} {} ({})",
-                niubash_runtime::text_style::yellow("skipped"),
+                native_shell_runtime::text_style::yellow("skipped"),
                 record.id,
-                niubash_runtime::text_style::dim(&err.to_string())
+                native_shell_runtime::text_style::dim(&err.to_string())
             ),
         }
     }
     Ok(())
 }
 
-/// `niu plugin sync` — reconcile the declarative spec with the machine
+/// `native-shell plugin sync` — reconcile the declarative spec with the machine
 /// (§14.6.3; lazy.nvim `:Lazy sync`): install declared-but-missing sources
 /// (fetch gate only — trust never auto-flips), materialize the managed rc
 /// blocks from the spec idempotently, and suggest cleanup for installed
 /// sources the spec no longer declares (`--prune` is the explicit confirm).
-/// `--timeout <seconds>` (`niu plugin sync` / `niu plugin add`, niubash#293):
+/// `--timeout <seconds>` (`native-shell plugin sync` / `native-shell plugin add`, native-shell#293):
 /// the per-source fetch budget override for this run. Parsed from either
 /// `--timeout 90` or `--timeout=90`; zero and non-numeric values are refused.
 fn parse_timeout_seconds(raw: &str) -> anyhow::Result<std::time::Duration> {
@@ -3941,29 +3966,30 @@ fn run_plugin_sync_command(args: &[String]) -> anyhow::Result<()> {
     if bootstrap {
         return Ok(());
     }
-    let report =
-        niubash_runtime::plugins::sync::sync_spec(niubash_runtime::plugins::sync::SyncOptions {
+    let report = native_shell_runtime::plugins::sync::sync_spec(
+        native_shell_runtime::plugins::sync::SyncOptions {
             prune,
             adopt,
             startup: false,
             checksum_pin: None,
             timeout,
-        })?;
-    // niubash#196/#359: a hand-written theme variable outside the managed
+        },
+    )?;
+    // native-shell#196/#359: a hand-written theme variable outside the managed
     // blocks is not the supported channel — the theme belongs in the spec.
     // Since the read-only redesign sync writes NO rc at all, the
     // hand-written line is no longer overwritten: it now simply runs AFTER
     // the generated loader, so it wins at startup. Say which channel is
     // supported and what the hand line does, and let the user choose.
-    let stray = niubash_runtime::plugins::assets::stray_theme_assignment_lines();
+    let stray = native_shell_runtime::plugins::assets::stray_theme_assignment_lines();
     if !stray.is_empty() {
         eprintln!(
-            "niu plugin sync: found hand-written theme assignment(s) outside the managed \
+            "native-shell plugin sync: found hand-written theme assignment(s) outside the managed \
              blocks: {}. The supported channel is {} as `theme = \"...\"` on the source \
              entry; your hand-written line runs after the generated plugin loader, so it \
              wins at startup — keep it only if you intend that override.",
             stray.join("; "),
-            niubash_runtime::plugins::spec::spec_path().display()
+            native_shell_runtime::plugins::spec::spec_path().display()
         );
     }
     if !report.spec_present {
@@ -3972,28 +3998,28 @@ fn run_plugin_sync_command(args: &[String]) -> anyhow::Result<()> {
         // the exact migration one-liner, plus the hand-write alternative.
         println!(
             "(no spec at {} — imperative mode)",
-            niubash_runtime::plugins::spec::spec_path().display()
+            native_shell_runtime::plugins::spec::spec_path().display()
         );
         for id in &report.undeclared {
             println!("  {id}  (installed; undeclared)");
         }
         if !report.undeclared.is_empty() {
             println!("declare everything installed in one move (snapshots the live selection):");
-            println!("  niu plugin sync --adopt");
+            println!("  native-shell plugin sync --adopt");
             println!("or hand-write the spec, then sync:");
             println!(
                 "  {}",
-                niubash_runtime::text_style::dim(&format!(
+                native_shell_runtime::text_style::dim(&format!(
                     "schema = \"{}\"\n\n[[sources]]\ntarget = \"oh-my-bash\"{}\
                      \nenable = [\"git\", \"npm\"]\ntheme  = \"agnoster\"",
-                    niubash_runtime::plugins::spec::PLUGIN_SPEC_SCHEMA,
+                    native_shell_runtime::plugins::spec::PLUGIN_SPEC_SCHEMA,
                     "            # catalog id | owner/repo | url | path"
                 ))
             );
             println!(
                 "  {}",
-                niubash_runtime::text_style::dim(
-                    "a single source can also be declared with `niu plugin add <target>`"
+                native_shell_runtime::text_style::dim(
+                    "a single source can also be declared with `native-shell plugin add <target>`"
                 )
             );
         }
@@ -4002,18 +4028,18 @@ fn run_plugin_sync_command(args: &[String]) -> anyhow::Result<()> {
     for id in &report.adopted {
         println!(
             "{} {} {}",
-            niubash_runtime::text_style::green("declared"),
+            native_shell_runtime::text_style::green("declared"),
             id,
-            niubash_runtime::text_style::dim("(installed; adopted into the spec)")
+            native_shell_runtime::text_style::dim("(installed; adopted into the spec)")
         );
     }
     if !report.adopted.is_empty() {
         println!(
             "{}",
-            niubash_runtime::text_style::dim(&format!(
-                "adopted {} source(s) into {} — a plain `niu plugin sync` is now a no-op",
+            native_shell_runtime::text_style::dim(&format!(
+                "adopted {} source(s) into {} — a plain `native-shell plugin sync` is now a no-op",
                 report.adopted.len(),
-                niubash_runtime::plugins::spec::spec_path().display()
+                native_shell_runtime::plugins::spec::spec_path().display()
             ))
         );
     }
@@ -4026,20 +4052,20 @@ fn run_plugin_sync_command(args: &[String]) -> anyhow::Result<()> {
     if report.clean {
         println!(
             "{}",
-            niubash_runtime::text_style::dim("spec and machine are in sync")
+            native_shell_runtime::text_style::dim("spec and machine are in sync")
         );
     }
-    // niubash#359 transition note: a legacy managed block in the user rc
+    // native-shell#359 transition note: a legacy managed block in the user rc
     // keeps the generated loader off until the user removes it.
-    if let Some(notice) = niubash_runtime::plugins::loader::migration_notice_if_needed() {
-        println!("  {}", niubash_runtime::text_style::yellow(&notice));
+    if let Some(notice) = native_shell_runtime::plugins::loader::migration_notice_if_needed() {
+        println!("  {}", native_shell_runtime::text_style::yellow(&notice));
     }
     Ok(())
 }
 
-/// `niu plugin clean` — remove staging leftovers and report orphaned trees;
+/// `native-shell plugin clean` — remove staging leftovers and report orphaned trees;
 /// `--orphans` is the explicit confirm that deletes them (vim-plug
-/// `:PlugClean`, niubash#299: orphans are listed, never silently removed).
+/// `:PlugClean`, native-shell#299: orphans are listed, never silently removed).
 fn run_plugin_clean_command(args: &[String]) -> anyhow::Result<()> {
     let mut delete_orphans = false;
     for arg in args {
@@ -4048,7 +4074,7 @@ fn run_plugin_clean_command(args: &[String]) -> anyhow::Result<()> {
             unknown => anyhow::bail!("unknown plugin clean option '{unknown}'"),
         }
     }
-    let outcomes = niubash_runtime::plugins::sources::clean_sources(delete_orphans);
+    let outcomes = native_shell_runtime::plugins::sources::clean_sources(delete_orphans);
     if outcomes.is_empty() {
         println!("nothing to clean");
         return Ok(());
@@ -4056,21 +4082,21 @@ fn run_plugin_clean_command(args: &[String]) -> anyhow::Result<()> {
     let mut orphans = 0usize;
     for outcome in &outcomes {
         let marker = match outcome.outcome.as_str() {
-            "removed" => niubash_runtime::text_style::green("removed"),
+            "removed" => native_shell_runtime::text_style::green("removed"),
             "orphan" => {
                 orphans += 1;
-                niubash_runtime::text_style::yellow("orphan")
+                native_shell_runtime::text_style::yellow("orphan")
             }
-            _ => niubash_runtime::text_style::red("failed"),
+            _ => native_shell_runtime::text_style::red("failed"),
         };
         println!("  {marker} {:<25} {}", outcome.id, outcome.detail);
     }
     if orphans > 0 && !delete_orphans {
         println!(
             "{}",
-            niubash_runtime::text_style::yellow(&format!(
+            native_shell_runtime::text_style::yellow(&format!(
                 "{orphans} orphaned director{} found — review the list above, then run \
-                 `niu plugin clean --orphans` to delete",
+                 `native-shell plugin clean --orphans` to delete",
                 if orphans == 1 { "y" } else { "ies" }
             ))
         );
@@ -4079,7 +4105,7 @@ fn run_plugin_clean_command(args: &[String]) -> anyhow::Result<()> {
 }
 
 /// Normalize a local path target into a cwd-independent absolute form
-/// (niubash#176): the spec is reconciled from any directory later, so a
+/// (native-shell#176): the spec is reconciled from any directory later, so a
 /// relative spelling (`./omb`, a bare dir name in the cwd) is stored as a
 /// lexically normalized absolute path instead of raw. `std::fs::canonicalize`
 /// is avoided on purpose — on Windows it emits `\\?\`-prefixed paths that
@@ -4110,9 +4136,9 @@ fn stable_local_target(target: &str) -> String {
 }
 
 fn print_plugin_add_usage() {
-    println!("Usage:  niu plugin add <id|owner/repo|url|path> [options]");
+    println!("Usage:  native-shell plugin add <id|owner/repo|url|path> [options]");
     println!();
-    println!("Declare a source in the spec (~/.niubash/plugins.toml) and install it");
+    println!("Declare a source in the spec (~/.native-shell/plugins.toml) and install it");
     println!("(fetch gate only; everything lands untrusted until you trust it).");
     println!();
     println!("Target forms:");
@@ -4125,7 +4151,7 @@ fn print_plugin_add_usage() {
     println!("  <path>                  A local directory (snapshot-copied in) or a");
     println!("                          single .sh/.bash file (its own one-file source");
     println!("                          tree); the copy is registered untrusted —");
-    println!("                          niubash#300, the bare-path form is first-class");
+    println!("                          native-shell#300, the bare-path form is first-class");
     println!();
     println!("Options:");
     println!("  --id <name>            Pin the source id (else derived/bound at sync)");
@@ -4138,19 +4164,19 @@ fn print_plugin_add_usage() {
     println!("                         declaration rolls back, nothing hangs)");
     println!();
     println!("After adding:");
-    println!("  niu plugin trust <id>      Review and activate the source");
-    println!("  niu plugin enable <target> Pick assets (or the whole source)");
-    println!("  niu plugin sync --prune    Remove a stranded declaration");
+    println!("  native-shell plugin trust <id>      Review and activate the source");
+    println!("  native-shell plugin enable <target> Pick assets (or the whole source)");
+    println!("  native-shell plugin sync --prune    Remove a stranded declaration");
 }
 
 fn print_plugin_usage() {
-    println!("Usage:  niu plugin <command>");
+    println!("Usage:  native-shell plugin <command>");
     println!();
     println!("External plugin ecosystem, first-class: any sourceable bash — the");
     println!("known managers (oh-my-bash, bash-it, bash-completion, bpkg trees)");
     println!("and arbitrary wild plugins (single files, gist-style .bash, any");
-    println!("repo). The declarative spec ~/.niubash/plugins.toml is the source");
-    println!("of truth; these verbs are sugar over it plus `niu plugin sync`.");
+    println!("repo). The declarative spec ~/.native-shell/plugins.toml is the source");
+    println!("of truth; these verbs are sugar over it plus `native-shell plugin sync`.");
     println!("Sources install untrusted and activate only after an explicit");
     println!("trust review.");
     println!();
@@ -4180,7 +4206,7 @@ fn print_plugin_usage() {
     println!("  restore [<id>]           Rebuild tree(s) from the lockfile pin");
     println!("  rollback <id>            Restore the previous source state");
     println!("  clean [--orphans]        Remove staging leftovers; list orphan dirs");
-    println!("                           (--orphans deletes them, niubash#299)");
+    println!("                           (--orphans deletes them, native-shell#299)");
     println!("  trust <id>               Review and activate a source's assets");
     println!("  discover [--verbose]     Dry ecosystem overview (read-only)");
     println!("  ui                       Menu UI (sections by state, same verbs)");
@@ -4205,18 +4231,18 @@ fn print_plugin_usage() {
     println!("  theme  = 'agnoster'           # optional (OSH_THEME/…; absent = unmanaged)");
     println!();
     println!("Examples:");
-    println!("  niu plugin add oh-my-bash        # catalog shorthand");
-    println!("  niu plugin add rcaloras/bash-preexec   # wild GitHub plugin");
-    println!("  niu plugin enable bash-preexec/bash-preexec.sh   # pick the file");
-    println!("  niu plugin add bpkg --path <dir> # adopt a bpkg-installed tree");
-    println!("  niu plugin sync                  # reconcile spec <-> machine");
-    println!("  niu plugin sync --adopt          # declare installed sources into");
+    println!("  native-shell plugin add oh-my-bash        # catalog shorthand");
+    println!("  native-shell plugin add rcaloras/bash-preexec   # wild GitHub plugin");
+    println!("  native-shell plugin enable bash-preexec/bash-preexec.sh   # pick the file");
+    println!("  native-shell plugin add bpkg --path <dir> # adopt a bpkg-installed tree");
+    println!("  native-shell plugin sync                  # reconcile spec <-> machine");
+    println!("  native-shell plugin sync --adopt          # declare installed sources into");
     println!("                           # the spec (imperative -> declarative;");
     println!("                           # snapshots the live enable/theme)");
-    println!("  niu plugin sync --bootstrap      # legacy rc compatibility no-op");
+    println!("  native-shell plugin sync --bootstrap      # legacy rc compatibility no-op");
 }
 
-/// Parse `--preset <name>` / `--preset=<name>` from `niu setup` arguments.
+/// Parse `--preset <name>` / `--preset=<name>` from `native-shell setup` arguments.
 /// Unknown flags are ignored so the interactive wizard keeps working.
 fn setup_preset_arg(args: &[String]) -> Option<String> {
     let mut iter = args.iter();
@@ -4231,23 +4257,23 @@ fn setup_preset_arg(args: &[String]) -> Option<String> {
     None
 }
 
-/// Plain-text usage for `niu setup` (niubash#195): `--help` must render
+/// Plain-text usage for `native-shell setup` (native-shell#195): `--help` must render
 /// readably everywhere — pipes, redirects, and CI logs included — so it
 /// never emits the ANSI logo art, on a tty or off one.
 fn show_setup_usage() {
     println!(
-        "niu {} — run the interactive setup wizard",
+        "native-shell {} — run the interactive setup wizard",
         env!("CARGO_PKG_VERSION")
     );
     println!();
     println!("Usage:");
-    println!("  niu setup                       Re-run the interactive setup wizard");
-    println!("  niu setup --preset <name>       Apply a preset non-interactively");
+    println!("  native-shell setup                       Re-run the interactive setup wizard");
+    println!("  native-shell setup --preset <name>       Apply a preset non-interactively");
     println!("                                  (e.g. recommended, minimal)");
-    println!("  niu setup --help                Show this help (plain text)");
+    println!("  native-shell setup --help                Show this help (plain text)");
     println!();
-    println!("The wizard writes ~/.niubashrc and the plugin spec");
-    println!("(~/.niubash/plugins.toml). Existing rc files are backed up.");
+    println!("The wizard writes ~/.native-shellrc and the plugin spec");
+    println!("(~/.native-shell/plugins.toml). Existing rc files are backed up.");
 }
 
 #[cfg(windows)]
@@ -4265,7 +4291,7 @@ fn install_windows_terminal_profile(rest: &[String]) -> anyhow::Result<()> {
 
     let commandline = std::env::current_exe()?;
     let icon = windows_terminal_icon_path(&commandline);
-    let summary = niubash_runtime::windows_terminal::install_niubash_profile(
+    let summary = native_shell_runtime::windows_terminal::install_native_shell_profile(
         &commandline,
         icon.as_deref(),
         set_default,
@@ -4292,9 +4318,9 @@ fn install_windows_terminal_profile(_rest: &[String]) -> anyhow::Result<()> {
     anyhow::bail!("--install-wt-profile is only supported on Windows")
 }
 
-/// niubash#211: (re)write the desktop and Start-menu shortcuts in the WT
-/// form — `wt.exe -p Niubash` — when a `wt.exe` resolves AND the Niubash WT
-/// profile is registered; otherwise the conhost baseline (direct `niu.exe`,
+/// native-shell#211: (re)write the desktop and Start-menu shortcuts in the WT
+/// form — `wt.exe -p NativeShell` — when a `wt.exe` resolves AND the NativeShell WT
+/// profile is registered; otherwise the conhost baseline (direct `native-shell.exe`,
 /// the shape the installer's `[Icons]` entries always carried). Options:
 ///
 /// - `--quiet` suppress the per-link report
@@ -4332,21 +4358,21 @@ fn install_windows_terminal_shortcuts(rest: &[String]) -> anyhow::Result<()> {
     }
 
     let commandline = std::env::current_exe()?;
-    let plan = niubash_runtime::shortcut::plan_for_installation(
+    let plan = native_shell_runtime::shortcut::plan_for_installation(
         &commandline,
         shortcut_icon_path(&commandline).as_deref(),
     );
 
     let (desktop_lnk, start_menu_lnk) = match (desktop_dir, start_menu_dir) {
         (Some(desktop), Some(start_menu)) => (
-            desktop.join(niubash_runtime::shortcut::LNK_FILE_NAME),
-            start_menu.join(niubash_runtime::shortcut::LNK_FILE_NAME),
+            desktop.join(native_shell_runtime::shortcut::LNK_FILE_NAME),
+            start_menu.join(native_shell_runtime::shortcut::LNK_FILE_NAME),
         ),
-        _ => niubash_runtime::shortcut::default_shortcut_paths()
+        _ => native_shell_runtime::shortcut::default_shortcut_paths()
             .ok_or_else(|| anyhow::anyhow!("could not resolve the desktop or Start-menu folder"))?,
     };
 
-    let summary = niubash_runtime::shortcut::install_shortcuts(
+    let summary = native_shell_runtime::shortcut::install_shortcuts(
         &plan,
         &desktop_lnk,
         &start_menu_lnk,
@@ -4355,14 +4381,14 @@ fn install_windows_terminal_shortcuts(rest: &[String]) -> anyhow::Result<()> {
 
     if !quiet {
         match plan.form {
-            niubash_runtime::shortcut::ShortcutForm::WindowsTerminal { wt_exe } => {
+            native_shell_runtime::shortcut::ShortcutForm::WindowsTerminal { wt_exe } => {
                 println!(
                     "Shortcut form: Windows Terminal ({} -p ...)",
                     wt_exe.display()
                 );
             }
-            niubash_runtime::shortcut::ShortcutForm::Conhost => {
-                println!("Shortcut form: direct niu.exe (Windows Terminal not detected)");
+            native_shell_runtime::shortcut::ShortcutForm::Conhost => {
+                println!("Shortcut form: direct native-shell.exe (Windows Terminal not detected)");
             }
         }
         for path in &summary.written {
@@ -4387,10 +4413,10 @@ fn install_windows_terminal_shortcuts(_rest: &[String]) -> anyhow::Result<()> {
 fn windows_terminal_icon_path(commandline: &std::path::Path) -> Option<PathBuf> {
     let app_dir = commandline.parent()?;
     [
-        app_dir.join("assets").join("niubash-icon-256.png"),
-        app_dir.join("assets").join("niubash-icon.png"),
-        app_dir.join("niubash-icon-256.png"),
-        app_dir.join("niubash-icon.png"),
+        app_dir.join("assets").join("native-shell-icon-256.png"),
+        app_dir.join("assets").join("native-shell-icon.png"),
+        app_dir.join("native-shell-icon-256.png"),
+        app_dir.join("native-shell-icon.png"),
     ]
     .into_iter()
     .find(|path| path.is_file())
@@ -4398,14 +4424,14 @@ fn windows_terminal_icon_path(commandline: &std::path::Path) -> Option<PathBuf> 
 
 /// The icon a generated shortcut shows. A `.lnk` icon can only reference
 /// `.ico` / exe resources (the WT profile's PNG list does not apply here),
-/// so prefer the bundled ico and fall back to the niu.exe embedded icon —
-/// the WT-form link must still wear the Niubash icon, not the WT one.
+/// so prefer the bundled ico and fall back to the native-shell.exe embedded icon —
+/// the WT-form link must still wear the NativeShell icon, not the WT one.
 #[cfg(windows)]
 fn shortcut_icon_path(commandline: &std::path::Path) -> Option<PathBuf> {
     let app_dir = commandline.parent()?;
     [
-        app_dir.join("assets").join("niubash-icon.ico"),
-        app_dir.join("niubash-icon.ico"),
+        app_dir.join("assets").join("native-shell-icon.ico"),
+        app_dir.join("native-shell-icon.ico"),
     ]
     .into_iter()
     .find(|path| path.is_file())
@@ -4422,32 +4448,33 @@ fn print_completion_probe(rest: &[String]) -> anyhow::Result<()> {
     } else {
         line.len()
     };
-    let mut shell = niubash_runtime::Shell::new()?;
+    let mut shell = native_shell_runtime::Shell::new()?;
     // Issue #307: the probe is the agent-facing completion surface, so it
-    // sources NIU_ENV first (bash-compatible BASH_ENV fallback; NIU_ENV wins —
+    // sources NATIVE_SHELL_ENV first (bash-compatible BASH_ENV fallback; NATIVE_SHELL_ENV wins —
     // the same precedence `-c` applies through `source_non_interactive_env`).
-    // `complete` compspecs and NIU_COMPDEFS declarations from an agent init
+    // `complete` compspecs and NATIVE_SHELL_COMPDEFS declarations from an agent init
     // file must be visible to the probe; sourced before the interactive rc so
     // the rc stays the more specific override. The probe is a synthetic
-    // surface niu spawns itself under its own name (never a login shell), so
+    // surface native-shell spawns itself under its own name (never a login shell), so
     // a startup-file exit-jump has no invocation to terminate here.
     let _ = shell.source_non_interactive_env();
     let _ = shell.run_startup_rc();
-    // The REPL loads the rc-declared completion functions (NIU_COMPDEFS)
+    // The REPL loads the rc-declared completion functions (NATIVE_SHELL_COMPDEFS)
     // after sourcing and installs the completion bridge before the line
     // editor runs (repl.rs); the probe mirrors that sequence so compdef and
     // compspec candidates reach the same completer state a Tab press sees.
-    // Runs after both startup files so NIU_COMPDEFS declared in NIU_ENV /
+    // Runs after both startup files so NATIVE_SHELL_COMPDEFS declared in NATIVE_SHELL_ENV /
     // BASH_ENV lands in the same registry.
     shell.load_user_compdefs();
     let shell = std::rc::Rc::new(std::cell::RefCell::new(shell));
-    niubash_runtime::shell::install_completion_bridge(&shell);
+    native_shell_runtime::shell::install_completion_bridge(&shell);
     // Sync the completer state, then run the completer with NO borrow held
     // on the shell: candidate generation re-enters the engine through the
     // bridge (compdef hooks run shell functions), exactly as at a live Tab.
     shell.borrow().update_completion_state();
-    let mut completer =
-        niubash_runtime::completion::NiubashCompleter::new(shell.borrow().completion_state.clone());
+    let mut completer = native_shell_runtime::completion::NativeShellCompleter::new(
+        shell.borrow().completion_state.clone(),
+    );
     for suggestion in completer.complete(line, cursor_pos.min(line.len())) {
         println!("{}", suggestion.value);
     }
@@ -4455,19 +4482,19 @@ fn print_completion_probe(rest: &[String]) -> anyhow::Result<()> {
 }
 
 fn print_version() {
-    // niubash#140: println! panics when stdout is a pipe the reader already
-    // closed (os error 232), so `niu --version | true` aborted the launcher.
+    // native-shell#140: println! panics when stdout is a pipe the reader already
+    // closed (os error 232), so `native-shell --version | true` aborted the launcher.
     // Write through an explicit handle and swallow the error, matching the
     // engine-side #125 policy (is_broken_pipe_error below).
     use std::io::Write;
     let mut out = std::io::stdout().lock();
     let _ = writeln!(
         out,
-        "Niubash {} \u{2014} bash-compatible shell for Windows",
+        "Native Shell {} \u{2014} bash-compatible shell for Windows",
         env!("CARGO_PKG_VERSION")
     );
     let _ = writeln!(out, "  rubash   {}", rubash_revision_label());
-    if let Some(v) = niubash_runtime::winuxcmd::version() {
+    if let Some(v) = native_shell_runtime::winuxcmd::version() {
         let _ = writeln!(out, "  winuxcmd {}", v);
     }
 }
@@ -4476,7 +4503,7 @@ fn print_version() {
 /// when build.rs resolved a real commit; a build without git access resolves
 /// to "unknown" and must not be advertised as a branch name.
 fn rubash_revision_label() -> String {
-    let revision = option_env!("NIU_RUBASH_REV").unwrap_or("unknown");
+    let revision = option_env!("NATIVE_SHELL_RUBASH_REV").unwrap_or("unknown");
     if revision == "unknown" {
         revision.to_string()
     } else {
@@ -4547,7 +4574,7 @@ fn decode_base64(input: &str) -> anyhow::Result<Vec<u8>> {
 /// `--cwd-state <file>` / `--cwd-state-verbose`: the directory memory an
 /// agent host uses to make one-shot invocations behave like one shell.
 ///
-/// The option is deliberately explicit rather than a default: `niu -c` without
+/// The option is deliberately explicit rather than a default: `native-shell -c` without
 /// it keeps the inherited working directory byte-for-byte, because CI drivers
 /// and interactive callers rely on the start directory being predictable. The
 /// state file is a small JSON object (`{"cwd": "...", "updatedAt": <unix ms>}`)
@@ -4575,7 +4602,7 @@ fn cwd_state() -> Option<&'static CwdStateOption> {
 /// Split the cwd-state options off the front of argv.
 ///
 /// The options form a *prefix* group: the scan stops at the first token that
-/// is not one of them, so the positional parameters of `niu -c <cmd> <name> ...`
+/// is not one of them, so the positional parameters of `native-shell -c <cmd> <name> ...`
 /// can never be mistaken for an option, and run's bash-style
 /// `ShellInvocation` parser never sees the flags at all.
 fn extract_cwd_state_options(args: &[String]) -> anyhow::Result<Vec<String>> {
@@ -4612,7 +4639,7 @@ fn extract_cwd_state_options(args: &[String]) -> anyhow::Result<Vec<String>> {
     Ok(rest)
 }
 
-/// Pin the state path to the directory niu was started in.
+/// Pin the state path to the directory native-shell was started in.
 ///
 /// A relative path has to keep naming the same file for both halves of the
 /// contract: the record is written after the command ran, and `execute_script`
@@ -4649,13 +4676,13 @@ fn restore_cwd_state() {
     match std::env::set_current_dir(&directory) {
         Ok(()) => {
             if options.verbose {
-                eprintln!("niu: cwd-state: restored {}", directory.display());
+                eprintln!("native-shell: cwd-state: restored {}", directory.display());
             }
         }
         Err(error) => {
             if options.verbose {
                 eprintln!(
-                    "niu: cwd-state: cannot enter {}: {error}",
+                    "native-shell: cwd-state: cannot enter {}: {error}",
                     directory.display()
                 );
             }
@@ -4677,11 +4704,11 @@ fn read_cwd_state(state: &Path) -> Option<PathBuf> {
     path.is_dir().then_some(path)
 }
 
-/// niubash#402: the startup rc executed `exit`. Run the EXIT trap with the
+/// native-shell#402: the startup rc executed `exit`. Run the EXIT trap with the
 /// rc's status and terminate the invocation before the command line, script,
 /// or stdin driver runs (GNU jump_to_top_level unwinds reader_loop). `exit 0`
 /// also terminates, so this always exits — unlike [`finish_one_shot`].
-fn finish_startup_exit(shell: &mut niubash_runtime::Shell, status: i32) -> ! {
+fn finish_startup_exit(shell: &mut native_shell_runtime::Shell, status: i32) -> ! {
     let code = shell.finish_with_exit_trap(status).unwrap_or(status);
     record_cwd_state(shell);
     piped_stdout::finish_and_exit(code);
@@ -4696,12 +4723,12 @@ fn finish_startup_exit(shell: &mut niubash_runtime::Shell, status: i32) -> ! {
 /// A nonzero code exits immediately (bash's exit_jump skips the normal
 /// teardown). rc 0 returns to the caller so `main` unwinds normally — and
 /// the unwind is load-bearing: `RubashHistoryProvider::drop`, the
-/// session-end HISTFILE write (niubash#265), only runs on a normal return.
+/// session-end HISTFILE write (native-shell#265), only runs on a normal return.
 /// #272 routed every one-shot exit through `std::process::exit`, which
 /// skips `Drop`, silently stranding that write: a one-shot
 /// `history -c` left the file holding the pre-clear list
 /// (host_contract::history_and_fc_use_the_host_history_provider).
-fn finish_one_shot(shell: &niubash_runtime::Shell, code: i32) {
+fn finish_one_shot(shell: &native_shell_runtime::Shell, code: i32) {
     record_cwd_state(shell);
     piped_stdout::finish();
     if code != 0 {
@@ -4709,7 +4736,7 @@ fn finish_one_shot(shell: &niubash_runtime::Shell, code: i32) {
     }
 }
 
-fn record_cwd_state(shell: &niubash_runtime::Shell) {
+fn record_cwd_state(shell: &native_shell_runtime::Shell) {
     let Some(options) = cwd_state() else {
         return;
     };
@@ -4749,9 +4776,12 @@ fn record_cwd_state(shell: &niubash_runtime::Shell) {
     }
     let _ = std::fs::remove_file(&tmp);
     if !write_ok {
-        eprintln!("niu: cwd-state: failed to record {}", directory.display());
+        eprintln!(
+            "native-shell: cwd-state: failed to record {}",
+            directory.display()
+        );
     } else if options.verbose {
-        eprintln!("niu: cwd-state: recorded {}", directory.display());
+        eprintln!("native-shell: cwd-state: recorded {}", directory.display());
     }
 }
 
@@ -4804,7 +4834,7 @@ mod launcher_dispatch_tests {
     use super::*;
 
     fn argv(words: &[&str]) -> Vec<String> {
-        let mut args = vec!["niu".to_string()];
+        let mut args = vec!["native-shell".to_string()];
         args.extend(words.iter().map(|word| word.to_string()));
         args
     }
@@ -4821,7 +4851,7 @@ mod launcher_dispatch_tests {
 
     #[test]
     fn encoded_command_aliases_are_launcher_words() {
-        // niubash#474: `-EncodedCommand` (PowerShell spelling,
+        // native-shell#474: `-EncodedCommand` (PowerShell spelling,
         // case-insensitive) and `--ec` resolve wherever the canonical
         // spelling is found, including behind value-taking option words.
         assert_eq!(index_of(&["--ec", "payload"]), Some(1));
@@ -4899,7 +4929,7 @@ mod launcher_dispatch_tests {
 
     #[test]
     fn interactive_flag_after_a_value_taking_option_still_counts() {
-        // niubash#455's second rail: `--rcfile <rc> -i` is the per-asset
+        // native-shell#455's second rail: `--rcfile <rc> -i` is the per-asset
         // gate's own spawn shape — the -i is an option, not part of the
         // rcfile value, so the run is interactive and keeps its console.
         assert!(wants_interactive(&["--rcfile", "probe.rc", "-i"]));
@@ -5044,7 +5074,9 @@ mod tests {
         let mut invocation = ShellInvocation::parse(&[]).unwrap();
         assert_eq!(
             invocation_source_name(&invocation),
-            std::env::args().next().unwrap_or_else(|| "niu".to_string())
+            std::env::args()
+                .next()
+                .unwrap_or_else(|| "native-shell".to_string())
         );
         invocation.command = Some("echo hi".to_string());
         assert_eq!(invocation_source_name(&invocation), "-c");
@@ -5055,7 +5087,7 @@ mod tests {
 }
 
 /// Point every `bash.exe`/`sh.exe` name of this installation at the running
-/// `niu.exe`, replacing forwarding shims where hardlinks are available.
+/// `native-shell.exe`, replacing forwarding shims where hardlinks are available.
 fn relink_shell_faces(rest: &[String]) -> anyhow::Result<()> {
     let mut force = false;
     let mut quiet = false;
@@ -5067,14 +5099,14 @@ fn relink_shell_faces(rest: &[String]) -> anyhow::Result<()> {
         }
     }
 
-    let niu = std::env::current_exe()
+    let native_shell = std::env::current_exe()
         .map_err(|error| anyhow::anyhow!("cannot determine the running shell binary: {error}"))?;
-    let root = niubash_runtime::shell_links::find_installation_root(&niu);
-    let report = niubash_runtime::shell_links::link_shell_faces(&root, &niu, force);
+    let root = native_shell_runtime::shell_links::find_installation_root(&native_shell);
+    let report = native_shell_runtime::shell_links::link_shell_faces(&root, &native_shell, force);
 
     if !quiet {
         println!(
-            "niu: shell links under {}: {} created, {} already current, {} skipped, {} failed",
+            "native-shell: shell links under {}: {} created, {} already current, {} skipped, {} failed",
             root.display(),
             report.created.len(),
             report.already_current.len(),
@@ -5087,7 +5119,7 @@ fn relink_shell_faces(rest: &[String]) -> anyhow::Result<()> {
     }
     if !report.failed.is_empty() {
         for (path, error) in &report.failed {
-            eprintln!("niu: failed to link {}: {error}", path.display());
+            eprintln!("native-shell: failed to link {}: {error}", path.display());
         }
         anyhow::bail!("{} shell link(s) could not be created", report.failed.len());
     }
@@ -5095,8 +5127,8 @@ fn relink_shell_faces(rest: &[String]) -> anyhow::Result<()> {
 }
 
 /// Point every bundled package-shim name (`usr\bin\awk.exe`, `gawk.exe`)
-/// back at the current `winuxcmd.exe`, the reconcile `wpm links rebuild`
-/// cannot reach on a state-free bundled install (niubash#468). The installer
+/// back at the current `native-cmd.exe`, the reconcile `wpm links rebuild`
+/// cannot reach on a state-free bundled install (native-shell#468). The installer
 /// calls this from `[Run]`; startup activation calls the same function.
 fn relink_bundled_shims(rest: &[String]) -> anyhow::Result<()> {
     let mut force = false;
@@ -5109,14 +5141,15 @@ fn relink_bundled_shims(rest: &[String]) -> anyhow::Result<()> {
         }
     }
 
-    let exe = niubash_runtime::winuxcmd::find_winuxcmd()
-        .ok_or_else(|| anyhow::anyhow!("winuxcmd.exe not found; cannot reconcile bundled shims"))?;
-    let root = niubash_runtime::winuxcmd::installation_root(&exe);
-    let report = niubash_runtime::winuxcmd::reconcile_bundled_shims(&root, force);
+    let exe = native_shell_runtime::winuxcmd::find_winuxcmd().ok_or_else(|| {
+        anyhow::anyhow!("native-cmd.exe not found; cannot reconcile bundled shims")
+    })?;
+    let root = native_shell_runtime::winuxcmd::installation_root(&exe);
+    let report = native_shell_runtime::winuxcmd::reconcile_bundled_shims(&root, force);
 
     if !quiet {
         println!(
-            "niu: bundled shims under {}: {} created, {} already current, {} skipped, {} failed",
+            "native-shell: bundled shims under {}: {} created, {} already current, {} skipped, {} failed",
             root.join("usr").join("bin").display(),
             report.created.len(),
             report.already_current.len(),
@@ -5129,7 +5162,7 @@ fn relink_bundled_shims(rest: &[String]) -> anyhow::Result<()> {
     }
     if !report.failed.is_empty() {
         for (path, error) in &report.failed {
-            eprintln!("niu: failed to link {}: {error}", path.display());
+            eprintln!("native-shell: failed to link {}: {error}", path.display());
         }
         anyhow::bail!(
             "{} bundled shim link(s) could not be created",

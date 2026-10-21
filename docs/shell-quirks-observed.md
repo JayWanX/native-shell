@@ -1,6 +1,6 @@
 # Observed Shell-Syntax Quirks vs Real Bash (Session Log)
 
-> First-hand quirks observed while running real-world scripts under niubash,
+> First-hand quirks observed while running real-world scripts under native-shell,
 > recorded per `AGENTS.md` ("fix rubash upstream instead of carrying
 > long-term host-side workarounds"). Each entry lists the environment, the
 > exact repro, observed behavior, and the current workaround. Treat this as
@@ -17,7 +17,7 @@ this file is a session log first, a status board second.
 
 **Testing-methodology trap (learned this audit):** `rubash`'s
 `target/debug/bash.exe` is a *shim that forwards to the installed
-`niu.exe`* (`src/bin/bash.rs`), so building rubash and running its
+`native-shell.exe`* (`src/bin/bash.rs`), so building rubash and running its
 `bash` binary silently exercises the installed product, not the checked-out
 source. To test rubash source directly build `cargo build --bin rubash`
 and run `target/debug/rubash.exe`. Several entries below were initially
@@ -28,8 +28,8 @@ real engine binary.
 
 | Entry | Verdict |
 |---|---|
-| Q1 function-def same-line comment | **FIXED** in rubash upstream (`4ddca3e0` + `42c14d36`, niubash#118/#130); picked up by the niubash dependency bump |
-| Q1-RESOLVED `exit` in `&&`/`||` list (real Q3 root cause) | **FIXED** in rubash upstream (`c5c97683`); niubash 1.1.4 predates it |
+| Q1 function-def same-line comment | **FIXED** in rubash upstream (`4ddca3e0` + `42c14d36`, native-shell#118/#130); picked up by the native-shell dependency bump |
+| Q1-RESOLVED `exit` in `&&`/`||` list (real Q3 root cause) | **FIXED** in rubash upstream (`c5c97683`); native-shell 1.1.4 predates it |
 | Q2 merged-stream reorder | Not a quirk (OS pipe buffering; Git Bash identical) |
 | Q3 background loop `exit` | Superseded by Q1-RESOLVED (foreground repro, same root cause) |
 | Q4 sed `\r` strip branch | **FIXED** in WinuxCmd `fix/sed-pattern-escapes` b8c6bd1 (push pending); release will carry it |
@@ -46,13 +46,13 @@ real engine binary.
 | Q15 POSIX path args translated | By design (MSYS/Git-Bash parity — Git Bash translated identically); keep the normalize-in-script rule |
 | Gate-era `grep --include` / `$(…\| grep -v …)` | Obsolete: refactor-gate.sh gone; both re-tested correct |
 
-- **Shell under test:** niubash 1.1.4 (`bash --version` → "Niubash 1.1.4 —
+- **Shell under test:** native-shell 1.1.4 (`bash --version` → "Native Shell 1.1.4 —
   bash-compatible shell for Windows"), observed 2026-09-22. Second session
   2026-09-23 (long-running peshell T1-T8 + test-system campaign: ~200 shell
   commands, batch scripts, cmd/PowerShell boundary work) produced Q4-Q12.
 - **Reference shell:** GNU bash (POSIX). Constructs below are accepted by
-  real bash and by `bash -n` under niubash, but behave differently at
-  niubash **execution** time.
+  real bash and by `bash -n` under native-shell, but behave differently at
+  native-shell **execution** time.
 
 ---
 
@@ -68,7 +68,7 @@ step() { # step <name> <command...>
 step a
 ```
 
-**Observed (niubash 1.1.4, execution):**
+**Observed (native-shell 1.1.4, execution):**
 
 ```
 line 2: syntax error near unexpected token `('
@@ -77,7 +77,7 @@ line 2: `step ( ) { # step <name> <command...>'
 
 - Real bash: runs fine (POSIX allows a comment anywhere a token can start,
   including immediately after `{`).
-- niubash `bash -n` on the **same file**: passes. Only **execution** fails —
+- native-shell `bash -n` on the **same file**: passes. Only **execution** fails —
   so `-n` and the executor evidently use different parser paths, and `-n`
   cannot be trusted to predict executor acceptance for this construct.
 - Line endings ruled out: the failing file was verified LF-only by byte
@@ -98,7 +98,7 @@ step() {
 keeps `#` comments out of brace-group tokens (`rubash 4ddca3e0 fix(lexer):
 keep trailing \`#\` comments out of brace-group tokens (#118)`, merged via
 `4aa2f5a3`, plus `42c14d36` "bare { token for unclosed group lines" —
-niubash#130). Re-verified on rubash master `2bb0277c`: both repro shapes
+native-shell#130). Re-verified on rubash master `2bb0277c`: both repro shapes
 (`step() { # c` and `step() { echo ok; } # x`) execute `ok`/`exit=0`,
 `bash -n` and the executor agree, `declare -f` prints the body. The audit
 also characterized the blast radius precisely: ordinary brace groups, if/
@@ -130,7 +130,7 @@ true && exit 5; echo UNREACHED        # GNU bash: exits 5, no UNREACHED
 f(){ true && exit 5; echo unf; }; f   # GNU bash: exits 5 inside the call
 ```
 
-niubash 1.1.4 (rubash `8b81c7501646`) printed `UNREACHED` / `guard` /
+native-shell 1.1.4 (rubash `8b81c7501646`) printed `UNREACHED` / `guard` /
 `unf` and kept running — the classic `cmd || exit 1` guard idiom was a
 silent no-op. Bare `exit` (`echo pre; exit 7`), `exit` in `if` bodies,
 and bare `exit` in function bodies were unaffected, and under `set -e`
@@ -145,7 +145,7 @@ and-or list before the fix.
 **Resolution: FIXED upstream in `rubash c5c97683` "exec: propagate
 exit/errexit ExitCode instead of downgrading to status"** (recorded in
 rubash `008cb7e5 docs: record ExitCode propagation fix (set-e ->0)`).
-Re-verified on rubash master `2bb0277c` and on a niubash build pinned to
+Re-verified on rubash master `2bb0277c` and on a native-shell build pinned to
 it: all three repros terminate with the right status; subshell
 boundaries still behave like GNU bash — `(exit 5); echo after` prints
 `after` with `$?`=5, `exit 5 | cat` only ends the stage, and
@@ -171,7 +171,7 @@ crashed" from the tail of a merged `2>&1` stream is therefore unreliable.
 - This is pipe-buffer interleaving, not a parser defect; real bash behaves
   the same at the OS level. It is recorded here because it produced a false
   "heap corruption crash" diagnosis in a real session.
-- niubash-relevant angle: `bash -n`-style trust heuristics do not exist for
+- native-shell-relevant angle: `bash -n`-style trust heuristics do not exist for
   stream order, and agents routinely diagnose from `tail`. A documented
   "don't diagnose from merged-stream tails; separate streams to files" rule
   prevents repeat mistakes.
@@ -180,7 +180,7 @@ crashed" from the tail of a merged `2>&1` stream is therefore unreliable.
 each (`cmd > out.txt 2> err.txt`), or check the exit code
 (`echo $?`) instead of the tail shape.
 
-**Classification (2026-09-24 audit): NOT A NIUBASH QUIRK.** OS-level pipe
+**Classification (2026-09-24 audit): NOT A NATIVE_SHELL QUIRK.** OS-level pipe
 buffering, exactly as the entry itself suspected; a Git Bash reference
 run interleaves identically. Keep the workaround rule; no code action.
 
@@ -200,7 +200,7 @@ done
 
 run via a background-job wrapper.
 
-**Observed (niubash 1.1.4, background job):** the `exit 0` did not end the
+**Observed (native-shell 1.1.4, background job):** the `exit 0` did not end the
 job — the loop kept producing output and the job stayed `running` after the
 guard should have exited it.
 
@@ -215,9 +215,9 @@ instead of a persistent background loop.
 
 **Resolution (2026-09-24 audit): superseded by the Q1-RESOLVED entry.**
 The background wrapper was never the culprit: the same script fails in
-the foreground on niubash 1.1.4 because `exit 0` sits in an `&&` chain
+the foreground on native-shell 1.1.4 because `exit 0` sits in an `&&` chain
 (`[ ! -f flag ] && echo waiting && exit 0`). With rubash
-`c5c97683` (picked up by the niubash dependency bump to `2bb0277c`) the
+`c5c97683` (picked up by the native-shell dependency bump to `2bb0277c`) the
 loop exits as GNU bash does. The workaround is no longer needed.
 
 ---
@@ -230,7 +230,7 @@ loop exits as GNU bash does. The workaround is no longer needed.
 sed -i 's/\r//g; s/$/\r/' file.cmd
 ```
 
-**Observed (niubash 1.1.4, 2026-09-23):** the file accumulated CRs —
+**Observed (native-shell 1.1.4, 2026-09-23):** the file accumulated CRs —
 `od -c` showed `\r \r \r \n` after three invocations. The `s/$/\r/`
 branch inserts a real CR every run, but the `s/\r//g` strip branch does
 **not** remove existing CRs. On an LF-only input the same command produced
@@ -300,14 +300,14 @@ isolating the trigger to the trailing backslash inside the quoted arg.
 (`set "PSHERE=%HERE:~0,-1%"`) and pass that to PowerShell; never end a
 quoted argument with `\` when the callee is PowerShell.
 
-**Classification (2026-09-24 audit): NOT A NIUBASH QUIRK.** The MSVCRT
+**Classification (2026-09-24 audit): NOT A NATIVE_SHELL QUIRK.** The MSVCRT
 command-line quoting rule (backslash before `"` = escape) applies to
 every native parent→PowerShell handoff on Windows, including Git Bash.
 Keep the rule; no code action.
 
 ---
 
-## Q6. `timeout` in a cmd script spawned from niubash resolves to coreutils timeout (PATH shadowing), and Windows `timeout.exe` refuses redirected stdin
+## Q6. `timeout` in a cmd script spawned from native-shell resolves to coreutils timeout (PATH shadowing), and Windows `timeout.exe` refuses redirected stdin
 
 **Repro:** `cmd.exe /c script.cmd` where the batch uses
 `timeout /t 3 /nobreak >nul` for a poll delay.
@@ -316,7 +316,7 @@ Keep the rule; no code action.
 
 1. `timeout: invalid time interval '/t'` — the inherited PATH resolved
    `timeout` to Git/coreutils `timeout` instead of
-   `%SystemRoot%\System32\timeout.exe` (niubash environment PATH puts the
+   `%SystemRoot%\System32\timeout.exe` (native-shell environment PATH puts the
    Unix tools first; cmd.exe inherits it).
 2. After switching to the absolute path:
    `ERROR: Input redirection is not supported, exiting the process
@@ -344,7 +344,7 @@ code action.
 
 ## Q7. Win32 `/switch` arguments are mangled under bash: `whoami /priv` prints only the username
 
-**Repro:** `whoami /priv` under niubash → prints `Administrator` and
+**Repro:** `whoami /priv` under native-shell → prints `Administrator` and
 nothing else (the `/priv` switch never reaches the tool); `cmd //c
 "whoami /priv"` → same.
 
@@ -370,13 +370,13 @@ redirect the tool's output to a file from an elevated cmd.
 `/switch` tokens through verbatim when they are not valid paths.
 
 **Resolution (2026-09-24 audit): diagnosis corrected — NOT an argument
-translation defect.** The audit proved niubash passes `/switch` tokens
-verbatim (`echo /priv //priv /c //c` under niu prints them unchanged,
+translation defect.** The audit proved native-shell passes `/switch` tokens
+verbatim (`echo /priv //priv /c //c` under native-shell prints them unchanged,
 and `tasklist /FI` reaches Windows correctly). The real mechanism: PATH
 resolves `whoami` to winuxcmd's `whoami.exe` first, and that tool has no
 `/priv` option and *silently ignores* unknown arguments — same for the
 bare `whoami` printing only `Administrator` (uutils-style, not
-Windows' `machine\user`). Windows `whoami.exe /priv` works from niubash
+Windows' `machine\user`). Windows `whoami.exe /priv` works from native-shell
 when called by full path. The "upstream candidate" above is therefore
 retracted; the guidance stands as a PATH-shadowing rule (Q6 family).
 Optional follow-up (not scheduled): winuxcmd `whoami` could reject
@@ -419,7 +419,7 @@ corruption). Note the plausible link to Q4: WinuxCmd sed's
 `'s/\r//g'` *did* eat every literal `r` in this era (see Q4's
 resolution) and is a proven letter-eating file-corruption source on
 these sessions — that entry may have been the actual culprit for some
-of the observed `r` removals. Keep the rule; no niubash action.
+of the observed `r` removals. Keep the rule; no native-shell action.
 
 ---
 
@@ -451,7 +451,7 @@ a cached handle or cwd translation goes stale after external processes
 ENOENT reproduced during the audit. Candidate areas narrowed a little:
 `execute_ast` saves/restores `env::current_dir()` around every top-level
 execution and rubash's compound pipeline stages save/restore the process
-cwd per stage, while niubash-runtime separately syncs the process cwd
+cwd per stage, while native-shell-runtime separately syncs the process cwd
 from the executor (`sync_process_cwd_from_executor_pwd`) — a mismatch
 between those layers around external children remains the plausible
 mechanism. Keep the workaround rule; investigation stays low priority
@@ -472,7 +472,7 @@ escaping printed `'D:\...\script.cmd' is not recognized as an internal
 or external command` once while working the next time.
 
 - Real bash spawning cmd: deterministic.
-- Suspect: argument re-quoting across the niubash → cmd boundary is
+- Suspect: argument re-quoting across the native-shell → cmd boundary is
   flaky for backslash paths; attached stdin (the pipeline) may also
   matter.
 
@@ -484,7 +484,7 @@ backslash rule).
 
 **Classification (2026-09-24 audit): deterministic, and POSIX-correct —
 see the Q10 addendum below, which the audit confirmed independently.**
-niubash performs no MSYS-style argument translation, so `//c` reaches
+native-shell performs no MSYS-style argument translation, so `//c` reaches
 cmd.exe literally (5/5 banner-only runs with EOF stdin; `/c` works
 5/5). POSIX bash behaves the same way — the `//` spelling is an MSYS
 convention, not a bash feature. The historical "intermittent" face came
@@ -533,7 +533,7 @@ scripts containing `$`/quotes" (every `pwsh`-tool call failed with the
 wrapper text `...UTF8Encoding]::new($false); "pwsh" -NoLogo -NoProf...`
 injected into the parse — workaround: write a `.ps1` file and invoke via
 `powershell.exe -File`) originate in the **agent-harness tooling layer**,
-not niubash; recorded here for agent awareness only.
+not native-shell; recorded here for agent awareness only.
 
 ---
 
@@ -549,7 +549,7 @@ not niubash; recorded here for agent awareness only.
 longer exists, and both behaviors re-tested correct on the current
 stack: `grep -r x DIR --include='*.py'` matches with options after the
 path (winuxcmd 1.0.8), and `out=$(cat f | grep -v b)` captures `a c`
-exactly (fixed with the rubash line the niubash dependency bump picks
+exactly (fixed with the rubash line the native-shell dependency bump picks
 up). Kept here only as history; remove the section at the next doc
 cull.
 
@@ -573,14 +573,14 @@ roots directly and probe for the batch file:
 `/c/Program Files/Microsoft Visual Studio/2022/{Community,Professional,Enterprise,BuildTools}/VC/Auxiliary/Build/vcvars64.bat`
 (implemented in peshell `scripts/peer/serial_cmd/build.sh`). Root cause
 (Instance registry not readable to vswhere) is a host/VS-installer issue,
-not niubash — recorded as a toolchain quirk per the logging mandate.
+not native-shell — recorded as a toolchain quirk per the logging mandate.
 
 ---
 
 ## Q14. `wc -c < file` reports 0 for a freshly written file
 
 **Repro:** `build.sh` prints `serial_cmd.exe（$(wc -c < "$OUT") bytes）`
-right after the linker writes the exe; niubash reported `0 bytes` while
+right after the linker writes the exe; native-shell reported `0 bytes` while
 `ls -la` showed 283648.
 
 **Observed:** the redirected-stdin form of `wc -c` read zero bytes at
@@ -598,10 +598,10 @@ then keep the workaround rule.
 
 ---
 
-## Q10 addendum (root cause confirmed deterministic): `cmd //c` under niubash is a silent-success trap
+## Q10 addendum (root cause confirmed deterministic): `cmd //c` under native-shell is a silent-success trap
 
 Q10 recorded intermittent behavior. The 2026-09-23 serial_cmd build gave
-a deterministic reproduction with a precise mechanism: niubash performs
+a deterministic reproduction with a precise mechanism: native-shell performs
 **no MSYS-style path/argument translation**, so `cmd //c script.cmd`
 hands cmd the literal token `//c`; cmd does not recognize it as the
 `/c` switch and starts **interactive** with the script name as its first
@@ -610,7 +610,7 @@ prompt input — it reads the attached pipeline/stdin, hits EOF, and exits
 effects absent). Hence: with attached non-empty stdin it can *sometimes*
 consume and run lines (the "intermittent" face of Q10); with EOF stdin
 it is a deterministic silent no-op. The single-slash form
-`cmd /c script.cmd` is the correct invocation under niubash (verified:
+`cmd /c script.cmd` is the correct invocation under native-shell (verified:
 batch executes every time). If a script must stay Git-Bash-compatible,
 normalize inside the script rather than relying on `//c`.
 
@@ -635,7 +635,7 @@ like a script bug.
 
 **Workaround:** normalize at script entry —
 `case "$1" in [A-Za-z]:\\*) DEST="$(cygpath -u "$1")";; esac`
-(cygpath is present under niubash; a sed fallback
+(cygpath is present under native-shell; a sed fallback
 `s#^\([A-Za-z]\):#/\L\1#; s#\\#/#g` suffices). Applied in peshell
 `scripts/peer/collect_pe_runtime_dlls.sh`. General rule for toolchain
 scripts: never glob a path received as an argument without normalizing
@@ -653,13 +653,13 @@ globs `$1` must normalize in Git Bash too. The workaround above is the
 portable rule. Note for future diagnosis: rubash's *core* engine does
 not translate builtin `echo` words (`target/debug/rubash.exe -c 'echo
 /tmp/x'` prints the POSIX form); the display-level translation for
-builtins is a niubash-runtime product behavior on top of the engine.
+builtins is a native-shell-runtime product behavior on top of the engine.
 
 ---
 
 ## Verified compatible in the same session
 
-For calibration, the following worked as expected under niubash 1.1.4 in
+For calibration, the following worked as expected under native-shell 1.1.4 in
 the session that produced Q1/Q2: `mktemp -d`, `cmp -s`, `tr -d '\r'`,
 `od -c`, `file`, `tee`, `grep -rln/-rn/-q` with `--include`, `sed -n`
 (viewing), `${PIPESTATUS[0]}`, `$(...)` nesting,

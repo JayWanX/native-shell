@@ -1,4 +1,4 @@
-//! niubash#201: `$(date +%s%N)` costs ~31ms per call on Windows (external
+//! native-shell#201: `$(date +%s%N)` costs ~31ms per call on Windows (external
 //! date.exe process creation), while the GNU bash 5 builtin `$EPOCHREALTIME`
 //! expands in ~microseconds. The engine (rubash) already implements both
 //! `$EPOCHREALTIME` and `$EPOCHSECONDS`; these tests pin the contract the
@@ -17,28 +17,32 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
 fn run_niu(script: &str) -> String {
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg("-c")
         .arg(script)
         .stdin(Stdio::null())
         .output()
-        .unwrap_or_else(|err| panic!("spawn niu: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"));
     assert!(
         output.status.success(),
-        "niu -c failed: {}",
+        "native-shell -c failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8_lossy(&output.stdout).trim().to_string()

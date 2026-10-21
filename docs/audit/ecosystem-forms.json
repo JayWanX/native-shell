@@ -1,8 +1,8 @@
 {
-  "schema": "niubash:ecosystem-form-factors@0.1.0",
+  "schema": "native-shell:ecosystem-form-factors@0.1.0",
   "generated": "2026-10-02",
   "lane": "wt94/ecosystem-forms",
-  "feeds_issues": ["niubash#171", "niubash#172", "niubash#183", "niubash#186"],
+  "feeds_issues": ["native-shell#171", "native-shell#172", "native-shell#183", "native-shell#186"],
   "prose_doc": "docs/audit/ecosystem-form-factors.md",
   "method": {
     "clones_root": "/d/repo/_ecforms-refs (scratch, not in repo)",
@@ -24,8 +24,8 @@
       "zoxide": "86b443c",
       "direnv": "b00e451"
     },
-    "engine": "rubash 1.3.4 chain (D:/repo/rubash, niubash [patch] target)",
-    "product": "crates/niubash-runtime @ wt94/ecforms (master b4b87f1)"
+    "engine": "rubash 1.3.4 chain (D:/repo/rubash, native-shell [patch] target)",
+    "product": "crates/native-shell-runtime @ wt94/ecforms (master b4b87f1)"
   },
   "summary": {
     "form_count": 13,
@@ -53,11 +53,11 @@
       ],
       "load_trigger": "startup, synchronous, manager order",
       "shell_requirements": ["source", "functions", "aliases", "arrays"],
-      "niu_status": "works",
-      "niu_evidence": [
+      "native_shell_status": "works",
+      "native_shell_evidence": [
         "docs/plugins-guide.md (managed guarded source block, three layers, no shims)",
-        "niu: crates/niubash-runtime/src/plugins/{sources,spec,sync}.rs",
-        "niu: src/shell.rs:37,538-544,765-796 (~/.niubashrc primary, expand_aliases on)"
+        "native-shell: crates/native-shell-runtime/src/plugins/{sources,spec,sync}.rs",
+        "native-shell: src/shell.rs:37,538-544,765-796 (~/.native-shellrc primary, expand_aliases on)"
       ]
     },
     {
@@ -73,8 +73,8 @@
       ],
       "load_trigger": "first invocation of the function name",
       "shell_requirements": ["function search path", "per-name file lookup", "unknown-name deferral"],
-      "niu_status": "missing",
-      "niu_evidence": ["grep: zero hits for autoload/fpath in D:/repo/rubash/src"]
+      "native_shell_status": "missing",
+      "native_shell_evidence": ["grep: zero hits for autoload/fpath in D:/repo/rubash/src"]
     },
     {
       "id": "F03",
@@ -88,13 +88,13 @@
       ],
       "load_trigger": "startup (eager) or first completion attempt (lazy)",
       "shell_requirements": ["compspec registry", "-F function execution with COMP_*/COMPREPLY", "-C command actions", "complete -D default compspec fallback", "retry after loader sources file"],
-      "niu_status": "partial",
-      "niu_evidence": [
+      "native_shell_status": "partial",
+      "native_shell_evidence": [
         "engine: src/builtins/complete.rs:897-927 (static actions/globpat/wordlist/-X filter/prefix-suffix work)",
         "engine: src/builtins/complete.rs:894 + executor/public_accessors.rs:270-273 (-F/-C not wired into interactive path; 'merged here in a follow-up')",
         "engine: src/executor/job_builtins.rs:2364-2392 (compgen -F runs functions and collects COMPREPLY — machinery exists, not wired to Tab)",
         "engine: src/executor/job_builtins.rs:2042-2046 (complete -D/-E/-I stored under pseudo keys) vs complete.rs:908-922 (no -D fallback lookup)",
-        "niu: src/completion/completer.rs:244-258 (REPL gates on has_compspec -> executor.complete_line)"
+        "native-shell: src/completion/completer.rs:244-258 (REPL gates on has_compspec -> executor.complete_line)"
       ]
     },
     {
@@ -109,11 +109,11 @@
       ],
       "load_trigger": "startup; re-evaluated every prompt",
       "shell_requirements": ["PS1/PROMPT re-expansion per prompt", "prompt escapes", "array-capable PROMPT_COMMAND"],
-      "niu_status": "works",
-      "niu_evidence": [
+      "native_shell_status": "works",
+      "native_shell_evidence": [
         "engine: src/executor/prompt_command.rs:22-50 (PROMPT_COMMAND per eval.c:305, array-aware)",
-        "niu: src/prompt.rs:47,318-341 (themes render through PS1/PROMPT_COMMAND channel; right-align split)",
-        "docs/plugins-guide.md (theme ownership/pick; niu: src/plugins/theme_preview.rs)"
+        "native-shell: src/prompt.rs:47,318-341 (themes render through PS1/PROMPT_COMMAND channel; right-align split)",
+        "docs/plugins-guide.md (theme ownership/pick; native-shell: src/plugins/theme_preview.rs)"
       ]
     },
     {
@@ -127,12 +127,12 @@
       ],
       "load_trigger": "startup (or on demand)",
       "shell_requirements": ["keymap consulted by line editor", "bind -x executing shell commands", "READLINE_LINE/READLINE_POINT in/out"],
-      "niu_status": "missing",
-      "niu_evidence": [
+      "native_shell_status": "missing",
+      "native_shell_evidence": [
         "engine: src/builtins/bind.rs:24-93 (validates option syntax, installs nothing; -x accepted and discarded)",
         "grep: no READLINE_LINE/READLINE_POINT anywhere in engine",
-        "niu: src/repl.rs:471 (reedline owns the line editor, private widget map)",
-        "risk: binding packs load clean and no-op — includes fzf-git.sh in niu's recommended collection (docs/plugins-guide.md:129)"
+        "native-shell: src/repl.rs:471 (reedline owns the line editor, private widget map)",
+        "risk: binding packs load clean and no-op — includes fzf-git.sh in native-shell's recommended collection (docs/plugins-guide.md:129)"
       ]
     },
     {
@@ -145,9 +145,9 @@
       ],
       "load_trigger": "every startup, file order",
       "shell_requirements": ["multi-directory startup scan"],
-      "niu_status": "missing",
-      "niu_evidence": [
-        "niu: src/shell.rs:37,957 (single primary rc ~/.niubashrc; no conf.d scan)",
+      "native_shell_status": "missing",
+      "native_shell_evidence": [
+        "native-shell: src/shell.rs:37,957 (single primary rc ~/.native-shellrc; no conf.d scan)",
         "driver approximation: managed rc block materialized from spec (docs/plugins-guide.md); per-file enable is the only granularity"
       ]
     },
@@ -162,10 +162,10 @@
       ],
       "load_trigger": "rc eval; hooks fire per-prompt/per-exec thereafter",
       "shell_requirements": ["eval \"$(...)\"", "array-capable PROMPT_COMMAND", "DEBUG trap firing per command", "trap builtin"],
-      "niu_status": "works",
-      "niu_evidence": [
+      "native_shell_status": "works",
+      "native_shell_evidence": [
         "engine: src/builtins/trap.rs:520-522 (DEBUG/RETURN/ERR), DEBUG firing sites: executor/ast_exec.rs:494, pipeline_exec.rs:828/1076/1556/1617, function_calls.rs:467, command_substitution.rs:725",
-        "niu: src/shell.rs:538 (product expects starship init / oh-my-bash / nvm inside ~/.niubashrc)",
+        "native-shell: src/shell.rs:538 (product expects starship init / oh-my-bash / nvm inside ~/.native-shellrc)",
         "engine: src/executor/parameter_core.rs:320 (starship ${var:$((var=\"$(cmd)\",0)):0} idiom handled)",
         "caveat: PS0 not expanded (grep: no \"PS0\" lookup); zoxide's bind -x piece dies with F05"
       ]
@@ -182,8 +182,8 @@
       ],
       "load_trigger": "registration at function definition; fires on event",
       "shell_requirements": ["event bus (named events, variable-watch, signal, job-exit)", "registration on definition"],
-      "niu_status": "missing",
-      "niu_evidence": [
+      "native_shell_status": "missing",
+      "native_shell_evidence": [
         "no event bus in engine/product; bash-family analogues only cover the prompt cycle: PROMPT_COMMAND ~= fish_prompt, DEBUG trap ~= fish_preexec, ERR trap (engine: src/builtins/trap.rs:521) ~= error-only postexec",
         "driver stance: tag fish-layout trees as port-required, not emulation"
       ]
@@ -199,8 +199,8 @@
       ],
       "load_trigger": "zmodload at runtime; caches read by compinit/zrecompile",
       "shell_requirements": ["dynamic module loading (ELF .so)", "zwc bytecode"],
-      "niu_status": "not_applicable",
-      "niu_evidence": [
+      "native_shell_status": "not_applicable",
+      "native_shell_evidence": [
         "engine: src/builtins/enable.rs:101,153-181 (enable -f refused: 'dynamic loading not supported')",
         "driver guidance: recognize and skip *.zwc/next-to-source cache artifacts; never treat as the plugin"
       ]
@@ -214,10 +214,10 @@
       ],
       "load_trigger": "timer (turbo) or first invocation of shadowed commands",
       "shell_requirements": ["plugin-supplied stubs: none (plain bash)", "manager-side deferral: scheduler or shadow-command mechanism"],
-      "niu_status": "partial",
-      "niu_evidence": [
+      "native_shell_status": "partial",
+      "native_shell_evidence": [
         "plugin-supplied stubs work (F01 semantics)",
-        "no manager-side deferral: plugins.toml has no wait/defer equivalent (niu: crates/niubash-runtime/src/plugins/spec.rs); enabled assets load eagerly at startup"
+        "no manager-side deferral: plugins.toml has no wait/defer equivalent (native-shell: crates/native-shell-runtime/src/plugins/spec.rs); enabled assets load eagerly at startup"
       ]
     },
     {
@@ -230,10 +230,10 @@
       ],
       "load_trigger": "PATH lookup at invocation; assets via their form (F01/F03)",
       "shell_requirements": ["nothing beyond PATH; assets reduce to other forms"],
-      "niu_status": "works",
-      "niu_evidence": [
+      "native_shell_status": "works",
+      "native_shell_evidence": [
         "binaries need only PATH; sourcing side is F01",
-        "install is out of scope by download retraction: docs/plugins-guide.md (wpm/winget/scoop/apt/brew; niu plugin add fzf prints commands)"
+        "install is out of scope by download retraction: docs/plugins-guide.md (wpm/winget/scoop/apt/brew; native-shell plugin add fzf prints commands)"
       ]
     },
     {
@@ -246,8 +246,8 @@
       ],
       "load_trigger": "startup source",
       "shell_requirements": ["aliases", "abbreviations require an abbr subsystem"],
-      "niu_status": "partial",
-      "niu_evidence": [
+      "native_shell_status": "partial",
+      "native_shell_evidence": [
         "aliases work (core engine feature)",
         "abbreviations missing: engine grep only a doc comment (engine: src/executor/external_file_builtins.rs:1466); carried by separate lane wt93/abbr"
       ]
@@ -260,31 +260,31 @@
         {"repo": "bpkg", "path": "bpkg.json:1-16"},
         {"repo": "zinit", "path": "README.md:206-220 (ice depth/pick/src/as\"command\"/from\"gh-r\"); zinit.zsh:17 (ZINIT_ICES)"},
         {"repo": "bash-it", "path": "bash_it.sh:47-74 (enabled/ + BASH_IT_THEME)"},
-        {"repo": "lazy.nvim (contrast)", "path": "spec + lockfile pair (adopted by niu)"}
+        {"repo": "lazy.nvim (contrast)", "path": "spec + lockfile pair (adopted by native-shell)"}
       ],
       "load_trigger": "manager commands; materializes into other forms",
       "shell_requirements": ["none beyond the forms the manifest drives"],
-      "niu_status": "works",
-      "niu_evidence": [
+      "native_shell_status": "works",
+      "native_shell_evidence": [
         "docs/plugins-guide.md (plugins.toml spec @0.1.0 + sources/registry.toml lock @0.3.0 + sync reconciliation)",
-        "niu: crates/niubash-runtime/src/plugins/{spec,sync,trust}.rs",
+        "native-shell: crates/native-shell-runtime/src/plugins/{spec,sync,trust}.rs",
         "limitation: enable vocabulary addresses F01-style assets; F03/F05/F06/F10 need form-aware fields"
       ]
     }
   ],
   "tui_mapping_issue186": [
-    {"form": "F01", "surface": "per-file enable/disable candidate lists with tags", "tui_status": "exists", "cite": "niu: src/plugins/ui.rs + sources.rs"},
-    {"form": "F04", "surface": "theme gallery + exclusive theme claim", "tui_status": "exists", "cite": "niu: src/plugins/theme_preview.rs"},
-    {"form": "F13", "surface": "trust review, sync rows, distro apply", "tui_status": "exists", "cite": "niu: src/plugins/{trust,spec,sync,distros}.rs"},
+    {"form": "F01", "surface": "per-file enable/disable candidate lists with tags", "tui_status": "exists", "cite": "native-shell: src/plugins/ui.rs + sources.rs"},
+    {"form": "F04", "surface": "theme gallery + exclusive theme claim", "tui_status": "exists", "cite": "native-shell: src/plugins/theme_preview.rs"},
+    {"form": "F13", "surface": "trust review, sync rows, distro apply", "tui_status": "exists", "cite": "native-shell: src/plugins/{trust,spec,sync,distros}.rs"},
     {"form": "F03", "surface": "completion registry browser (per-command enable/disable, lazy-load hint)", "tui_status": "new (needs F03 engine work)"},
     {"form": "F05", "surface": "key-binding pack cards + dead-binding warning until F05 lands", "tui_status": "new (warning cheap and honest now)"},
     {"form": "F06", "surface": "conf.d directory toggles", "tui_status": "new (needs F06)"},
-    {"form": "F08/F09", "surface": "'not supported in niu' explainer rows (port-required / skip cache artifacts)", "tui_status": "new (copy only)"},
+    {"form": "F08/F09", "surface": "'not supported in native-shell' explainer rows (port-required / skip cache artifacts)", "tui_status": "new (copy only)"},
     {"form": "F10", "surface": "defer/wait column in enable view", "tui_status": "new (needs manager support)"}
   ],
   "honesty_notes": [
     "All ecosystem line numbers read from the pinned shallow clones listed in method.repos.",
-    "niu/engine line numbers grep-verified against the 1.3.4-chain sources this worktree builds against.",
+    "native-shell/engine line numbers grep-verified against the 1.3.4-chain sources this worktree builds against.",
     "WORKS claims for F04/F07 rest on cited code paths + product docs (plugins-guide.md, shell.rs:538); no end-to-end behavioral runs executed in this audit lane (no product changes).",
     "bash-completion per-command counts use the 2.17 layout (completions-core 453 + completions-fallback 88; completions/ is the external drop-in dir)."
   ]

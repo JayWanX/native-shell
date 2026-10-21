@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Applies the release-tag immutability ruleset (niubash#425, rubash#827
+# Applies the release-tag immutability ruleset (native-shell#425, rubash#827
 # recommendation 4) to a repository through the GitHub rulesets REST API.
 #
 # The payload lives in tag-ruleset.json next to this script so the exact
@@ -8,8 +8,8 @@
 # updated (PUT), otherwise it is created (POST).
 #
 # Usage:
-#   scripts/release/apply-tag-ruleset.sh                  # unixwin/niubash
-#   NIUBASH_REPO=owner/repo scripts/release/apply-tag-ruleset.sh
+#   scripts/release/apply-tag-ruleset.sh                  # JayWanX/native-shell
+#   NATIVE_SHELL_REPO=owner/repo scripts/release/apply-tag-ruleset.sh
 #
 # Requires: gh authenticated with an admin-capable token (repository
 # rulesets need Administration write; check `gh auth status`).
@@ -18,7 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PAYLOAD="$SCRIPT_DIR/tag-ruleset.json"
-REPO="${NIUBASH_REPO:-unixwin/niubash}"
+REPO="${NATIVE_SHELL_REPO:-JayWanX/native-shell}"
 
 command -v gh >/dev/null 2>&1 || { echo "error: gh CLI not found on PATH" >&2; exit 1; }
 

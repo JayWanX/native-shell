@@ -3,7 +3,7 @@
 
 Owner iron directive (2026-10-05, after interactive coverage was found at
 3/166 themes while bash-it's codeword/gitline hang the live session,
-niu#182): interactive theme testing must cover EVERY theme, through a real
+native-shell#182): interactive theme testing must cover EVERY theme, through a real
 ConPTY, with hard timeouts, as a permanent automated reality — not a
 hand-run sample. This harness is that reality and is designed to become the
 third release gate (`--gate`: nonzero exit on any HANG / CRASH /
@@ -13,7 +13,7 @@ separate change).
 FULL MATRIX, no sampling. Per theme (from BOTH trusted sources — every
 oh-my-bash theme and every bash-it theme):
 
-  histcontrol ∈ {unset, autosave, auto, noauto}   # niu#182 trigger is
+  histcontrol ∈ {unset, autosave, auto, noauto}   # native-shell#182 trigger is
                                                    # HISTCONTROL-conditional
   histscale   ∈ {0, 10, 2000, 20000} HISTFILE entries  # size-dependent?
   shape       ∈ {fresh, aged}                     # aged = second session on
@@ -41,7 +41,7 @@ Interactive steps per session, each with its own hard bound (default 10s):
   (resrc)       `. <theme file>` -> next prompt, then one more round trip
   exit          `exit` -> process exits within the exit grace
 
-A typed send whose first byte is swallowed (the niu#167 class) is RECORDED
+A typed send whose first byte is swallowed (the native-shell#167 class) is RECORDED
 as masked-first-key, then recovered with a kill-line so the session signal
 stays clean — reported, never silently masked.
 
@@ -58,7 +58,7 @@ Verdict per cell, priority order:
 
 Driver contract (same discipline as scripts/perf/asset-timing.py):
   * sandboxed HOME — USERPROFILE/HOME/LOCALAPPDATA/TEMP/TMP all point into
-    a per-cell sandbox; an empty ~/.niubashrc suppresses the first-run
+    a per-cell sandbox; an empty ~/.native-shellrc suppresses the first-run
     wizard; HISTFILE is the pre-seeded sandbox file; nothing touches the
     real profile.
   * network off-affordance: DISABLE_AUTO_UPDATE/OSH_UPDATE_CHECK,
@@ -67,7 +67,7 @@ Driver contract (same discipline as scripts/perf/asset-timing.py):
   * bash-it loads through the NATIVE loader (`source $BASH_IT/bash_it.sh`)
     in a per-worker writable clone with an EMPTY enabled/ dir — exactly the
     path bash_it.sh gives a real theme, including lib/history.bash's
-    per-prompt _bash-it-history-auto-load hook (the niu#182 mechanism).
+    per-prompt _bash-it-history-auto-load hook (the native-shell#182 mechanism).
   * every session is killed on every exit path (ConPTY terminate +
     taskkill /T /F belt-and-braces, as asset-timing.py).
   * machine-readable output: cells.jsonl (one record per cell) + summary
@@ -102,8 +102,8 @@ from winpty import PtyProcess
 
 REPO = Path(__file__).resolve().parents[2]
 
-SENT_BOOT = "@@NIU-SWEEP-BOOT@@"
-SENT_PROMPT = "@@NIU-SWEEP-PROMPT@@"
+SENT_BOOT = "@@NATIVE_SHELL-SWEEP-BOOT@@"
+SENT_PROMPT = "@@NATIVE_SHELL-SWEEP-PROMPT@@"
 
 HISTCONTROLS = ("unset", "autosave", "auto", "noauto")
 HISTSCALES = (0, 10, 2000, 20000)
@@ -120,7 +120,7 @@ ERROR_MARKERS = (
     "cannot execute",
     "permission denied",
     "segmentation fault",
-    "niu:",
+    "native-shell:",
 )
 ESCAPE_LEAK_RE = re.compile(r"\[(?:0m|\?25[hl]|\?2004[hl]|\?1000[hl]|\d+;\d+[HJK]|\d+[GK])")
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b[78]|\x1b[=>]")
@@ -267,7 +267,7 @@ def scan_features(theme: Theme) -> dict:
 def classify_family(theme: Theme) -> str:
     f = theme.features
     if f["history_reload_calls"]:
-        return "history-reload (niu#182 family)"
+        return "history-reload (native-shell#182 family)"
     if f["network_touch"]:
         return "network-touching"
     if f["clock_redraw_risk"]:
@@ -297,11 +297,11 @@ def build_rc(framework: str, theme: Theme | None, control_kind: str,
     """One probe rc. control_kind: 'bare' | 'fw' | 'theme'.
 
     HISTFILE is set INSIDE the rc, the way bash-it's own docs tell users to
-    configure it. Deliberately NOT via the environment: on niu 1.3.4
+    configure it. Deliberately NOT via the environment: on native-shell 1.3.4
     (b4b87f1) an env-imported HISTFILE makes the history builtin fail under
     ConPTY (rc-time `history -a` silently aborts the rest of the rc;
     prompt-time `history -a` errors `filename not specified` even though
-    $HISTFILE prints as set), which silently disarms the niu#182
+    $HISTFILE prints as set), which silently disarms the native-shell#182
     history-reload path. rc-set HISTFILE keeps every cell's histscale
     dimension operative. See docs/audit/findings/wt91-allthemes.md."""
     lines = [
@@ -349,7 +349,7 @@ def build_rc(framework: str, theme: Theme | None, control_kind: str,
 def sandbox_env(base: dict, home: Path) -> dict:
     env = dict(base)
     for k in ("BASH_ENV", "OSH", "OSH_THEME", "BASH_IT", "BASH_IT_THEME",
-              "OSH_CUSTOM", "OSH_CACHE_DIR", "NIU_PLUGIN_SPEC", "HISTCONTROL",
+              "OSH_CUSTOM", "OSH_CACHE_DIR", "NATIVE_SHELL_PLUGIN_SPEC", "HISTCONTROL",
               "HISTSIZE", "HISTFILESIZE", "PROMPT_COMMAND", "PS1", "INPUTRC",
               "HISTFILE", "OSH_UPDATE_CHECK", "DISABLE_AUTO_UPDATE"):
         env.pop(k, None)
@@ -357,7 +357,7 @@ def sandbox_env(base: dict, home: Path) -> dict:
     (home / "local-appdata").mkdir(parents=True, exist_ok=True)
     # An empty primary rc suppresses the first-run setup wizard without
     # contributing anything else; the probe rc arrives via --rcfile.
-    (home / ".niubashrc").write_text("", encoding="utf-8")
+    (home / ".native-shellrc").write_text("", encoding="utf-8")
     env.update({
         "HOME": str(home),
         "USERPROFILE": str(home),
@@ -419,7 +419,7 @@ def make_fixture_repo(rundir: Path) -> Path:
 def prepare_bashit_sandbox(bashit: Path, rundir: Path, worker: int) -> Path:
     """Writable per-worker clone; enabled/ emptied so the theme under test
     is the only variable (lib/*.bash still load — that is the real user
-    path and includes the niu#182 history hook)."""
+    path and includes the native-shell#182 history hook)."""
     dst = rundir / f"bash-it-sandbox-w{worker}"
     for _ in range(3):
         if not dst.exists():
@@ -615,7 +615,7 @@ def wait_prompt_advance(sess: ConptySession, want: int, marker: str,
                         input_row: str, since_pos: int, timeout_s: float,
                         settle_s: float) -> tuple[str | None, float]:
     """One bounded wait for 'the prompt advanced' with three witnesses,
-    first hit wins (niu aborts a whole PROMPT_COMMAND chain on a failing
+    first hit wins (native-shell aborts a whole PROMPT_COMMAND chain on a failing
     element, so the sentinel legitimately never arrives for some themes):
       'sentinel'        raw prompt-sentinel count reached `want`
       'output-fallback' the command's output marker came back on its own
@@ -678,7 +678,7 @@ def wait_echo(sess: ConptySession, pos: int, text: str,
 # One cell = one interactive session walking the step journey
 # ---------------------------------------------------------------------------
 
-def run_cell_session(niu: Path, rc_path: Path, cwd: Path, env: dict,
+def run_cell_session(native_shell: Path, rc_path: Path, cwd: Path, env: dict,
                      theme: Theme | None, shape: str,
                      args) -> dict:
     cols, rows = args.cols, args.rows
@@ -785,7 +785,7 @@ def run_cell_session(niu: Path, rc_path: Path, cwd: Path, env: dict,
 
     try:
         try:
-            sess = ConptySession([str(niu), "--rcfile", str(rc_path), "-i"],
+            sess = ConptySession([str(native_shell), "--rcfile", str(rc_path), "-i"],
                                  cwd, env, cols, rows)
         except (OSError, ValueError) as exc:
             crash = f"conpty spawn failed: {exc}"
@@ -809,7 +809,7 @@ def run_cell_session(niu: Path, rc_path: Path, cwd: Path, env: dict,
             ok, ms = wait_prompt_count(sess, 1, step_timeout, settle_s)
             if not ok and sess.proc.isalive():
                 # Fallback: a theme whose PROMPT_COMMAND aborts (expansion
-                # error) can take the sentinel down with it — niu stops the
+                # error) can take the sentinel down with it — native-shell stops the
                 # whole PROMPT_COMMAND chain on a failing element while GNU
                 # bash runs the remaining elements. If the screen moved past
                 # the rc bootstrap row, a prompt rendered; the journey
@@ -991,7 +991,7 @@ def task_keys(task: dict, shapes: list[str]) -> list[str]:
     return [cell_key(t.framework, t.name, shape, task["hc"], task["hs"])]
 
 
-def run_task(task: dict, args, niu: Path, rundir: Path, fixture: Path,
+def run_task(task: dict, args, native_shell: Path, rundir: Path, fixture: Path,
              omb: Path | None, bashit_rw: Path | None,
              hist_templates: dict, worker: int) -> list[dict]:
     theme = task["theme"]
@@ -1032,7 +1032,7 @@ def run_task(task: dict, args, niu: Path, rundir: Path, fixture: Path,
             # session must face the same HISTFILE scale as a fresh one.
             shutil.copy2(hist_templates[hs], histfile)
             hist_before = hist_templates[hs].read_text(encoding="utf-8").count("\n")
-        rec = run_cell_session(niu, rc_path, fixture, env,
+        rec = run_cell_session(native_shell, rc_path, fixture, env,
                                None if is_control else theme, shape, args)
         hist_after = None
         if histfile.is_file():
@@ -1196,9 +1196,9 @@ def print_summary(summary: dict) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def niu_version(niu: Path) -> str:
+def native_shell_version(native_shell: Path) -> str:
     try:
-        r = subprocess.run([str(niu), "--version"], capture_output=True, text=True,
+        r = subprocess.run([str(native_shell), "--version"], capture_output=True, text=True,
                            timeout=20)
         return (r.stdout or r.stderr).strip().splitlines()[0]
     except (subprocess.SubprocessError, OSError):
@@ -1206,9 +1206,9 @@ def niu_version(niu: Path) -> str:
 
 
 def run(args) -> int:
-    niu = args.niu.resolve()
-    if not niu.is_file():
-        print(f"sweep: niu binary not found: {niu}", file=sys.stderr)
+    native_shell = args.native_shell.resolve()
+    if not native_shell.is_file():
+        print(f"sweep: native-shell binary not found: {native_shell}", file=sys.stderr)
         return 2
 
     omb = args.omb.resolve() if args.omb else None
@@ -1238,7 +1238,7 @@ def run(args) -> int:
         return 2
 
     rundir = (args.run_dir or Path(
-        "E:/niubash-sweep/" + datetime.now().strftime("%Y%m%d-%H%M%S"))).resolve()
+        "E:/native-shell-sweep/" + datetime.now().strftime("%Y%m%d-%H%M%S"))).resolve()
     rundir.mkdir(parents=True, exist_ok=True)
     cells_path = rundir / "cells.jsonl"
     done: dict[str, dict] = {}
@@ -1264,7 +1264,7 @@ def run(args) -> int:
     n_cells = sum(len(task_keys(t, args.shapes)) for t in tasks)
     print(f"sweep: {len(themes)} themes, {n_cells} matrix cells "
           f"({sum(len(task_keys(t, args.shapes)) for t in todo)} to run, {len(done)} resumed), "
-          f"workers={args.workers}, step_timeout={args.step_timeout}s, niu={niu}",
+          f"workers={args.workers}, step_timeout={args.step_timeout}s, native-shell={native_shell}",
           flush=True)
 
     fixture = make_fixture_repo(rundir)
@@ -1283,7 +1283,7 @@ def run(args) -> int:
 
     def work(item):
         idx, task, w = item
-        recs = run_task(task, args, niu, rundir, fixture, omb,
+        recs = run_task(task, args, native_shell, rundir, fixture, omb,
                         worker_sandboxes[w], hist_templates, w)
         with lock:
             for rec in recs:
@@ -1306,9 +1306,9 @@ def run(args) -> int:
 
     elapsed = round(time.perf_counter() - t_all, 1)
     meta = {
-        "schema": "niubash:theme-interactive-sweep@1.0.0",
-        "niu": str(niu),
-        "niu_version": niu_version(niu),
+        "schema": "native-shell:theme-interactive-sweep@1.0.0",
+        "native-shell": str(native_shell),
+        "native_shell_version": native_shell_version(native_shell),
         "omb": str(omb) if omb else None,
         "bashit": str(bashit) if bashit else None,
         "themes": len(themes),
@@ -1346,14 +1346,14 @@ def run(args) -> int:
 
 def parse_args(argv) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--niu", type=Path, default=REPO / "target" / "release" / "niu.exe")
+    p.add_argument("--native-shell", type=Path, default=REPO / "target" / "release" / "native-shell.exe")
     p.add_argument("--omb", type=Path,
                    default=Path(os.environ.get(
-                       "NIU_SWEEP_OMB",
+                       "NATIVE_SHELL_SWEEP_OMB",
                        r"D:\repo\rubash\target\ecosweep-corpus\oh-my-bash-lf")))
     p.add_argument("--bashit", type=Path,
                    default=Path(os.environ.get(
-                       "NIU_SWEEP_BASHIT", r"D:\repo\rubash\target\bit-real")))
+                       "NATIVE_SHELL_SWEEP_BASHIT", r"D:\repo\rubash\target\bit-real")))
     p.add_argument("--frameworks", choices=("both", "omb", "bashit"), default="both")
     p.add_argument("--histcontrols", default=",".join(HISTCONTROLS),
                    help="comma list subset of: " + ",".join(HISTCONTROLS))
@@ -1366,7 +1366,7 @@ def parse_args(argv) -> argparse.Namespace:
     p.add_argument("--theme-filter", action="append", default=None,
                    help="substring(s) on fw/theme; repeatable, OR-matched")
     p.add_argument("--run-dir", type=Path, default=None,
-                   help="artifact dir (default E:/niubash-sweep/<ts>)")
+                   help="artifact dir (default E:/native-shell-sweep/<ts>)")
     p.add_argument("--summary", type=Path, default=None)
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--step-timeout", type=float, default=10.0,

@@ -1,4 +1,4 @@
-//! niubash#153: a single-character `/` argument must reach external children
+//! native-shell#153: a single-character `/` argument must reach external children
 //! verbatim. GNU hands argv to execve unchanged (bash execute_cmd.c:6126
 //! shell_execve) — `/` is `expr`'s division operator and `tr`'s SET1 member,
 //! not a path only the shell can decide. The engine used to translate a bare
@@ -6,41 +6,45 @@
 //! which broke `expr 10 / 3` (rc=2, root path reported as the unexpected
 //! argument) and silently corrupted `tr / X`. Fixed in rubash
 //! (windows_external_absolute_argument_needs_translation); these tests pin
-//! the product behavior with NIU_ROOT configured, simulating the installed
+//! the product behavior with NATIVE_SHELL_ROOT configured, simulating the installed
 //! layout where the regression fired.
 //!
-//! The child used for the argv probe is niu itself, so the suite needs no
+//! The child used for the argv probe is native-shell itself, so the suite needs no
 //! external Unix tools on PATH.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
-/// Run `niu` with a configured NIU_ROOT (installed-layout shell root) and a
+/// Run `native-shell` with a configured NATIVE_SHELL_ROOT (installed-layout shell root) and a
 /// clean WINUXSH_ROOT so the root under test is exactly `root`.
 fn run_with_root(script: &str, root: &Path) -> Output {
-    let mut command = Command::new(niu_binary());
+    let mut command = Command::new(native_shell_binary());
     command
         .arg("-c")
         .arg(script)
-        .env("NIU_ROOT", root)
+        .env("NATIVE_SHELL_ROOT", root)
         .env_remove("WINUXSH_ROOT")
         .stdin(Stdio::null());
     command
         .output()
-        .unwrap_or_else(|err| panic!("spawn niu: {err}"))
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"))
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {
@@ -67,9 +71,9 @@ fn bare_slash_argument_reaches_children_verbatim() {
     let root = unique_temp_dir("niu-153-bare");
     std::fs::create_dir_all(&root).unwrap();
 
-    // Child niu echoes its positional parameters back; the word `/` must
+    // Child native-shell echoes its positional parameters back; the word `/` must
     // survive the parent's spawn translation unchanged.
-    let output = run_with_root("niu -c 'printf \"[%s]\\n\" \"$1\"' probe /", &root);
+    let output = run_with_root("native-shell -c 'printf \"[%s]\\n\" \"$1\"' probe /", &root);
     assert!(
         output.status.success(),
         "single-slash probe failed: {}",
@@ -80,7 +84,7 @@ fn bare_slash_argument_reaches_children_verbatim() {
     // Word positions around a bare `/` keep their identity (an `expr`-style
     // operand row: `expr 10 / 3` must see three words, 10, /, 3).
     let output = run_with_root(
-        "niu -c 'printf \"[%s][%s][%s]\\n\" \"$1\" \"$2\" \"$3\"' probe 10 / 3",
+        "native-shell -c 'printf \"[%s][%s][%s]\\n\" \"$1\" \"$2\" \"$3\"' probe 10 / 3",
         &root,
     );
     assert!(
@@ -92,7 +96,7 @@ fn bare_slash_argument_reaches_children_verbatim() {
 
     // Variable-carried and quoted spellings must behave the same.
     let output = run_with_root(
-        "d=/; niu -c 'printf \"[%s][%s]\\n\" \"$1\" \"$2\"' probe \"$d\" \"/\"",
+        "d=/; native-shell -c 'printf \"[%s][%s]\\n\" \"$1\" \"$2\"' probe \"$d\" \"/\"",
         &root,
     );
     assert!(
@@ -106,7 +110,7 @@ fn bare_slash_argument_reaches_children_verbatim() {
 }
 
 /// The fix must not un-map the logical install tree: root-relative redirect
-/// targets and `[[ -f ]]` operands still resolve under NIU_ROOT (that is the
+/// targets and `[[ -f ]]` operands still resolve under NATIVE_SHELL_ROOT (that is the
 /// shell_path_to_windows layer, distinct from the external-argument gate).
 #[test]
 fn root_relative_paths_still_map_to_the_install_root() {

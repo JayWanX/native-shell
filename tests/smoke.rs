@@ -1,32 +1,36 @@
-//! Smoke tests with isolated HOME and oh-my-niu bundle.
+//! Smoke tests with isolated HOME and oh-my-native-shell bundle.
 //!
-//! These tests spin up a temporary HOME, copy the oh-my-niu bundle into it,
-//! run niu commands, and verify the setup wizard + plugin loading works end-to-end.
+//! These tests spin up a temporary HOME, copy the oh-my-native-shell bundle into it,
+//! run native-shell commands, and verify the setup wizard + plugin loading works end-to-end.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
-/// Path to the oh-my-niu bundle on J: drive (manual smoke test setup).
-fn oh_my_niu_source() -> Option<PathBuf> {
-    let candidate = PathBuf::from("J:/niubash-smoke-test/oh-my-niu");
+/// Path to the oh-my-native-shell bundle on J: drive (manual smoke test setup).
+fn oh_my_native_shell_source() -> Option<PathBuf> {
+    let candidate = PathBuf::from("J:/native-shell-smoke-test/oh-my-native-shell");
     if candidate.exists() {
         return Some(candidate);
     }
-    let candidate = PathBuf::from("J:\\niubash-smoke-test\\oh-my-niu");
+    let candidate = PathBuf::from("J:\\native-shell-smoke-test\\oh-my-native-shell");
     if candidate.exists() {
         return Some(candidate);
     }
@@ -34,7 +38,7 @@ fn oh_my_niu_source() -> Option<PathBuf> {
 }
 
 fn run_niu(script: &str, cwd: &Path, home: &Path) -> Output {
-    let mut command = Command::new(niu_binary());
+    let mut command = Command::new(native_shell_binary());
     command
         .arg("-c")
         .arg(script)
@@ -43,12 +47,12 @@ fn run_niu(script: &str, cwd: &Path, home: &Path) -> Output {
         .env("USERPROFILE", home);
     command
         .output()
-        .unwrap_or_else(|err| panic!("spawn niubash: {err}"))
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"))
 }
 
-/// Run `niu -C` which loads .niubashrc (interactive-mode command surface).
-fn run_niu_interactive(script: &str, cwd: &Path, home: &Path) -> Output {
-    let mut command = Command::new(niu_binary());
+/// Run `native-shell -C` which loads .native-shellrc (interactive-mode command surface).
+fn run_native_shell_interactive(script: &str, cwd: &Path, home: &Path) -> Output {
+    let mut command = Command::new(native_shell_binary());
     command
         .arg("-C")
         .arg(script)
@@ -57,11 +61,11 @@ fn run_niu_interactive(script: &str, cwd: &Path, home: &Path) -> Output {
         .env("USERPROFILE", home);
     command
         .output()
-        .unwrap_or_else(|err| panic!("spawn niubash -C: {err}"))
+        .unwrap_or_else(|err| panic!("spawn native-shell -C: {err}"))
 }
 
-fn run_niu_script(script_path: &Path, cwd: &Path, home: &Path) -> Output {
-    let mut command = Command::new(niu_binary());
+fn run_native_shell_script(script_path: &Path, cwd: &Path, home: &Path) -> Output {
+    let mut command = Command::new(native_shell_binary());
     command
         .arg(script_path)
         .current_dir(cwd)
@@ -69,7 +73,7 @@ fn run_niu_script(script_path: &Path, cwd: &Path, home: &Path) -> Output {
         .env("USERPROFILE", home);
     command
         .output()
-        .unwrap_or_else(|err| panic!("spawn niubash: {err}"))
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"))
 }
 
 fn assert_success(output: &Output, context: &str) {
@@ -97,16 +101,16 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
     std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), nanos))
 }
 
-/// Set up an isolated HOME with oh-my-niu bundle and a minimal .niubashrc.
+/// Set up an isolated HOME with oh-my-native-shell bundle and a minimal .native-shellrc.
 fn setup_isolated_home(name: &str) -> PathBuf {
     let temp = unique_temp_dir(name);
     let home = temp.join("home");
     fs::create_dir_all(&home).unwrap();
 
-    // Copy oh-my-niu bundle if available
-    if let Some(bundle_src) = oh_my_niu_source() {
-        let bundle_dst = home.join(".oh-my-niu");
-        copy_dir_recursive(&bundle_src, &bundle_dst).expect("copy oh-my-niu bundle");
+    // Copy oh-my-native-shell bundle if available
+    if let Some(bundle_src) = oh_my_native_shell_source() {
+        let bundle_dst = home.join(".oh-my-native-shell");
+        copy_dir_recursive(&bundle_src, &bundle_dst).expect("copy oh-my-native-shell bundle");
     }
 
     temp
@@ -135,11 +139,11 @@ fn smoke_version() {
     let home = temp.join("home");
     fs::create_dir_all(&home).unwrap();
 
-    let output = run_niu("niu --version", &temp, &home);
+    let output = run_niu("native-shell --version", &temp, &home);
     assert_success(&output, "version check");
     let stdout = normalize(&output.stdout);
     assert!(
-        stdout.contains("Niubash") || stdout.contains("niubash"),
+        stdout.contains("Native Shell") || stdout.contains("native-shell"),
         "expected version output, got: {stdout:?}"
     );
     let _ = fs::remove_dir_all(temp);
@@ -199,7 +203,7 @@ fn smoke_isolated_home_has_no_rc() {
     let home = temp.join("home");
     fs::create_dir_all(&home).unwrap();
 
-    // Without .niubashrc, shell should still work
+    // Without .native-shellrc, shell should still work
     let output = run_niu("echo it works", &temp, &home);
     assert_success(&output, "no-rc shell");
     assert_eq!(normalize(&output.stdout), "it works");
@@ -215,13 +219,13 @@ fn smoke_rc_loading() {
 
     // Write a custom rc
     fs::write(
-        home.join(".niubashrc"),
+        home.join(".native-shellrc"),
         "SMOKE_RC_LOADED=1\nexport SMOKE_RC_LOADED\n",
     )
     .unwrap();
 
-    // Use -C (interactive command mode) which loads .niubashrc
-    let output = run_niu_interactive("echo $SMOKE_RC_LOADED", &temp, &home);
+    // Use -C (interactive command mode) which loads .native-shellrc
+    let output = run_native_shell_interactive("echo $SMOKE_RC_LOADED", &temp, &home);
     assert_success(&output, "rc loading");
     assert_eq!(normalize(&output.stdout), "1");
 
@@ -229,43 +233,43 @@ fn smoke_rc_loading() {
 }
 
 #[test]
-fn smoke_with_oh_my_niu_bundle() {
-    let Some(_bundle) = oh_my_niu_source() else {
-        eprintln!("skipping: oh-my-niu bundle not found on J: drive");
+fn smoke_with_oh_my_native_shell_bundle() {
+    let Some(_bundle) = oh_my_native_shell_source() else {
+        eprintln!("skipping: oh-my-native-shell bundle not found on J: drive");
         return;
     };
 
     let temp = setup_isolated_home("smoke-omn");
     let home = temp.join("home");
 
-    // The built-in plugin stack retired (niubash#145): legacy rc lines are
+    // The built-in plugin stack retired (native-shell#145): legacy rc lines are
     // legal assignments the host now ignores; the rc must still source
     // cleanly and reach interactive commands.
-    let rc_content = r#"NIU_DISABLE_DEFAULT_PLUGINS=0
-export NIU_DISABLE_DEFAULT_PLUGINS
-NIU_PLUGINS=(git)
-export NIU_PLUGINS
-if [ -f "$HOME/.oh-my-niu/oh-my-niu.niu" ]; then
-  . "$HOME/.oh-my-niu/oh-my-niu.niu"
+    let rc_content = r#"NATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=0
+export NATIVE_SHELL_DISABLE_DEFAULT_PLUGINS
+NATIVE_SHELL_PLUGINS=(git)
+export NATIVE_SHELL_PLUGINS
+if [ -f "$HOME/.oh-my-native_shell/oh-my-native_shell.nsh" ]; then
+  . "$HOME/.oh-my-native_shell/oh-my-native_shell.nsh"
 fi
 "#;
-    fs::write(home.join(".niubashrc"), rc_content).unwrap();
+    fs::write(home.join(".native-shellrc"), rc_content).unwrap();
 
     // Verify the bundle is loaded
-    let output = run_niu_interactive(
-        "if [ -d \"$HOME/.oh-my-niu\" ]; then echo bundle-found; else echo bundle-missing; fi",
+    let output = run_native_shell_interactive(
+        "if [ -d \"$HOME/.oh-my-native-shell\" ]; then echo bundle-found; else echo bundle-missing; fi",
         &temp,
         &home,
     );
     assert_success(&output, "bundle existence");
     assert_eq!(normalize(&output.stdout), "bundle-found");
 
-    // NIU_PLUGINS stays a plain exported array (parse tolerance).
-    let output = run_niu_interactive("echo ${NIU_PLUGINS[*]}", &temp, &home);
+    // NATIVE_SHELL_PLUGINS stays a plain exported array (parse tolerance).
+    let output = run_native_shell_interactive("echo ${NATIVE_SHELL_PLUGINS[*]}", &temp, &home);
     assert_success(&output, "plugin array");
     assert!(
         normalize(&output.stdout).contains("git"),
-        "NIU_PLUGINS assignments must stay visible shell variables"
+        "NATIVE_SHELL_PLUGINS assignments must stay visible shell variables"
     );
 
     let _ = fs::remove_dir_all(temp);
@@ -284,7 +288,7 @@ fn smoke_script_execution() {
     )
     .unwrap();
 
-    let output = run_niu_script(&script, &temp, &home);
+    let output = run_native_shell_script(&script, &temp, &home);
     assert_success(&output, "script execution");
     let stdout = normalize(&output.stdout);
     assert!(stdout.contains("script-line-1"), "stdout: {stdout:?}");
@@ -377,7 +381,7 @@ fn smoke_setup_wizard_generates_rc() {
 
     // Run the wizard in reconfigure mode (non-interactive, just to test rc generation)
     // The wizard needs interactive stdin for prompt_yn/prompt_choice, so we pipe defaults
-    let mut command = Command::new(niu_binary());
+    let mut command = Command::new(native_shell_binary());
     command
         .arg("setup")
         .current_dir(&temp)
@@ -387,7 +391,7 @@ fn smoke_setup_wizard_generates_rc() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = command.spawn().expect("spawn niubash setup");
+    let mut child = command.spawn().expect("spawn native-shell setup");
 
     // Feed default answers: Y/n for each prompt (all defaults)
     if let Some(stdin) = child.stdin.as_mut() {
@@ -401,22 +405,22 @@ fn smoke_setup_wizard_generates_rc() {
     let stderr = normalize(&output.stderr);
 
     // The rc file should be created
-    let rc_path = home.join(".niubashrc");
+    let rc_path = home.join(".native-shellrc");
     assert!(
         rc_path.exists(),
-        "setup wizard should create .niubashrc\nstderr: {stderr}"
+        "setup wizard should create .native-shellrc\nstderr: {stderr}"
     );
 
     if rc_path.exists() {
         let rc_content = fs::read_to_string(&rc_path).unwrap();
-        // The wizard writes a clean rc (niubash#145): no stack variables.
+        // The wizard writes a clean rc (native-shell#145): no stack variables.
         assert!(
-            !rc_content.contains("NIU_THEME="),
-            "rc must not contain NIU_THEME: {rc_content}"
+            !rc_content.contains("NATIVE_SHELL_THEME="),
+            "rc must not contain NATIVE_SHELL_THEME: {rc_content}"
         );
         assert!(
-            !rc_content.contains("NIU_PLUGINS="),
-            "rc must not contain NIU_PLUGINS: {rc_content}"
+            !rc_content.contains("NATIVE_SHELL_PLUGINS="),
+            "rc must not contain NATIVE_SHELL_PLUGINS: {rc_content}"
         );
         assert!(
             rc_content.contains("USERPROFILE"),
@@ -425,7 +429,7 @@ fn smoke_setup_wizard_generates_rc() {
     }
 
     // The setup-done marker should be created
-    let marker = home.join(".niubash").join(".setup-done");
+    let marker = home.join(".native-shell").join(".setup-done");
     assert!(
         marker.exists(),
         "setup wizard should create .setup-done marker"
@@ -440,7 +444,7 @@ fn smoke_piped_stdin_script() {
     let home = temp.join("home");
     fs::create_dir_all(&home).unwrap();
 
-    let mut command = Command::new(niu_binary());
+    let mut command = Command::new(native_shell_binary());
     command
         .current_dir(&temp)
         .env("HOME", &home)
@@ -449,7 +453,7 @@ fn smoke_piped_stdin_script() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = command.spawn().expect("spawn niubash piped");
+    let mut child = command.spawn().expect("spawn native-shell piped");
     if let Some(stdin) = child.stdin.as_mut() {
         use std::io::Write;
         let _ = stdin.write_all(b"echo piped-input\nexit\n");

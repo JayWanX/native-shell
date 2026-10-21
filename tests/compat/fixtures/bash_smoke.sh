@@ -1,5 +1,5 @@
 printf '[1] vars command-substitution\n'
-NAME=niubash
+NAME=native-shell
 echo "hello:$NAME sub:$(printf inner)"
 
 printf '[2] arithmetic\n'
@@ -60,9 +60,9 @@ printf '[13] pipeline\n'
 printf 'apple\nbanana\ncherry\n' | grep banana
 
 printf '[14] redirect\n'
-echo 'test content' > ./target/niubash-smoke-test.txt
-cat ./target/niubash-smoke-test.txt
-rm ./target/niubash-smoke-test.txt
+echo 'test content' > ./target/native-shell-smoke-test.txt
+cat ./target/native-shell-smoke-test.txt
+rm ./target/native-shell-smoke-test.txt
 
 printf '[15] special vars\n'
 echo "argc:$# args:$* prev:$?"
@@ -77,7 +77,7 @@ echo "str:$S len:${#S} sub:${S:0:5}"
 
 printf '[18] file tests\n'
 [ -d ./target ] && echo target-dir
-[ -f ./target/niubash-smoke-test.txt ] || echo temp-missing
+[ -f ./target/native-shell-smoke-test.txt ] || echo temp-missing
 
 printf '[19] export\n'
 export MYVAR=123

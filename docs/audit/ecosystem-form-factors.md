@@ -6,7 +6,7 @@ Owner question (2026-10-05): *"bash/zsh/fish 的插件生态是什么样的？�
 Answer: **no — "source it in rc" is one of at least 13 distinct plugin form
 factors.** This document enumerates them from real artifacts (shallow clones,
 commit-pinned below), states what each form requires from the shell, and what
-niu supports today. It is an audit only; **no product changes**.
+native-shell supports today. It is an audit only; **no product changes**.
 
 ## Method
 
@@ -26,8 +26,8 @@ read from those clones at the pinned commits:
 | direnv | `b00e451` | zoxide | `86b443c` |
 
 niu-side citations are `engine:` for the rubash engine (`D:/repo/rubash`,
-pinned by niubash's `[patch]` to the local worktree, 1.3.4 chain) and
-`niu:` for `crates/niubash-runtime/`. Line numbers verified by grep on
+pinned by native-shell's `[patch]` to the local worktree, 1.3.4 chain) and
+`native-shell:` for `crates/native-shell-runtime/`. Line numbers verified by grep on
 2026-10-02.
 
 ---
@@ -39,9 +39,9 @@ pinned by niubash's `[patch]` to the local worktree, 1.3.4 chain) and
 A plugin is a file the shell `source`s at startup. Sub-forms:
 
 - **F01a init-only monolith.** One file, self-contained. Examples:
-  `bash-sensible` (`sensible.bash`, shipped in niu's `full` collection);
+  `bash-sensible` (`sensible.bash`, shipped in native-shell's `full` collection);
   `bash-preexec.sh` (rcaloras/bash-preexec — precmd/preexec hook layer, a
-  niu recipe, `docs/plugins-guide.md:127`).
+  native-shell recipe, `docs/plugins-guide.md:127`).
 - **F01b framework plugin file selected by the manager's own loader.**
   oh-my-zsh: `oh-my-zsh.sh:316-317` (`_omz_source
   "plugins/$plugin/$plugin.plugin.zsh"`), 370 plugins, each a
@@ -59,14 +59,14 @@ A plugin is a file the shell `source`s at startup. Sub-forms:
 **Load trigger:** startup, synchronously, in manager-defined order.
 **Shell requirements:** `source`, functions, aliases, arrays; the manager
 itself is just more sourced bash.
-**niu status: WORKS — this is the driver's native model.** The managed rc
+**native-shell status: WORKS — this is the driver's native model.** The managed rc
 block emits one guarded source line per enabled asset
 (`docs/plugins-guide.md` §three-layers); adapters exist for oh-my-bash rc
 arrays, bash-it `enabled/`, bpkg trees, and wild `*.sh`/`*.bash`
-(`niu: crates/niubash-runtime/src/plugins/{sources,spec,sync}.rs`).
+(`native-shell: crates/native-shell-runtime/src/plugins/{sources,spec,sync}.rs`).
 Framework plugins fail exactly as GNU fails when sourced bare (no shims,
-`docs/plugins-guide.md` §14.4). `expand_aliases` is on for `~/.niubashrc`
-(`niu: src/shell.rs:538-544`), rc is `~/.niubashrc` (`niu: src/shell.rs:37`,
+`docs/plugins-guide.md` §14.4). `expand_aliases` is on for `~/.native-shellrc`
+(`native-shell: src/shell.rs:538-544`), rc is `~/.native-shellrc` (`native-shell: src/shell.rs:37`,
 `:765-796`).
 
 ### F02 — function autoload directory (per-function files, first-call load)
@@ -91,12 +91,12 @@ function.
 **Load trigger:** first invocation of the function name (not startup).
 **Shell requirements:** a function search path + per-name file lookup +
 unknown-name deferral at parse time.
-**niu status: MISSING.** No `fpath`/`autoload` concept exists in the engine
+**native-shell status: MISSING.** No `fpath`/`autoload` concept exists in the engine
 (grep: zero hits for `autoload`/`fpath` across `D:/repo/rubash/src`). bash
 itself has no autoload either — the bash-ecosystem answer is F01/F03; the
-gap matters if niu ever wants fish/zsh-layout trees to install without an
+gap matters if native-shell ever wants fish/zsh-layout trees to install without an
 enumerate-and-source pass. Startup-cost lever: autoload defers work to first
-call; niu's driver materializes eager source lines today.
+call; native-shell's driver materializes eager source lines today.
 
 ### F03 — completion registry (file-per-command)
 
@@ -123,11 +123,11 @@ call; niu's driver materializes eager source lines today.
 function execution with `COMP_*`/`COMPREPLY`, `-C` command actions, a
 **default compspec** (`complete -D`) consulted when the command has none,
 and a retry after the loader sources the file.
-**niu status: PARTIAL — the biggest functional hole.** The compspec registry
+**native-shell status: PARTIAL — the biggest functional hole.** The compspec registry
 and static actions (wordlist/globpat/-W, `-X` filter, prefix/suffix) work
 end-to-end into the REPL (`engine: src/builtins/complete.rs:897-927`; REPL
 gates via `has_compspec`,
-`niu: src/completion/completer.rs:244-258`; spec lookup
+`native-shell: src/completion/completer.rs:244-258`; spec lookup
 `engine: src/executor/public_accessors.rs:308-310`). But:
   - `-F`/`-C` dynamic actions are **not executed in the interactive path** —
     `complete_line_candidates` contributes only static actions
@@ -165,13 +165,13 @@ Theme files set `PS1`/`PROMPT` and per-prompt functions.
 **Shell requirements:** PS1/PROMPT re-expansion per prompt, prompt escapes,
 array-capable `PROMPT_COMMAND`, enough PS1 escape support for themes to
 render.
-**niu status: WORKS — niu's flagship supported form.** Themes style
+**native-shell status: WORKS — native-shell's flagship supported form.** Themes style
 themselves through the PS1/PROMPT_COMMAND channel
-(`niu: src/prompt.rs:47`, `:318-341` render path incl. right-align split);
+(`native-shell: src/prompt.rs:47`, `:318-341` render path incl. right-align split);
 PROMPT_COMMAND runs per-prompt, array-aware
 (`engine: src/executor/prompt_command.rs:22-50`, eval.c:305 port). Theme
 claim/pick is a first-class spec field with exclusive ownership
-(`docs/plugins-guide.md` §theme ownership; `niu: src/plugins/theme_preview.rs`).
+(`docs/plugins-guide.md` §theme ownership; `native-shell: src/plugins/theme_preview.rs`).
 
 ### F05 — key-binding pack
 
@@ -190,15 +190,15 @@ Files that install key-sequence → widget/shell-command bindings.
 **Load trigger:** startup (or on demand).
 **Shell requirements:** a real keymap the line editor consults; `bind -x`
 executing a shell function with `READLINE_LINE`/`READLINE_POINT` in/out.
-**niu status: MISSING (and silently so).** `bind` is a syntax-validating
+**native-shell status: MISSING (and silently so).** `bind` is a syntax-validating
 stub: it parses options (`'m'|'f'|'q'|'u'|'r'|'x'` all "consume an argument"
 and fall through to success) and **installs nothing**
 (`engine: src/builtins/bind.rs:24-93`; no `READLINE_LINE`/`READLINE_POINT`
 anywhere in the engine — grep zero hits). The interactive line editor is
-reedline in the niu REPL with its own private widget map
-(`niu: src/repl.rs:471`). Consequence: binding packs **load clean and do
-nothing** — worse than an error, because `niu plugin enable fzf-git.sh`
-(niu's own `recommended` collection entry, `docs/plugins-guide.md:129`)
+reedline in the native-shell REPL with its own private widget map
+(`native-shell: src/repl.rs:471`). Consequence: binding packs **load clean and do
+nothing** — worse than an error, because `native-shell plugin enable fzf-git.sh`
+(native-shell's own `recommended` collection entry, `docs/plugins-guide.md:129`)
 appears to succeed while every binding is dead.
 
 ### F06 — startup drop-in directory (conf.d)
@@ -216,11 +216,11 @@ A directory the shell scans and runs at startup; plugins install by
 
 **Load trigger:** every startup, file order.
 **Shell requirements:** multi-directory startup scan. Nothing exotic.
-**niu status: MISSING as a shell feature.** One primary rc
-(`niu: src/shell.rs:37`, `:957` primary = `~/.niubashrc`), no conf.d scan
+**native-shell status: MISSING as a shell feature.** One primary rc
+(`native-shell: src/shell.rs:37`, `:957` primary = `~/.native-shellrc`), no conf.d scan
 engine-side. The plugin driver *approximates* it by materializing a managed
 rc block, but that is a generated list, not a drop-in seam, and per-file
-enable (`niu plugin enable <id>/<file>`) is the only granularity.
+enable (`native-shell plugin enable <id>/<file>`) is the only granularity.
 
 ### F07 — CLI-emitted integration snippet (the tool IS the plugin)
 
@@ -244,14 +244,14 @@ forever after.
 **Shell requirements:** `eval "$(...)"` (command substitution of external
 command), array-capable `PROMPT_COMMAND`, DEBUG trap firing before each
 command, `trap` builtin.
-**niu status: WORKS (with the F05 caveat).** PROMPT_COMMAND (array-aware)
+**native-shell status: WORKS (with the F05 caveat).** PROMPT_COMMAND (array-aware)
 and DEBUG/ERR/RETURN/EXIT traps are real
 (`engine: src/executor/prompt_command.rs:22-50`;
 `engine: src/builtins/trap.rs:520-522`, DEBUG firing sites across the
 executor: `ast_exec.rs:494`, `pipeline_exec.rs:828/1076/1556/1617`,
 `function_calls.rs:467`, `command_substitution.rs:725`). The product
-explicitly expects `starship init` to live in `~/.niubashrc`
-(`niu: src/shell.rs:538`) and the engine handles starship's
+explicitly expects `starship init` to live in `~/.native-shellrc`
+(`native-shell: src/shell.rs:538`) and the engine handles starship's
 `${var:$((var="$(cmd)",0)):0}` idiom
 (`engine: src/executor/parameter_core.rs:320`). PS0 is **not** expanded
 (no `"PS0"` lookup — grep), so PS0-based integrations would lose that
@@ -276,7 +276,7 @@ Functions registered against shell events.
 the event.
 **Shell requirements:** an event bus (named events, variable-watch, signal,
 job-exit) + handler registration on definition.
-**niu status: MISSING (no event bus).** Bash-family analogues cover only the
+**native-shell status: MISSING (no event bus).** Bash-family analogues cover only the
 prompt cycle: PROMPT_COMMAND ≈ `fish_prompt`, DEBUG trap ≈ `fish_preexec`,
 ERR trap (`engine: src/builtins/trap.rs:521`) ≈ an error-only postexec. A
 fish plugin cannot be *loaded*, only *ported*; the plugin driver's job here
@@ -292,12 +292,12 @@ emulation.
 - Compiled caches: `zrecompile` `.zwc` files and the `zcompdump` completion
   cache (`oh-my-zsh.sh:79, 215-256`).
 
-**niu status: NOT APPLICABLE by design.** `enable -f` (dynamic builtin
+**native-shell status: NOT APPLICABLE by design.** `enable -f` (dynamic builtin
 loading) is refused — `engine: src/builtins/enable.rs:101` TODO comment,
 `:153-181` "dynamic loading not supported" diagnostics. No `.so`/`zwc`
-loading will ever exist in niu; the driver should *recognize and skip* these
+loading will ever exist in native-shell; the driver should *recognize and skip* these
 artifacts (a `*.zwc` next to a `*.zsh` is cache, not the plugin). The
-perf idea — caching expansion/completion state — is niu's own problem to
+perf idea — caching expansion/completion state — is native-shell's own problem to
 solve natively, not a compatibility form.
 
 ### F10 — lazy-load stubs (deferred loading)
@@ -312,9 +312,9 @@ solve natively, not a compatibility form.
 **Shell requirements:** for plugin-supplied stubs: none (they are plain
 bash functions). For manager-side deferral: a scheduler or shadow-command
 mechanism.
-**niu status: PARTIAL.** Plugin-supplied lazy stubs are ordinary bash and
+**native-shell status: PARTIAL.** Plugin-supplied lazy stubs are ordinary bash and
 work (F01 semantics). The driver has no deferral concept — `plugins.toml`
-has no `wait`/`defer` ice equivalent (`niu: src/plugins/spec.rs`) — and
+has no `wait`/`defer` ice equivalent (`native-shell: src/plugins/spec.rs`) — and
 startup cost is eager for everything enabled.
 
 ### F11 — PATH-integrated package (binaries + assets)
@@ -332,9 +332,9 @@ A plugin whose payload is executables plus per-shell asset files.
 
 **Load trigger:** PATH lookup at invocation; assets via their form.
 **Shell requirements:** nothing (binaries); assets reduce to F01/F03.
-**niu status: WORKS.** Binaries need only PATH; the sourcing side is F01.
+**native-shell status: WORKS.** Binaries need only PATH; the sourcing side is F01.
 Installation is deliberately out of scope (download retraction: tools come
-from wpm/winget/scoop/apt/brew; `niu plugin add fzf` prints the commands —
+from wpm/winget/scoop/apt/brew; `native-shell plugin add fzf` prints the commands —
 `docs/plugins-guide.md` §executable tools).
 
 ### F12 — data-only assets (alias packs, abbreviations, theme vars)
@@ -347,7 +347,7 @@ from wpm/winget/scoop/apt/brew; `niu plugin add fzf` prints the commands —
 
 **Load trigger:** startup source.
 **Shell requirements:** aliases; abbreviations require an `abbr` subsystem.
-**niu status: PARTIAL.** Alias packs work (aliases are core). Abbreviations
+**native-shell status: PARTIAL.** Alias packs work (aliases are core). Abbreviations
 do not exist in the product (engine grep: only a doc comment,
 `engine: src/executor/external_file_builtins.rs:1466`); a separate lane
 (wt93/abbr) is carrying that feature — this audit only records the
@@ -367,12 +367,12 @@ What managers record about installed plugins:
   from"gh-r"` (`zinit/README.md:206-220`); state in the `ZINIT_ICES`
   assoc (`zinit.zsh:17`).
 - bash-it: `enabled/` symlink set + `BASH_IT_THEME` (`bash_it.sh:47-74`).
-- (Contrast, already adopted by niu: lazy.nvim's spec + lockfile pair.)
+- (Contrast, already adopted by native-shell: lazy.nvim's spec + lockfile pair.)
 
-**niu status: WORKS — spec parity exists.** `~/.niubash/plugins.toml`
-declarative spec + `~/.niubash/sources/registry.toml` lock (commit + tree
-checksum pins) + `niu plugin sync` reconciliation
-(`docs/plugins-guide.md`; `niu: src/plugins/{spec,sync,trust}.rs`).
+**native-shell status: WORKS — spec parity exists.** `~/.native-shell/plugins.toml`
+declarative spec + `~/.native-shell/sources/registry.toml` lock (commit + tree
+checksum pins) + `native-shell plugin sync` reconciliation
+(`docs/plugins-guide.md`; `native-shell: src/plugins/{spec,sync,trust}.rs`).
 The gap is not metadata — it is that the spec's *enable* vocabulary only
 addresses F01-style assets (see Gaps).
 
@@ -380,26 +380,26 @@ addresses F01-style assets (see Gaps).
 
 ## Support matrix
 
-| # | Form | niu status | Load-bearing engine cite |
+| # | Form | native-shell status | Load-bearing engine cite |
 |---|---|---|---|
-| F01 | rc-sourced entry (+framework loops) | WORKS | `niu: src/plugins/sync.rs`; `engine: src/builtins/source.rs` |
+| F01 | rc-sourced entry (+framework loops) | WORKS | `native-shell: src/plugins/sync.rs`; `engine: src/builtins/source.rs` |
 | F02 | function autoload dir | MISSING | grep: no `fpath`/`autoload` in engine |
 | F03 | completion registry | PARTIAL | `engine: src/builtins/complete.rs:897-927`; `-F/-C` not wired (`:894` + `public_accessors.rs:270-273`); no `-D` fallback |
-| F04 | prompt/theme system | WORKS | `engine: src/executor/prompt_command.rs:22-50`; `niu: src/prompt.rs:47,318-341` |
+| F04 | prompt/theme system | WORKS | `engine: src/executor/prompt_command.rs:22-50`; `native-shell: src/prompt.rs:47,318-341` |
 | F05 | key-binding pack | MISSING | `engine: src/builtins/bind.rs:24-93` (validate-only stub) |
-| F06 | startup drop-in dir (conf.d) | MISSING | `niu: src/shell.rs:37,957` (single rc) |
-| F07 | CLI-emitted hook bootstrap | WORKS | `engine: trap.rs:520-522` + executor DEBUG sites; `niu: src/shell.rs:538` |
+| F06 | startup drop-in dir (conf.d) | MISSING | `native-shell: src/shell.rs:37,957` (single rc) |
+| F07 | CLI-emitted hook bootstrap | WORKS | `engine: trap.rs:520-522` + executor DEBUG sites; `native-shell: src/shell.rs:538` |
 | F08 | event-handler functions (fish) | MISSING | no event bus (analogues: PROMPT_COMMAND/DEBUG/ERR only) |
 | F09 | zsh modules/caches (.so/.zwc) | N/A (by design) | `engine: src/builtins/enable.rs:153-181` |
-| F10 | lazy-load stubs | PARTIAL | plain-bash stubs work; no manager deferral (`niu: src/plugins/spec.rs`) |
+| F10 | lazy-load stubs | PARTIAL | plain-bash stubs work; no manager deferral (`native-shell: src/plugins/spec.rs`) |
 | F11 | PATH-integrated package | WORKS | binaries need nothing; sourcing = F01 |
 | F12 | data-only assets | PARTIAL | aliases yes; `abbr` missing (wt93/abbr lane) |
-| F13 | manager manifest/lockfile | WORKS | `docs/plugins-guide.md`; `niu: src/plugins/{spec,sync,trust}.rs` |
+| F13 | manager manifest/lockfile | WORKS | `docs/plugins-guide.md`; `native-shell: src/plugins/{spec,sync,trust}.rs` |
 
 **Counts: 13 forms — WORKS 6, PARTIAL 2, MISSING 4, N/A 1.**
 
 Reading: the *bash* plugin world (F01/F04/F07/F11/F12/F13 — the six WORKS)
-is where niu already plays; the PARTIAL/MISSING set is exactly the parts of
+is where native-shell already plays; the PARTIAL/MISSING set is exactly the parts of
 the ecosystem that outgrew "source it in rc": completion registries that
 load lazily and run functions, keymaps, directory contracts, and events.
 
@@ -408,7 +408,7 @@ load lazily and run functions, keymaps, directory contracts, and events.
 1. **F03 — interactive `-F`/`-C` completion execution + `complete -D`
    lazy-loader fallback.** The engine already runs completion functions for
    `compgen -F` (`job_builtins.rs:2364-2392`) and the REPL already gates on
-   `has_compspec` (`niu: completer.rs:244-258`); what is missing is wiring
+   `has_compspec` (`native-shell: completer.rs:244-258`); what is missing is wiring
    `run_compgen_completion_function`-equivalent invocation into
    `complete_line_candidates` plus a `-D`-fallback lookup (pseudo key
    already stored, `job_builtins.rs:2042-2046`). Unblocks: bash-completion's
@@ -417,7 +417,7 @@ load lazily and run functions, keymaps, directory contracts, and events.
    "static wordlist completion" into the real programmable-completion form.
 2. **F05 — `bind`/`bind -x` into the real line editor.** The stub
    (`bind.rs:24-93`) accepts everything and installs nothing, so binding
-   packs fail *silently* — including `fzf-git.sh`, which niu's own
+   packs fail *silently* — including `fzf-git.sh`, which native-shell's own
    `recommended` collection ships (`docs/plugins-guide.md:129`). Requires
    `bind` calls to mutate a keymap the reedline REPL consults, plus
    `bind -x` execution semantics (`READLINE_LINE`/`READLINE_POINT`). Until
@@ -427,10 +427,10 @@ load lazily and run functions, keymaps, directory contracts, and events.
    drop-ins).** The dominant fish/zsh plugin layout is a directory the
    shell picks up, not a file a manager sources; fisher's whole model
    (`functions/conf.d/completions` copy-in, README.md:117-135) and OMZ's
-   fpath scan (`oh-my-zsh.sh:66-94`) are directory-shaped. niu's driver
+   fpath scan (`oh-my-zsh.sh:66-94`) are directory-shaped. native-shell's driver
    can only enumerate entry files and source them eagerly — which breaks
    autoload's first-call deferral (a startup-cost lever) and has no
-   drop-in seam. Minimal bash-native move: a niu conf.d the rc sources
+   drop-in seam. Minimal bash-native move: a native-shell conf.d the rc sources
    with a glob, plus driver tags for layout kinds; full autoload/fpath is
    an engine feature and should be sized as such.
 
@@ -443,13 +443,13 @@ rely on.
 
 | Form | TUI surface | Status today |
 |---|---|---|
-| F01 enable lists (per-file candidates with tags) | enable/disable views | EXISTS (`niu: src/plugins/ui.rs`, `sources.rs` candidate enumeration) |
-| F04 theme gallery + exclusive theme claim | theme pick/preview | EXISTS (`niu: src/plugins/theme_preview.rs`; wizard post-install pick) |
-| F13 spec/lock/trust state | trust review, sync rows, distro apply | EXISTS (`niu: src/plugins/{trust,spec,sync,distros}.rs`) |
+| F01 enable lists (per-file candidates with tags) | enable/disable views | EXISTS (`native-shell: src/plugins/ui.rs`, `sources.rs` candidate enumeration) |
+| F04 theme gallery + exclusive theme claim | theme pick/preview | EXISTS (`native-shell: src/plugins/theme_preview.rs`; wizard post-install pick) |
+| F13 spec/lock/trust state | trust review, sync rows, distro apply | EXISTS (`native-shell: src/plugins/{trust,spec,sync,distros}.rs`) |
 | F03 completion registry | per-command enable/disable, "lazy-loaded on first Tab" hint | NEW (needs F03 engine work first) |
 | F05 key-binding packs | pack cards + dead-binding warning until F05 lands | NEW (warning is cheap and honest now) |
 | F06 conf.d drop-ins | directory toggles (enable whole dir, not single files) | NEW (needs F06) |
-| F08 events / F09 modules | "not supported in niu" explainer rows (port-required / skip cache artifacts) | NEW (copy only) |
+| F08 events / F09 modules | "not supported in native-shell" explainer rows (port-required / skip cache artifacts) | NEW (copy only) |
 | F10 lazy stubs | defer/wait column in enable view | NEW (needs F10 manager support) |
 
 Design consequence for #186: the TUI's unit of management must graduate
@@ -460,11 +460,11 @@ ecosystem's forms, not files, are what users pick from.
 ## Honesty notes
 
 - All ecosystem line numbers were read from the pinned shallow clones in
-  this session; niu/engine line numbers were grep-verified against the
+  this session; native-shell/engine line numbers were grep-verified against the
   1.3.4-chain sources this worktree builds against.
 - "WORKS" claims for F04/F07 rest on the cited code paths plus the product's
   documented starship/oh-my-bash tenancy (`docs/plugins-guide.md`,
-  `niu: src/shell.rs:538`); no end-to-end behavioral runs were executed in
+  `native-shell: src/shell.rs:538`); no end-to-end behavioral runs were executed in
   this lane (audit-only, no product changes).
 - Machine-readable companion: `docs/audit/ecosystem-forms.json` (same
   directory).

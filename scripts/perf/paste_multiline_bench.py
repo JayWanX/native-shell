@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-"""ConPTY benchmark for niubash#202 (slow multiline paste) — the perf
-companion of `PasteChunkEditMode` (niubash#252, PSReadLine-style 50 ms
+"""ConPTY benchmark for native-shell#202 (slow multiline paste) — the perf
+companion of `PasteChunkEditMode` (native-shell#252, PSReadLine-style 50 ms
 paste-chunk detection on the Windows console path).
 
-Calibration contract (CHANGELOG 1.4.0, niubash#252 entry): the issue's
+Calibration contract (CHANGELOG 1.4.0, native-shell#252 entry): the issue's
 257-line author payload (scripts/perf/fixtures/issue202_repro_payload.txt,
 a `set -euo pipefail` build script) drops from >300 s (timeout — the old
 path executed every pasted line as it arrived) to ~4.6 s end to end. This
@@ -25,8 +25,8 @@ PasteChunkEditMode):
     swallows the ?2004/?201~ markers (crossterm#737), so a "bracketed"
     paste through ConPTY exercised the SAME raw per-line feed as `raw` —
     a duplicate datapoint under a misleading name. Windows has no
-    bracketed-paste code path at all: niubash#252 IS its replacement
-    (cfg(windows)); Unix keeps niubash#234's real `Event::Paste` and never
+    bracketed-paste code path at all: native-shell#252 IS its replacement
+    (cfg(windows)); Unix keeps native-shell#234's real `Event::Paste` and never
     runs this heuristic. The bench therefore feeds exactly one shape: the
     raw burst a Windows terminal delivers on Ctrl+V.
   - shell startup: the clock starts after the prompt has settled, not at
@@ -53,7 +53,7 @@ Metrics:
                         constant — path-vs-harness split).
   bad_executions_paste  bare `BAD<n>` OUTPUT lines seen while the paste
                         was still arriving (before the first Enter). This
-                        is the niubash#202 defect metric — it must be 0.
+                        is the native-shell#202 defect metric — it must be 0.
                         The echoed edit-buffer text (`echo BAD<n>`) in
                         repaints does not count.
   bad_executions_total  the same count over the whole session. Under
@@ -75,14 +75,14 @@ Usage:
   python scripts/perf/paste_multiline_bench.py [--payload issue202]
           [--lines 200] [--timeout 300] [--exe PATH] [--json]
 
-  `--exe` defaults to target/debug/niu.exe (or $NIU_BENCH_EXE), so a
+  `--exe` defaults to target/debug/native-shell.exe (or $NATIVE_SHELL_BENCH_EXE), so a
   before/after run benches two builds with this same harness version.
   Windows only (ConPTY/pywinpty driver, and the code under test is
   cfg(windows)); on other platforms the script explains and exits 2.
   CI shape: a windows-latest job — the same runner and pywinpty driver
   the perfbudget-trend job in .github/workflows/ci.yml already uses:
 
-      cargo build --bin niu
+      cargo build --bin native-shell
       python scripts/perf/paste_multiline_bench.py --payload issue202 --json
 """
 import argparse
@@ -229,7 +229,7 @@ class PtyReader:
         return False, acc
 
 
-def niu_version(exe):
+def native_shell_version(exe):
     """The binary's own version banner — it embeds the rubash rev, so the
     bench output is attributable to a build without any repo context."""
     try:
@@ -260,9 +260,9 @@ def print_env(exe, payload_name, text, lines, timeout):
     except Exception:
         pywinpty = 'unknown'
     st = payload_stats(payload_name, text)
-    print('paste-bench-env niu="%s" niubash_rev=%s payload=%s(%d pasted '
+    print('paste-bench-env native-shell="%s" native_shell_rev=%s payload=%s(%d pasted '
           'lines%s, %d bytes) os=%s python=%s pywinpty=%s exe=%s'
-          % (niu_version(exe), repo_rev(), st['payload'], st['lines'],
+          % (native_shell_version(exe), repo_rev(), st['payload'], st['lines'],
              ' / %d in fixture' % st['fixture_lines']
              if 'fixture_lines' in st else '',
              st['bytes'], platform.platform(), platform.python_version(),
@@ -271,8 +271,8 @@ def print_env(exe, payload_name, text, lines, timeout):
 
 
 def run_case(exe, payload_name, payload_text, timeout):
-    home = tempfile.mkdtemp(prefix='niubash-paste-bench-')
-    with open(os.path.join(home, '.niubashrc'), 'w', encoding='utf-8') as f:
+    home = tempfile.mkdtemp(prefix='native-shell-paste-bench-')
+    with open(os.path.join(home, '.native-shellrc'), 'w', encoding='utf-8') as f:
         f.write('')
     env = dict(os.environ)
     env['HOME'] = home
@@ -340,14 +340,14 @@ def run_case(exe, payload_name, payload_text, timeout):
 def main():
     if not sys.platform.startswith('win'):
         print('SKIP: paste_multiline_bench drives the Windows console path '
-              'only — PasteChunkEditMode (niubash#252) is cfg(windows) and '
+              'only — PasteChunkEditMode (native-shell#252) is cfg(windows) and '
               'the driver is pywinpty/ConPTY. Run it on Windows (CI: '
               'windows-latest, see .github/workflows/ci.yml perfbudget-trend '
               'for the driver setup).', flush=True)
         return 2
     ap = argparse.ArgumentParser(
         description='End-to-end ConPTY bench for the multiline paste path '
-                    '(niubash#202 / PasteChunkEditMode, niubash#252).')
+                    '(native-shell#202 / PasteChunkEditMode, native-shell#252).')
     ap.add_argument('lines_pos', nargs='?', type=int, default=None,
                     help='synthetic payload line count (default 200)')
     ap.add_argument('payload_pos', nargs='?', default=None,
@@ -363,14 +363,14 @@ def main():
                     help='per-case timeout in seconds (default 300 — the '
                          '">300 s" pre-#252 calibration bound)')
     ap.add_argument('--exe', default=None,
-                    help='niu binary to bench (default target/debug/niu.exe'
-                         ' or $NIU_BENCH_EXE)')
+                    help='native-shell binary to bench (default target/debug/native-shell.exe'
+                         ' or $NATIVE_SHELL_BENCH_EXE)')
     ap.add_argument('--json', action='store_true',
                     help='emit one JSON object per case (CI form)')
     args = ap.parse_args()
 
-    exe = (args.exe or os.environ.get('NIU_BENCH_EXE')
-           or os.path.join(REPO, 'target', 'debug', 'niu.exe'))
+    exe = (args.exe or os.environ.get('NATIVE_SHELL_BENCH_EXE')
+           or os.path.join(REPO, 'target', 'debug', 'native-shell.exe'))
     if not os.path.exists(exe):
         print('FAIL: %s not found (cargo build first or pass --exe)'
               % exe, flush=True)

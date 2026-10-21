@@ -1,5 +1,5 @@
-//! niubash#162 — launching the opencode TUI (a Bun-compiled standalone
-//! executable) from niubash failed with
+//! native-shell#162 — launching the opencode TUI (a Bun-compiled standalone
+//! executable) from native-shell failed with
 //! `Failed to open library "B:/~BUN/root/opentui-*.dll": error code 126`
 //! while cmd/PowerShell worked.
 //!
@@ -10,7 +10,7 @@
 //! Windows path (it resolves drive-relative to `<cwd>:\c\...`), so bunfs's
 //! `B:` virtual-drive extraction failed and dlopen fell back to the embedded
 //! virtual path `B:/~BUN/root/...` -> ERROR_MOD_NOT_FOUND (126). Empirical
-//! matrix with the exact niu child environment: `/c/...` TMPDIR -> 126 on
+//! matrix with the exact native-shell child environment: `/c/...` TMPDIR -> 126 on
 //! every run; native `C:/...`, backslash `C:\...`, and NO TMPDIR -> TUI
 //! initializes.
 //!
@@ -19,7 +19,7 @@
 //! Windows shell see TEMP/TMP and no TMPDIR at all. Fix lives in rubash
 //! (executor/init.rs injection is now shell-only; child_env_value +
 //! apply_env_command_environment cross the boundary in Windows-native form);
-//! these tests pin the boundary at the niubash product level.
+//! these tests pin the boundary at the native-shell product level.
 
 #[cfg(windows)]
 use std::fs;
@@ -31,11 +31,11 @@ use std::process::{Command, Stdio};
 // The boundary tests below are Windows-gated; on unix the helpers would be
 // dead weight, so they follow the same gate.
 #[cfg(windows)]
-fn niu_binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_niu"))
+fn native_shell_binary() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_native-shell"))
 }
 
-/// Runs a script body through the built niu binary with a controlled
+/// Runs a script body through the built native-shell binary with a controlled
 /// temp-related parent environment (TMPDIR absent, TEMP/TMP pinned) and
 /// returns trimmed stdout. The body is written to a unique LF-terminated
 /// file so no host-shell quoting perturbs the bytes under test and parallel
@@ -45,22 +45,22 @@ fn run_script(body: &str) -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join("niubash-issue162");
+    let dir = std::env::temp_dir().join("native-shell-issue162");
     fs::create_dir_all(&dir).unwrap();
     let script = dir.join(format!("probe-{}-{seq}.sh", std::process::id()));
     fs::write(&script, format!("{body}\n")).unwrap();
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg(&script)
         .env_remove("TMPDIR")
         .env("TEMP", r"T:\niu162-temp")
         .env("TMP", r"T:\niu162-tmp")
         .stdin(Stdio::null())
         .output()
-        .expect("spawn niu");
+        .expect("spawn native-shell");
     let _ = fs::remove_file(&script);
     assert!(
         output.status.success(),
-        "niu failed: {}",
+        "native-shell failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8_lossy(&output.stdout).trim().to_string()
@@ -70,14 +70,14 @@ fn run_script(body: &str) -> String {
 /// the output means the foreign child's environment block has no TMPDIR.
 ///
 /// Before the fix this printed `/t/niu162-temp` (slash-drive form of the
-/// injected default) and broke every Bun-compiled child (niubash#162).
+/// injected default) and broke every Bun-compiled child (native-shell#162).
 #[test]
 #[cfg(windows)]
 fn foreign_children_get_no_injected_tmpdir() {
     let out = run_script(r#"cmd /c "echo [%TMPDIR%]""#);
     assert_eq!(
         out, "[%TMPDIR%]",
-        "a fresh niubash must not export an invented TMPDIR (GNU imports TMPDIR, never creates it)"
+        "a fresh native-shell must not export an invented TMPDIR (GNU imports TMPDIR, never creates it)"
     );
 }
 

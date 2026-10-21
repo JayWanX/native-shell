@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the niu plugin recipe seed index (recipes.toml).
+"""Generate the native-shell plugin recipe seed index (recipes.toml).
 
 The recipe registry is pure data (mason-registry pattern: one registry file,
 one row per asset, no behavior code). This script derives the bulk of the
@@ -9,7 +9,7 @@ checkouts, plus a hand-curated standalone set (managers, prompts, tools).
 Usage:
     python scripts/gen-plugin-recipes.py \
         --corpus D:/repo/rubash/target-ecosys/repos \
-        --out crates/niubash-runtime/assets/plugins/recipes.toml
+        --out crates/native-shell-runtime/assets/plugins/recipes.toml
 
 Re-run when the corpus moves; the committed TOML is the artifact.
 """
@@ -48,14 +48,14 @@ STANDALONE = [
      "BSD-2-Clause", "https://github.com/magicmonty/bash-git-prompt",
      {"driver": "git", "kind": "generic", "entry": "gitprompt.sh"}),
     ("sexy-bash-prompt", "prompt",
-     "minimal colored prompt (`make install` model; info-only in niu)",
+     "minimal colored prompt (`make install` model; info-only in native-shell)",
      "MIT", "https://github.com/twolfson/sexy-bash-prompt",
      None),
     ("bpkg", "manager",
      "lightweight bash package manager (bpkg install owner/pkg)",
      "MIT", "https://github.com/bpkg/bpkg",
      {"driver": "git", "kind": "generic", "entry": "bpkg.sh"}),
-    # niubash#171: curated independent recipes carried by the built-in
+    # native-shell#171: curated independent recipes carried by the built-in
     # collections. Every entry audited against its upstream root via the
     # GitHub contents API (wt61 pattern, 2026-10-02); the file-adapter
     # detection needs at least one *.sh/*.bash in the tree, which each
@@ -77,7 +77,7 @@ STANDALONE = [
      "MIT", "https://github.com/bobthecow/git-flow-completion",
      {"driver": "git", "kind": "generic", "entry": "git-flow-completion.bash"}),
     ("basher", "manager",
-     "package manager with per-package bins (PATH + `basher init` model; info-only in niu)",
+     "package manager with per-package bins (PATH + `basher init` model; info-only in native-shell)",
      "MIT", "https://github.com/basherpm/basher",
      None),
     ("ble.sh", "plugin",
@@ -202,7 +202,7 @@ STANDALONE = [
           "linux-x64": ("https://github.com/direnv/direnv/releases/download/v2.37.1/direnv.linux-amd64",
                         "raw", "1f1b93dd6f38523fde26dfac96151ef9d31a374e3005cd3345fb93555ae0c9b5", ["direnv"]),
       }}),
-    ("niugit", "plugin",
+    ("native-git", "plugin",
      "native Windows git without MSYS (niu-git build); the setup wizard's git pick",
      "GPL-2.0-only", "https://github.com/unixwin/niu-git",
      {"driver": "download", "version": "v2.55.0.2", "bins": ["git.exe"],
@@ -423,11 +423,11 @@ def main() -> None:
     args = parser.parse_args()
 
     header = [
-        "# niubash plugin recipe seed index (generated — do not hand-edit bulk rows).",
+        "# native-shell plugin recipe seed index (generated — do not hand-edit bulk rows).",
         "# Regenerate: python scripts/gen-plugin-recipes.py --corpus <ecosys-repos> --out <this file>",
         "#",
         "# Data shape (mason-registry pattern; see docs/planning/lazy-family-source-study.md §6):",
-        "#   id          unique recipe id (`niu plugin add <id>`)",
+        "#   id          unique recipe id (`native-shell plugin add <id>`)",
         "#   category    manager | theme | plugin | alias | completion | prompt",
         "#   driver      git (tree source) | download (direct binary) | absent (info-only)",
         "#   manager/asset_kind/asset  asset recipes riding on a manager source",

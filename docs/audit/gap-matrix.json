@@ -5,15 +5,15 @@
     "branch": "wt93/abbr",
     "base": "b4b87f1",
     "our_side": {
-      "rubash": "D:/repo/rubash/src @ 804d680f (niubash 1.3.4 chain)",
-      "niubash": "crates/niubash-runtime @ b4b87f1",
+      "rubash": "D:/repo/rubash/src @ 804d680f (native-shell 1.3.4 chain)",
+      "native-shell": "crates/native-shell-runtime @ b4b87f1",
       "reedline_vendored": "0.50"
     },
     "references": {
       "fish": "snapshot D:/repo/_rtstudy_refs/fish-shell-master (master, Cargo 4.9.3 dev)",
       "zsh": "snapshot D:/repo/_rtstudy_refs/zsh-master (5.9.999.3-test, 2026-05-27; see doc provenance caveats)",
       "nushell": "release tarball 0.108.0 at D:/repo/_rtstudy_refs/nushell-0.108.0",
-      "reedline": "snapshot 0.52.0 (niubash vendors 0.50)"
+      "reedline": "snapshot 0.52.0 (native-shell vendors 0.50)"
     },
     "source_doc": "docs/audit/shell-gap-matrix.md",
     "note": "impact counts gaps only; rows with impact \"—\" are ahead/equivalent/paradigm rows"
@@ -213,7 +213,7 @@
       "nushell": "—",
       "ours": "missing",
       "impact": "low-med",
-      "fix_path": "ship `niu key-reader` on the product layer using crossterm"
+      "fix_path": "ship `native-shell key-reader` on the product layer using crossterm"
     },
     {
       "id": "D01-11",
@@ -222,7 +222,7 @@
       "fish": "fish_clipboard_copy/paste functions",
       "zsh": "—",
       "nushell": "reedline system_clipboard feature",
-      "ours": "ahead (feature enabled, crates/niubash-runtime/Cargo.toml:11; add_system_clipboard_keybindings repl.rs:353)",
+      "ours": "ahead (feature enabled, crates/native-shell-runtime/Cargo.toml:11; add_system_clipboard_keybindings repl.rs:353)",
       "impact": "—",
       "fix_path": "(ahead) keep"
     },
@@ -290,7 +290,7 @@
       "nushell": "—",
       "ours": "missing",
       "impact": "med",
-      "fix_path": "implement `abbr` builtin in niubash-runtime over the config table"
+      "fix_path": "implement `abbr` builtin in native-shell-runtime over the config table"
     },
     {
       "id": "D02-06",
@@ -301,7 +301,7 @@
       "nushell": "—",
       "ours": "missing",
       "impact": "med",
-      "fix_path": "persist in niu config (FullConfig config.rs:384) instead of a universal-var file"
+      "fix_path": "persist in native-shell config (FullConfig config.rs:384) instead of a universal-var file"
     },
     {
       "id": "D02-07",
@@ -629,7 +629,7 @@
       "fish": "complete -c X -a '...' (src/builtins/complete.rs) + completion functions",
       "zsh": "compdef functions + compinit autoload (Completion/compinit:72+)",
       "nushell": "custom completer closures + external_completer (nu-cli/src/completions/custom_completions.rs)",
-      "ours": "partial (NIU_COMPDEFS cmd->function bridge shell.rs:116-118, load_user_compdefs repl.rs:1189; contract narrower: no per-word-position dispatch options)",
+      "ours": "partial (NATIVE_SHELL_COMPDEFS cmd->function bridge shell.rs:116-118, load_user_compdefs repl.rs:1189; contract narrower: no per-word-position dispatch options)",
       "impact": "med-high",
       "fix_path": "document + extend compdef contract (word/previous-word/leading options) over the existing bridge"
     },
@@ -662,7 +662,7 @@
       "fish": "— (static files)",
       "zsh": "—",
       "nushell": "—",
-      "ours": "ahead-ish (cmd -h scrape + 3-level cache, per docs/planning/niubash-zsh-gap-analysis.md pillar table)",
+      "ours": "ahead-ish (cmd -h scrape + 3-level cache, per docs/planning/native-shell-zsh-gap-analysis.md pillar table)",
       "impact": "—",
       "fix_path": "(ahead) verify cache invalidation"
     },
@@ -739,9 +739,9 @@
       "fish": "src/builtins/bind.rs (bind, -K presets, fish_user_key_bindings)",
       "zsh": "Src/Zle/zle_keymap.c:212+ keymap management",
       "nushell": "keybindings config table + `keybindings` commands (nu-cli/src/commands/keybindings*.rs)",
-      "ours": "partial (engine bind is a stub: validates options, prints defaults on -p, rubash src/builtins/bind.rs:24-93; product NIU_BINDKEYS env parse repl.rs:56-69)",
+      "ours": "partial (engine bind is a stub: validates options, prints defaults on -p, rubash src/builtins/bind.rs:24-93; product NATIVE_SHELL_BINDKEYS env parse repl.rs:56-69)",
       "impact": "high (#185)",
-      "fix_path": "implement NIU_BINDKEYS as first-class config + real bind dispatch in product layer; keep engine bind bash-compatible in output only"
+      "fix_path": "implement NATIVE_SHELL_BINDKEYS as first-class config + real bind dispatch in product layer; keep engine bind bash-compatible in output only"
     },
     {
       "id": "D08-02",
@@ -752,7 +752,7 @@
       "nushell": "EditMode switch config",
       "ours": "partial (EditorMode Emacs/Vi config.rs:44; no runtime switch command)",
       "impact": "low-med",
-      "fix_path": "`niu mode vi/emacs` verb or Ctrl-bound toggle"
+      "fix_path": "`native-shell mode vi/emacs` verb or Ctrl-bound toggle"
     },
     {
       "id": "D08-03",
@@ -783,7 +783,7 @@
       "fish": "different language entirely (no POSIX; functions/args/`set` model)",
       "zsh": "superset, mostly bash-compatible",
       "nushell": "different language (structured pipeline)",
-      "ours": "equivalent (rubash parser/executor suites; 86/86 GNU upstream tests claim per docs/planning/niubash-zsh-gap-analysis.md)",
+      "ours": "equivalent (rubash parser/executor suites; 86/86 GNU upstream tests claim per docs/planning/native-shell-zsh-gap-analysis.md)",
       "impact": "—",
       "fix_path": "keep at parity; this is the product"
     },
@@ -1025,9 +1025,9 @@
       "fish": "src/builtins/status.rs:175 print_features",
       "zsh": "—",
       "nushell": "version/commands verbs",
-      "ours": "partial (`niu doctor` + `niu --version` cover setup health, not shell state query)",
+      "ours": "partial (`native-shell doctor` + `native-shell --version` cover setup health, not shell state query)",
       "impact": "low",
-      "fix_path": "`niu status` verb"
+      "fix_path": "`native-shell status` verb"
     },
     {
       "id": "D10-12",
@@ -1104,7 +1104,7 @@
       "nushell": "crates/nu-explore (src/pager, views)",
       "ours": "missing",
       "impact": "low-med",
-      "fix_path": "`niu explore` over json/csv via asset data"
+      "fix_path": "`native-shell explore` over json/csv via asset data"
     },
     {
       "id": "D11-04",
@@ -1203,7 +1203,7 @@
       "nushell": "PROMPT_COMMAND closure (nu-cli/src/prompt.rs)",
       "ours": "partial (template + segment catalog config.rs:12-29; Custom(String) segment is static text, prompt_segments.rs:24-35)",
       "impact": "med-high",
-      "fix_path": "let a segment be a niu function name evaluated per draw (needs cheap function-call path)"
+      "fix_path": "let a segment be a native-shell function name evaluated per draw (needs cheap function-call path)"
     },
     {
       "id": "D13-02",
@@ -1333,7 +1333,7 @@
       "fish": "functions+events",
       "zsh": "any sourced script",
       "nushell": "signatures + plugin commands",
-      "ours": "partial (NIU_COMPDEFS + HookConfig + widget functions are separate surfaces, not unified under one pack format)",
+      "ours": "partial (NATIVE_SHELL_COMPDEFS + HookConfig + widget functions are separate surfaces, not unified under one pack format)",
       "impact": "med",
       "fix_path": "unify into a pack manifest (plugins/spec.rs exists — extend)"
     },
@@ -1368,7 +1368,7 @@
       "nushell": "— (config only)",
       "ours": "missing",
       "impact": "med-low",
-      "fix_path": "niu config env table applied at startup (simpler than uvar file)"
+      "fix_path": "native-shell config env table applied at startup (simpler than uvar file)"
     },
     {
       "id": "D15-03",
@@ -1542,9 +1542,9 @@
       "fish": "config.fish + conf.d/*.fish",
       "zsh": "zshenv/zprofile/zshrc/zlogin (global + user)",
       "nushell": "env.nu + config.nu",
-      "ours": "partial (NIU_ENV file with BASH_ENV fallback, shell.rs:904-917 + tests :3370-3434; single file by design)",
+      "ours": "partial (NATIVE_SHELL_ENV file with BASH_ENV fallback, shell.rs:904-917 + tests :3370-3434; single file by design)",
       "impact": "low-med",
-      "fix_path": "optional conf.d-style drop-in dir alongside niu.env"
+      "fix_path": "optional conf.d-style drop-in dir alongside native-shell.env"
     },
     {
       "id": "D17-02",
@@ -1555,7 +1555,7 @@
       "nushell": "experimental flags",
       "ours": "partial (bash set/shopt + setopt alias, zsh_options.rs; no niu-specific feature flags)",
       "impact": "low",
-      "fix_path": "niu feature flags only when a behavioral fork needs one"
+      "fix_path": "native-shell feature flags only when a behavioral fork needs one"
     },
     {
       "id": "D17-03",
@@ -1619,7 +1619,7 @@
       "fish": "—",
       "zsh": "—",
       "nushell": "—",
-      "ours": "ahead (NIU_ENV sourcing incl. agent-init file, shell.rs:3352-3461 tests)",
+      "ours": "ahead (NATIVE_SHELL_ENV sourcing incl. agent-init file, shell.rs:3352-3461 tests)",
       "impact": "—",
       "fix_path": "(ahead) unique AI-native surface"
     },
@@ -1740,7 +1740,7 @@
       "fish": "n/a (no Windows build)",
       "zsh": "n/a (MSYS layer)",
       "nushell": "native",
-      "ours": "ahead (170 ms cold start claim, docs/planning/niubash-zsh-gap-analysis.md pillar table; rubash docs/PERF-BASELINE.md tracks engine perf)",
+      "ours": "ahead (170 ms cold start claim, docs/planning/native-shell-zsh-gap-analysis.md pillar table; rubash docs/PERF-BASELINE.md tracks engine perf)",
       "impact": "—",
       "fix_path": "(ahead) keep measuring per release"
     },
@@ -1773,7 +1773,7 @@
       "fish": "—",
       "zsh": "—",
       "nushell": "—",
-      "ours": "ahead (windows_terminal.rs:6 NIU_PROFILE_GUID profile install)",
+      "ours": "ahead (windows_terminal.rs:6 NATIVE_SHELL_PROFILE_GUID profile install)",
       "impact": "—",
       "fix_path": "(ahead) keep"
     },

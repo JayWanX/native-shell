@@ -1,7 +1,7 @@
 #[path = "interactive/driver.rs"]
 mod driver;
 
-use driver::{require_pty_or_skip, NiuSession, DEFAULT_TIMEOUT};
+use driver::{require_pty_or_skip, NativeShellSession, DEFAULT_TIMEOUT};
 
 #[test]
 fn restricted_repl_defers_until_rc_and_restricts_prompt_command_and_body() {
@@ -9,7 +9,7 @@ fn restricted_repl_defers_until_rc_and_restricts_prompt_command_and_body() {
         return;
     }
     for args in [&["-r"][..], &["-r", "--noediting"][..]] {
-        let mut session = NiuSession::spawn_custom_with_args(
+        let mut session = NativeShellSession::spawn_custom_with_args(
             "restricted-repl-startup",
             "PS1='P1> '\nPS2='P2> '\ncd \"$HOME\"\nPATH=restricted-startup-path\nSTARTUP_COUNT=$(( ${STARTUP_COUNT:-0} + 1 ))\nPROMPT_COMMAND='cd .; printf \"precmd-status:%s\\n\" \"$?\"'\n",
             args,
@@ -38,7 +38,7 @@ fn fresh_interactive_startup_does_not_run_setup_or_create_rc() {
     if !require_pty_or_skip("issue359-fresh-startup") {
         return;
     }
-    let mut session = NiuSession::spawn_cli(
+    let mut session = NativeShellSession::spawn_cli(
         "issue359-fresh-startup",
         &[],
         &[("PS1".into(), "P1> ".into())],
@@ -47,10 +47,10 @@ fn fresh_interactive_startup_does_not_run_setup_or_create_rc() {
         DEFAULT_TIMEOUT,
     );
     session.wait_ready();
-    assert!(!session.home().join(".niubashrc").exists());
-    assert!(!session.home().join(".niubash/.setup-done").exists());
+    assert!(!session.home().join(".native-shellrc").exists());
+    assert!(!session.home().join(".native-shell/.setup-done").exists());
     session.send_line("exit");
     assert_eq!(session.wait_exit(), 0);
-    assert!(!session.home().join(".niubashrc").exists());
-    assert!(!session.home().join(".niubash/.setup-done").exists());
+    assert!(!session.home().join(".native-shellrc").exists());
+    assert!(!session.home().join(".native-shell/.setup-done").exists());
 }

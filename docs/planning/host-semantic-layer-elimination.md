@@ -1,5 +1,5 @@
 ---
-tags: [niubash, rubash, architecture, host-layer, semantics, boundary]
+tags: [native-shell, rubash, architecture, host-layer, semantics, boundary]
 created: 2026-09-21
 status: proposed
 ---
@@ -7,9 +7,9 @@ status: proposed
 # Host Semantic-Layer Elimination
 
 > Context: AGENTS.md says shell semantics belong upstream in
-> `unixwin/rubash`; niubash must not carry long-term host-side semantic
+> `unixwin/rubash`; native-shell must not carry long-term host-side semantic
 > workarounds. This document is the audited inventory of every place the
-> niubash host still parses or rewrites shell semantics it does not own,
+> native-shell host still parses or rewrites shell semantics it does not own,
 > plus the dependency-ordered plan and the proven verification protocol for
 > removing them. Line numbers are as of 2026-09-21 and will drift — the
 > function names are the stable anchors (grep them).
@@ -26,7 +26,7 @@ status: proposed
    sandboxed behavior matrix on the K: smoke drive confirmed `/tmp`
    read/write/cd/ls all unify on `%TEMP%`.
 2. **`/tmp` unification (2026-09-21).** Three creation sources of
-   `<root>/tmp` removed (niubash tree list in shell.rs, winuxcmd
+   `<root>/tmp` removed (native-shell tree list in shell.rs, winuxcmd
    `ensure_install_layout` in wpm.cpp, contract doc diagram), and
    completion + syntax-highlighting resolvers aligned to rubash's
    `/tmp` → real temp, `/var/tmp` → `<temp>/var/tmp`.
@@ -91,7 +91,7 @@ raw `\x11` bytes. The correct order:
 
 1. **Phase 0 (rubash, upstream): decode-at-boundary.** Rubash guarantees
    (or exposes an API for) fully-decoded literal words at the external
-   command boundary. Then delete A1 and A2 in niubash. **DONE 2026-09-22:**
+   command boundary. Then delete A1 and A2 in native-shell. **DONE 2026-09-22:**
    `rubash::decode_to_visible_text` landed (rubash 3de4e165); A1 strip
    deleted, host word-readers decode through `decoded_words`; A2 was
    already gone via 4873627.
@@ -117,12 +117,12 @@ comparison required).
 
 ## Verification protocol (as proven on 2026-09-21)
 
-1. `cargo fmt --check -p niubash; cargo build --locked;
+1. `cargo fmt --check -p native-shell; cargo build --locked;
    cargo test --workspace --locked` — **418 passed** as of writing.
 2. `sh scripts/check-rename-clean.sh` — must pass.
 3. **GNU upstream gate, baseline-compare**:
    `BASH_RUNNER="C:/Progra~1/Git/bin/bash.exe" bash
-   scripts/run-bash-upstream-with-niubash.sh`.
+   scripts/run-bash-upstream-with-native-shell.sh`.
    This workstation has **6 pre-existing environmental failures**
    (`run-appendop`, `run-herestr`, `run-invert`, `run-test`,
    `run-tilde`, `run-tilde2`; 80/86). The acceptance bar is **identical
@@ -130,14 +130,14 @@ comparison required).
    (the `rewrite_virtual_root_args` removal proved these six are not
    caused by host-pass deletions).
 4. **Sandboxed behavior matrix on the K: smoke drive**
-   (`K:\niubash-smoke`, HOME/USERPROFILE redirected to a sandbox dir —
+   (`K:\native-shell-smoke`, HOME/USERPROFILE redirected to a sandbox dir —
    never the real home):
    ```bash
-   niu -c "printf hi > /tmp/f; cat /tmp/f; cd /tmp && pwd"
-   niu -c "printf '%s\n' /tmp/f"          # must print /tmp/f verbatim
-   niu -c "ls /c/Users | head -3"          # slash-drive input dialect
-   niu -c 'x=/tmp/a; printf "%s\n" "$x"'   # expansions never rewritten
-   niu -c 'exit 42'; echo $?               # 42
+   native-shell -c "printf hi > /tmp/f; cat /tmp/f; cd /tmp && pwd"
+   native-shell -c "printf '%s\n' /tmp/f"          # must print /tmp/f verbatim
+   native-shell -c "ls /c/Users | head -3"          # slash-drive input dialect
+   native-shell -c 'x=/tmp/a; printf "%s\n" "$x"'   # expansions never rewritten
+   native-shell -c 'exit 42'; echo $?               # 42
    ```
 ### C1 revised scope (audited 2026-09-21, second look)
 
@@ -183,22 +183,22 @@ Registered C1 leftovers (not covered by the tokenizer merge):
 ## Cross-repo state the next agent must know
 
 - `D:/repo/rubash` carries one **uncommitted** change:
-  `src/bin/bash.rs` (shim prefers `NIU_SHELL`/`niu.exe`, with the
+  `src/bin/bash.rs` (shim prefers `NIU_SHELL`/`native-shell.exe`, with the
   pre-rename executable names kept as legacy fallbacks). It needs the
   normal upstream PR flow.
 - `D:/repo/unixwin-winuxcmd` carries the uncommitted `wpm.cpp` tmp-removal
   plus other in-progress work (grep.cpp etc.) that is **someone else's** —
   do not mix them into one commit.
-- The niubash repo itself is staged-but-uncommitted as a whole
+- The native-shell repo itself is staged-but-uncommitted as a whole
   (branch `fix/win10-setup-wizard-keys-logo`, no commits yet).
 - K: smoke drive redeploy:
-  `cargo build --release --locked && cp target/release/niu.exe
-  K:/niubash-smoke/niu.exe` (winuxcmd.exe there is a locally built 1.0.9).
+  `cargo build --release --locked && cp target/release/native-shell.exe
+  K:/native-shell-smoke/native-shell.exe` (winuxcmd.exe there is a locally built 1.0.9).
 
 ## Product decisions still pending (adjacent, not blocking)
 
 - bash/sh shim exposure as a setup-wizard opt-in (agents keep their bash
   instincts; default-off to avoid shadowing existing Git Bash installs).
-- `niu skill install` shipping `skills/niubash/` into agent skill dirs
-  (`~/.claude/skills/niubash/...`), plus a doctor row and a wizard
+- `native-shell skill install` shipping `skills/native-shell/` into agent skill dirs
+  (`~/.claude/skills/native-shell/...`), plus a doctor row and a wizard
   question.

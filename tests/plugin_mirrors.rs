@@ -1,7 +1,7 @@
 //! Mirror pipeline CLI tests (design §14.8, wt49/bmirror; git-only since
-//! the download retraction 2026-10-04): `niu plugin mirror set <url>` is
+//! the download retraction 2026-10-04): `native-shell plugin mirror set <url>` is
 //! the one-command configuration face — it validates and normalizes a
-//! pasted mirror URL, round-trips through `~/.niubash/mirrors.toml`
+//! pasted mirror URL, round-trips through `~/.native-shell/mirrors.toml`
 //! (env-scoped for the test), and `mirror list` reports the active git
 //! channel. The transport invariants (git insteadOf, canonical origins in
 //! records, legacy download channels ignored) are pinned in the
@@ -12,27 +12,31 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
-fn run_niu_with_env(args: &[&str], envs: &[(&str, String)]) -> Output {
-    let mut command = Command::new(niu_binary());
+fn run_native_shell_with_env(args: &[&str], envs: &[(&str, String)]) -> Output {
+    let mut command = Command::new(native_shell_binary());
     command.args(args);
     for (key, value) in envs {
         command.env(key, value);
     }
     command
         .output()
-        .unwrap_or_else(|err| panic!("failed to run niu {args:?}: {err}"))
+        .unwrap_or_else(|err| panic!("failed to run native-shell {args:?}: {err}"))
 }
 
 fn assert_success(output: &Output, context: &str) {
@@ -54,7 +58,10 @@ fn temp_dir(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("niubash-{name}-{}-{nanos}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "native-shell-{name}-{}-{nanos}",
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -67,16 +74,19 @@ fn temp_dir(name: &str) -> PathBuf {
 fn mirror_set_url_roundtrip_and_disable() {
     let home = temp_dir("mirror-cli");
     let config = home.join("mirrors.toml");
-    let envs = [("NIU_MIRRORS", config.to_string_lossy().into_owned())];
+    let envs = [(
+        "NATIVE_SHELL_MIRRORS",
+        config.to_string_lossy().into_owned(),
+    )];
 
     // Direct by default.
-    let out = run_niu_with_env(&["plugin", "mirror", "list"], &envs);
+    let out = run_native_shell_with_env(&["plugin", "mirror", "list"], &envs);
     assert_success(&out, "mirror list (default)");
     let text = stdout_text(&out);
     assert!(text.contains("direct connection"), "{text}");
 
     // set normalizes the missing trailing slash into the insteadOf base.
-    let out = run_niu_with_env(
+    let out = run_native_shell_with_env(
         &[
             "plugin",
             "mirror",
@@ -93,14 +103,14 @@ fn mirror_set_url_roundtrip_and_disable() {
     );
 
     let written = fs::read_to_string(&config).unwrap();
-    assert!(written.contains("niubash:mirrors@0.1.0"));
+    assert!(written.contains("native-shell:mirrors@0.1.0"));
     assert!(written.contains("active = \"custom\""));
     assert!(written.contains("git_instead_of = \"https://mirror.example.com/github.com/\""));
     // The community-service caveat ships in the file, not as a preset.
     assert!(written.contains("UNSUPPORTED"));
 
     // list reports the active channel.
-    let out = run_niu_with_env(&["plugin", "mirror", "list"], &envs);
+    let out = run_native_shell_with_env(&["plugin", "mirror", "list"], &envs);
     assert_success(&out, "mirror list (custom)");
     let text = stdout_text(&out);
     assert!(text.contains("custom mirror active"), "{text}");
@@ -111,9 +121,9 @@ fn mirror_set_url_roundtrip_and_disable() {
     assert!(text.contains("insteadOf"), "{text}");
 
     // set none goes back to direct but keeps the section.
-    let out = run_niu_with_env(&["plugin", "mirror", "set", "none"], &envs);
+    let out = run_native_shell_with_env(&["plugin", "mirror", "set", "none"], &envs);
     assert_success(&out, "mirror set none");
-    let out = run_niu_with_env(&["plugin", "mirror", "list"], &envs);
+    let out = run_native_shell_with_env(&["plugin", "mirror", "list"], &envs);
     assert_success(&out, "mirror list (none)");
     let text = stdout_text(&out);
     assert!(text.contains("direct connection"), "{text}");
@@ -132,9 +142,12 @@ fn mirror_set_url_roundtrip_and_disable() {
 fn mirror_set_rejects_garbage_and_help_exists() {
     let home = temp_dir("mirror-cli-reject");
     let config = home.join("mirrors.toml");
-    let envs = [("NIU_MIRRORS", config.to_string_lossy().into_owned())];
+    let envs = [(
+        "NATIVE_SHELL_MIRRORS",
+        config.to_string_lossy().into_owned(),
+    )];
 
-    let out = run_niu_with_env(&["plugin", "mirror", "set", "not a url"], &envs);
+    let out = run_native_shell_with_env(&["plugin", "mirror", "set", "not a url"], &envs);
     assert!(
         !out.status.success(),
         "garbage mirror url must be rejected: {}",
@@ -142,7 +155,7 @@ fn mirror_set_rejects_garbage_and_help_exists() {
     );
     assert!(!config.exists(), "rejected set must not create the file");
 
-    let out = run_niu_with_env(&["plugin", "mirror", "--help"], &envs);
+    let out = run_native_shell_with_env(&["plugin", "mirror", "--help"], &envs);
     assert_success(&out, "mirror --help");
     let text = stdout_text(&out);
     for needed in ["set <mirror-url>", "set none", "git_instead_of", "git-only"] {
@@ -154,7 +167,7 @@ fn mirror_set_rejects_garbage_and_help_exists() {
         "mirror test verb retired:\n{text}"
     );
 
-    let out = run_niu_with_env(&["plugin", "--help"], &envs);
+    let out = run_native_shell_with_env(&["plugin", "--help"], &envs);
     assert_success(&out, "plugin --help");
     let text = stdout_text(&out);
     assert!(
@@ -174,16 +187,19 @@ fn mirror_list_reports_hand_edited_git_only_config() {
     fs::write(
         &config,
         concat!(
-            "schema = \"niubash:mirrors@0.1.0\"\n",
+            "schema = \"native-shell:mirrors@0.1.0\"\n",
             "active = \"custom\"\n",
             "\n[github]\n",
             "git_instead_of = \"https://git.example.com/github.com\"\n",
         ),
     )
     .unwrap();
-    let envs = [("NIU_MIRRORS", config.to_string_lossy().into_owned())];
+    let envs = [(
+        "NATIVE_SHELL_MIRRORS",
+        config.to_string_lossy().into_owned(),
+    )];
 
-    let out = run_niu_with_env(&["plugin", "mirror", "list"], &envs);
+    let out = run_native_shell_with_env(&["plugin", "mirror", "list"], &envs);
     assert_success(&out, "mirror list (git-only)");
     let text = stdout_text(&out);
     assert!(text.contains("custom mirror active"), "{text}");
@@ -196,7 +212,7 @@ fn mirror_list_reports_hand_edited_git_only_config() {
     let _ = fs::remove_dir_all(&home);
 }
 
-/// niubash#298: a plaintext `http://` mirror ships every git fetch
+/// native-shell#298: a plaintext `http://` mirror ships every git fetch
 /// unencrypted and unauthenticated — setting one is refused without the
 /// explicit `--allow-plaintext` confirm, in interactive and scripted runs
 /// alike, and the confirm still prints the standing warning.
@@ -204,10 +220,13 @@ fn mirror_list_reports_hand_edited_git_only_config() {
 fn plaintext_http_mirror_requires_explicit_confirmation() {
     let home = temp_dir("mirror-cli-plaintext");
     let config = home.join("mirrors.toml");
-    let envs = [("NIU_MIRRORS", config.to_string_lossy().into_owned())];
+    let envs = [(
+        "NATIVE_SHELL_MIRRORS",
+        config.to_string_lossy().into_owned(),
+    )];
 
     // Without the flag: refused, nothing written.
-    let refused = run_niu_with_env(
+    let refused = run_native_shell_with_env(
         &[
             "plugin",
             "mirror",
@@ -226,7 +245,7 @@ fn plaintext_http_mirror_requires_explicit_confirmation() {
     assert!(!config.exists(), "the refused mirror must not be persisted");
 
     // With the flag: set, and the warning ships.
-    let allowed = run_niu_with_env(
+    let allowed = run_native_shell_with_env(
         &[
             "plugin",
             "mirror",
@@ -251,8 +270,8 @@ fn plaintext_http_mirror_requires_explicit_confirmation() {
 
     // An https:// mirror never needs the flag.
     let https = home.join("https.toml");
-    let envs2 = [("NIU_MIRRORS", https.to_string_lossy().into_owned())];
-    let set = run_niu_with_env(
+    let envs2 = [("NATIVE_SHELL_MIRRORS", https.to_string_lossy().into_owned())];
+    let set = run_native_shell_with_env(
         &[
             "plugin",
             "mirror",

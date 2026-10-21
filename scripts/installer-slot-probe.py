@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 r"""Install/uninstall cycle probe for the installer's slot contract.
 
-niubash#398 asked whether the niu installer put the unowned .NET shim into
+native-shell#398 asked whether the native-shell installer put the unowned .NET shim into
 `C:\Program Files\Git\bin\bash.exe` and what happens to that slot across an
 install/uninstall cycle. The ruling (PR #414): the installer never elevates
 (`PrivilegesRequired=lowest`) and does NOT claim the slot — nothing in the
@@ -15,9 +15,9 @@ slot that exists outside the sandbox root is checked byte for byte.
 
 What is replayed, stage by stage:
 
-  1. sandbox   — `{temp}/niubash-slot-probe-<pid>/`:
+  1. sandbox   — `{temp}/native-shell-slot-probe-<pid>/`:
                    `app\`                        the simulated {app}: payload
-                                                 `niu.exe` plus the shipped
+                                                 `native-shell.exe` plus the shipped
                                                  243 KB forwarder faces (the
                                                  1.4.0 layout an upgrade finds)
                    `foreign\Program Files\Git\bin\bash.exe`
@@ -28,7 +28,7 @@ What is replayed, stage by stage:
                  faces, plus one instrumented call whose process chain is
                  walked (the procmon substitute: forwarder = 2 processes
                  between probe and engine, hardlink = 1)
-  3. install   — the [Run] step niubash#377 owns: `niu --relink-shells --force`
+  3. install   — the [Run] step native-shell#377 owns: `native-shell --relink-shells --force`
   4. verify    — every face is the SAME FILE as the payload; no parked
                  `.niu-old-*` name left; the decoy and the real
                  `C:\Program Files\Git\bin\bash.exe` (read-only!) are
@@ -48,8 +48,8 @@ slot is byte-identical before and after.
 
 Usage:
 
-    python scripts/installer-slot-probe.py --payload target/release/niu.exe
-    python scripts/installer-slot-probe.py --payload niu.exe --n 30 --json report.json
+    python scripts/installer-slot-probe.py --payload target/release/native-shell.exe
+    python scripts/installer-slot-probe.py --payload native-shell.exe --n 30 --json report.json
 
 Exit code 0 = every stage held; 1 = a check failed; 2 = inputs unusable.
 """
@@ -69,21 +69,21 @@ import sys
 import tempfile
 import time
 
-# Every spawn this probe makes is a console binary (niu.exe, powershell.exe).
+# Every spawn this probe makes is a console binary (native-shell.exe, powershell.exe).
 # Without a console to inherit — the usual case for a probe launched from an
 # agent or a scheduler — Windows allocates a fresh, visible console per child
 # and the desktop flickers for the whole run. CREATE_NO_WINDOW suppresses
 # that; it changes nothing about the pipes or the exit statuses.
 NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
-# niubash#398: the convention slot. Read-only for this probe — it is hashed,
+# native-shell#398: the convention slot. Read-only for this probe — it is hashed,
 # never opened for writing.
 SLOT_CANDIDATES = (
     r"C:\Program Files\Git\bin\bash.exe",
     r"D:\Git\bin\bash.exe",
 )
 
-# The face layout niubash#397 relinks, relative to the installation root.
+# The face layout native-shell#397 relinks, relative to the installation root.
 FACES = (
     (r"bin", "bash.exe"),
     (r"bin", "sh.exe"),
@@ -130,7 +130,7 @@ class Probe:
         self.keep = keep
         self.failures = []
         self.report = {
-            "schema": "niubash:installer-slot-probe@1.0.0",
+            "schema": "native-shell:installer-slot-probe@1.0.0",
             "generated": _dt.datetime.now().isoformat(timespec="seconds"),
             "host": platform.node(),
             "os": platform.platform(),
@@ -153,7 +153,7 @@ class Probe:
     # --- sandbox -----------------------------------------------------------
 
     def build_sandbox(self):
-        root = tempfile.mkdtemp(prefix="niubash-slot-probe-")
+        root = tempfile.mkdtemp(prefix="native-shell-slot-probe-")
         self.root = root
         self.app = os.path.join(root, "app")
         self.foreign = os.path.join(root, "foreign", "Program Files", "Git", "bin")
@@ -165,7 +165,7 @@ class Probe:
         os.makedirs(os.path.join(self.app, "bin"), exist_ok=True)
         for directory, _ in FACES[2:]:
             os.makedirs(os.path.join(self.app, directory), exist_ok=True)
-        shutil.copy2(self.payload, os.path.join(self.app, "niu.exe"))
+        shutil.copy2(self.payload, os.path.join(self.app, "native-shell.exe"))
         seed = self.forwarder or self.payload
         for directory, name in FACES:
             shutil.copy2(seed, os.path.join(self.app, directory, name))
@@ -214,7 +214,7 @@ class Probe:
         return ok
 
     def faces_same_file(self, when):
-        payload_id = file_id(os.path.join(self.app, "niu.exe"))
+        payload_id = file_id(os.path.join(self.app, "native-shell.exe"))
         ok = True
         for directory, name in FACES:
             face = os.path.join(self.app, directory, name)
@@ -258,7 +258,7 @@ class Probe:
             f"no face name left outside the app tree after uninstall: {strays or 'none'}",
         )
 
-    # --- timing & process evidence (niubash#377) ---------------------------
+    # --- timing & process evidence (native-shell#377) ---------------------------
 
     def timed_min(self, path):
         samples = []
@@ -284,7 +284,7 @@ class Probe:
     def timing_table(self, label):
         print(f"\n  `{label}` — `face -c true`, min of {self.n} (warmup {self.warmup}):")
         rows = []
-        payload_row = ("niu.exe (payload)", os.path.join(self.app, "niu.exe"))
+        payload_row = ("native-shell.exe (payload)", os.path.join(self.app, "native-shell.exe"))
         candidates = [payload_row] + [
             (f"{directory}\\{name}", os.path.join(self.app, directory, name))
             for directory, name in FACES
@@ -309,7 +309,7 @@ class Probe:
 
     def _is_payload(self, path):
         try:
-            return file_id(path) == file_id(os.path.join(self.app, "niu.exe"))
+            return file_id(path) == file_id(os.path.join(self.app, "native-shell.exe"))
         except OSError:
             return False
 
@@ -364,7 +364,7 @@ def find_forwarder(payload):
     local = os.environ.get("LOCALAPPDATA")
     candidate = None
     if local:
-        guess = os.path.join(local, "Programs", "Niubash", "winuxcmd", "bin", "bash.exe")
+        guess = os.path.join(local, "Programs", "NativeShell", "winuxcmd", "bin", "bash.exe")
         if os.path.isfile(guess):
             candidate = guess
     if candidate and os.path.getsize(candidate) == os.path.getsize(payload):
@@ -375,8 +375,8 @@ def find_forwarder(payload):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--payload", required=True,
-                        help="the niu.exe build to install in the sandbox "
-                             "(e.g. target/release/niu.exe)")
+                        help="the native-shell.exe build to install in the sandbox "
+                             "(e.g. target/release/native-shell.exe)")
     parser.add_argument("--forwarder",
                         help="the forwarding shim to seed the 'before' state "
                              "(default: the live install's winuxcmd\\bin\\bash.exe "
@@ -405,7 +405,7 @@ def main():
         probe.stage("sandbox")
         probe.build_sandbox()
 
-        probe.stage("before: forwarder faces (niubash#377 quantification)")
+        probe.stage("before: forwarder faces (native-shell#377 quantification)")
         probe.timing_table("before")
         if forwarder:
             forwarder_intermediates = probe.process_chain(
@@ -418,9 +418,9 @@ def main():
                 )
         probe.slots_unchanged("at baseline")
 
-        probe.stage("install replay: [Run] niu --relink-shells --force --quiet")
+        probe.stage("install replay: [Run] native-shell --relink-shells --force --quiet")
         relink = subprocess.run(
-            [os.path.join(probe.app, "niu.exe"), "--relink-shells", "--force", "--quiet"],
+            [os.path.join(probe.app, "native-shell.exe"), "--relink-shells", "--force", "--quiet"],
             cwd=probe.app, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, timeout=300, check=False,
             creationflags=NO_WINDOW,
@@ -433,7 +433,7 @@ def main():
         probe.no_parked_names()
         probe.slots_unchanged("after install")
 
-        probe.stage("after: hardlinked faces (niubash#377 quantification)")
+        probe.stage("after: hardlinked faces (native-shell#377 quantification)")
         probe.timing_table("after")
         link_intermediates = probe.process_chain(
             "after (hardlink)", os.path.join(probe.app, "winuxcmd", "bin", "sh.exe"))
@@ -463,7 +463,7 @@ def main():
             print(f"  - {failure}")
         return 1
     print("probe: PASS — install/relink/uninstall cycle leaves every slot "
-          "byte-identical; the Git Bash slot is never touched (niubash#398)")
+          "byte-identical; the Git Bash slot is never touched (native-shell#398)")
     return 0
 
 

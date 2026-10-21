@@ -1,10 +1,10 @@
-# Niubash
+# Native Shell
 
 > **Bash, native on Windows.** No WSL. No VM. No `/mnt/c`. No cmdlet dialect.
 > Just the shell your fingers already know — and the one your AI agent
 > actually speaks.
 
-This is the Niubash documentation. Start with the guides, or jump straight
+This is the Native Shell documentation. Start with the guides, or jump straight
 into the shell:
 
 ```text
@@ -19,7 +19,7 @@ beta
 C:\Program Files
 ```
 
-## What Niubash is
+## What Native Shell is
 
 - **Bash syntax.** `if`, `for`, `case`, `$(...)`, pipes, redirects, heredocs,
   functions, aliases — the whole grammar, powered by
@@ -45,7 +45,7 @@ C:\Program Files
 - **Unix commands included.** WinuxCmd ships `ls`, `cat`, `grep`, `find`,
   `test`, `printf`, and friends as Windows command links, with no separate
   installation.
-- **AI-native.** `niu -c` is a contract: no banners, stable
+- **AI-native.** `native-shell -c` is a contract: no banners, stable
   stdout/stderr, exact exit-code propagation. What an agent writes is what
   the process receives — the quoting roulette of PowerShell and the path
   mangling of MSYS/Git Bash are both gone.
@@ -68,25 +68,25 @@ C:\Program Files
 | [Built-ins & Fast Paths](builtins.md) | All 64 built-ins, fast-path fallbacks, WinuxCmd overlap |
 | [Architecture](architecture.md) | rubash + WinuxCmd + reedline, path model, host contract |
 | [Windows Path Contract](windows-path-contract.md) | logical root, dispatcher selection, and layer ownership |
-| [Roadmap](niubash-roadmap.md) | What is done, what is next |
+| [Roadmap](native-shell-roadmap.md) | What is done, what is next |
 
 ## Get it
 
 Download the installer from
-[GitHub Releases](https://github.com/unixwin/niubash/releases), or build
+[GitHub Releases](https://github.com/JayWanX/native-shell/releases), or build
 from source:
 
 ```sh
-git clone https://github.com/unixwin/niubash.git
-cd niubash
+git clone https://github.com/JayWanX/native-shell.git
+cd native-shell
 cargo build --release
-target\release\niu.exe
+target\release\native-shell.exe
 ```
 
-Keep it current with `niu --self-update` (or `self-update` inside the
+Keep it current with `native-shell --self-update` (or `self-update` inside the
 shell) and `wpm update winuxcmd` for the Unix command set. Questions and bug
 reports go to
-[github.com/unixwin/niubash/issues](https://github.com/unixwin/niubash/issues).
+[github.com/JayWanX/native-shell/issues](https://github.com/JayWanX/native-shell/issues).
 
 Shell semantics live upstream in
 [rubash](https://github.com/unixwin/rubash) — fix the engine, and every

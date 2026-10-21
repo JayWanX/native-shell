@@ -3,7 +3,7 @@
 
 Simulates the hostile-network axis (adversarial-matrix lane AM01): the
 "five TLS-burned release runs" class (2026-10-03, docs/journey-gate.md
-"Network reality") -- TLS/TCP resets mid-clone and mid-fetch. niu's git
+"Network reality") -- TLS/TCP resets mid-clone and mid-fetch. native-shell's git
 traffic goes through this proxy via `-c http.proxy=http://127.0.0.1:PORT`
 (or https_proxy/HTTPS_PROXY in the sandbox env), so the failure shape is
 EXACTLY what a user on a hostile network sees: curl 56 / "Recv failure /

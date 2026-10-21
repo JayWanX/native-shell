@@ -1,7 +1,7 @@
 //! Contract tests for `--cwd-state`, the directory memory an agent host uses
-//! to make a chain of one-shot `niu -c` invocations behave like one shell.
+//! to make a chain of one-shot `native-shell -c` invocations behave like one shell.
 //!
-//! The option is explicit on purpose: a plain `niu -c` must keep the inherited
+//! The option is explicit on purpose: a plain `native-shell -c` must keep the inherited
 //! working directory and touch no state file. The tests below pin both the
 //! resume/record behavior and that negative contract, using builtins only so
 //! the fast test suite never needs winuxcmd command links.
@@ -10,15 +10,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
@@ -36,15 +40,15 @@ fn scratch(label: &str) -> PathBuf {
     path
 }
 
-/// Run niu from `cwd` with an explicit argv, returning stdout, stderr, and the
+/// Run native-shell from `cwd` with an explicit argv, returning stdout, stderr, and the
 /// exit code.
 fn run_niu(cwd: &Path, args: &[&str]) -> (String, String, i32) {
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .args(args)
         .current_dir(cwd)
-        .env("NIU_SKIP_WINUXCMD_ACTIVATION", "1")
+        .env("NATIVE_SHELL_SKIP_WINUXCMD_ACTIVATION", "1")
         .output()
-        .expect("spawn niubash");
+        .expect("spawn native-shell");
     (
         String::from_utf8_lossy(&output.stdout).to_string(),
         String::from_utf8_lossy(&output.stderr).to_string(),
@@ -190,7 +194,7 @@ fn cwd_state_falls_back_when_the_recorded_directory_is_gone() {
     let state = scratch.join("state.json");
     std::fs::write(
         &state,
-        r#"{"cwd":"D:/niu-cwd-state-does-not-exist","updatedAt":1}"#,
+        r#"{"cwd":"D:/native_shell-cwd-state-does-not-exist","updatedAt":1}"#,
     )
     .unwrap();
 
@@ -238,7 +242,7 @@ fn cwd_state_is_opt_in() {
     assert_eq!(normalize(&stdout), normalize(scratch.to_str().unwrap()));
     assert!(
         !state.exists(),
-        "without --cwd-state niu must not create or touch a state file"
+        "without --cwd-state native-shell must not create or touch a state file"
     );
 }
 
@@ -256,7 +260,7 @@ fn cwd_state_does_not_consume_lookalike_positional_parameters() {
             &state_arg(&state),
             "-c",
             "echo \"p1=$1\"",
-            "niu",
+            "native-shell",
             "--cwd-state",
         ],
     );
@@ -275,7 +279,7 @@ fn cwd_state_resolves_a_relative_state_path_once() {
     let other_shell = other.to_str().unwrap().replace('\\', "/");
 
     // The record is written after the command moved the shell, so a relative
-    // state path has to stay pinned to the directory niu was started in.
+    // state path has to stay pinned to the directory native-shell was started in.
     let (stdout, _, code) = run_niu(
         &scratch,
         &[

@@ -14,27 +14,31 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
-fn run_niu_with_env(args: &[&str], envs: &[(&str, String)]) -> Output {
-    let mut command = Command::new(niu_binary());
+fn run_native_shell_with_env(args: &[&str], envs: &[(&str, String)]) -> Output {
+    let mut command = Command::new(native_shell_binary());
     command.args(args);
     for (key, value) in envs {
         command.env(key, value);
     }
     command
         .output()
-        .unwrap_or_else(|err| panic!("failed to run niu {args:?}: {err}"))
+        .unwrap_or_else(|err| panic!("failed to run native-shell {args:?}: {err}"))
 }
 
 fn assert_success(output: &Output, context: &str) {
@@ -60,7 +64,10 @@ fn temp_dir(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("niubash-{name}-{}-{nanos}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "native-shell-{name}-{}-{nanos}",
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -90,12 +97,12 @@ impl Sandbox {
             ("HOME", home.to_string_lossy().into_owned()),
             ("USERPROFILE", home.to_string_lossy().into_owned()),
             (
-                "NIU_PLUGIN_SOURCES_ROOT",
+                "NATIVE_SHELL_PLUGIN_SOURCES_ROOT",
                 sources_root.to_string_lossy().into_owned(),
             ),
             (
-                "NIU_PLUGIN_SPEC",
-                home.join(".niubash")
+                "NATIVE_SHELL_PLUGIN_SPEC",
+                home.join(".native-shell")
                     .join("plugins.toml")
                     .to_string_lossy()
                     .into_owned(),
@@ -108,20 +115,20 @@ impl Sandbox {
         }
     }
 
-    /// The generated loader's text (niubash#359: the activation plane the
+    /// The generated loader's text (native-shell#359: the activation plane the
     /// verbs publish; the user rc is never written).
     fn rc(&self) -> String {
         fs::read_to_string(
             self.home
-                .join(".niubash")
+                .join(".native-shell")
                 .join("generated")
-                .join("plugins.niu"),
+                .join("plugins.nsh"),
         )
         .unwrap_or_default()
     }
 
     fn spec(&self) -> String {
-        fs::read_to_string(self.home.join(".niubash").join("plugins.toml")).unwrap_or_default()
+        fs::read_to_string(self.home.join(".native-shell").join("plugins.toml")).unwrap_or_default()
     }
 }
 
@@ -134,28 +141,32 @@ fn wild_single_file_plugin_enumerates_honestly_and_loads() {
     let sandbox = Sandbox::new("wild-single");
     let origin = fixture("wild-spark");
 
-    let add = run_niu_with_env(&["plugin", "add", &origin.to_string_lossy()], &sandbox.envs);
+    let add =
+        run_native_shell_with_env(&["plugin", "add", &origin.to_string_lossy()], &sandbox.envs);
     assert_success(&add, "plugin add <path>");
     let add_out = stdout_text(&add);
     assert!(
         add_out.contains("Installed source 'wild-spark'"),
         "{add_out}"
     );
-    assert!(add_out.contains("niu plugin trust wild-spark"), "{add_out}");
+    assert!(
+        add_out.contains("native-shell plugin trust wild-spark"),
+        "{add_out}"
+    );
 
     assert_success(
-        &run_niu_with_env(&["plugin", "trust", "wild-spark"], &sandbox.envs),
+        &run_native_shell_with_env(&["plugin", "trust", "wild-spark"], &sandbox.envs),
         "trust",
     );
 
     // Honest enumeration: the one sourceable file, tagged; README absent.
-    let list = run_niu_with_env(&["plugin", "list"], &sandbox.envs);
+    let list = run_native_shell_with_env(&["plugin", "list"], &sandbox.envs);
     let list_out = stdout_text(&list);
     assert!(list_out.contains("spark.bash [script]"), "{list_out}");
     assert!(!list_out.contains("README"), "{list_out}");
 
     // Source-level enable refuses to guess an entry for a file source.
-    let guess = run_niu_with_env(&["plugin", "enable", "wild-spark"], &sandbox.envs);
+    let guess = run_native_shell_with_env(&["plugin", "enable", "wild-spark"], &sandbox.envs);
     assert!(!guess.status.success(), "no guessed entry");
     assert!(
         stderr_text(&guess).contains("pick one"),
@@ -166,7 +177,7 @@ fn wild_single_file_plugin_enumerates_honestly_and_loads() {
     // Per-file enable writes one guarded source line and the spec records
     // the tree-relative path as the asset name.
     assert_success(
-        &run_niu_with_env(
+        &run_native_shell_with_env(
             &["plugin", "enable", "wild-spark/spark.bash"],
             &sandbox.envs,
         ),
@@ -175,7 +186,7 @@ fn wild_single_file_plugin_enumerates_honestly_and_loads() {
     let rc = sandbox.rc();
     assert!(
         rc.contains(
-            ". \"${NIU_PLUGIN_SOURCES_ROOT:-$HOME/.niubash/sources}/wild-spark/spark.bash\""
+            ". \"${NATIVE_SHELL_PLUGIN_SOURCES_ROOT:-$HOME/.native-shell/sources}/wild-spark/spark.bash\""
         ),
         "{rc}"
     );
@@ -186,16 +197,16 @@ fn wild_single_file_plugin_enumerates_honestly_and_loads() {
     );
 
     // Engine proof: sourcing the rc defines the function and it runs.
-    let engine = run_niu_with_env(
+    let engine = run_native_shell_with_env(
         &[
             "-c",
             &format!(
                 ". {}; spark loaded-ok",
                 sandbox
                     .home
-                    .join(".niubash")
+                    .join(".native-shell")
                     .join("generated")
-                    .join("plugins.niu")
+                    .join("plugins.nsh")
                     .to_string_lossy()
             ),
         ],
@@ -217,7 +228,8 @@ fn bash_preexec_loads_identically_to_manual_sourcing() {
     let sandbox = Sandbox::new("bash-preexec");
     let origin = fixture("bash-preexec");
 
-    let add = run_niu_with_env(&["plugin", "add", &origin.to_string_lossy()], &sandbox.envs);
+    let add =
+        run_native_shell_with_env(&["plugin", "add", &origin.to_string_lossy()], &sandbox.envs);
     assert_success(&add, "plugin add");
     assert!(
         stdout_text(&add).contains("Installed source 'bash-preexec'"),
@@ -225,11 +237,11 @@ fn bash_preexec_loads_identically_to_manual_sourcing() {
         stdout_text(&add)
     );
     assert_success(
-        &run_niu_with_env(&["plugin", "trust", "bash-preexec"], &sandbox.envs),
+        &run_native_shell_with_env(&["plugin", "trust", "bash-preexec"], &sandbox.envs),
         "trust",
     );
     assert_success(
-        &run_niu_with_env(
+        &run_native_shell_with_env(
             &["plugin", "enable", "bash-preexec/bash-preexec.sh"],
             &sandbox.envs,
         ),
@@ -243,18 +255,18 @@ fn bash_preexec_loads_identically_to_manual_sourcing() {
         .into_owned();
     let rc = sandbox
         .home
-        .join(".niubash")
+        .join(".native-shell")
         .join("generated")
-        .join("plugins.niu")
+        .join("plugins.nsh")
         .to_string_lossy()
         .into_owned();
 
     // Byte-faithful loading: sourcing the file directly and sourcing it
     // through the generated loader must yield the same hook state.
     let probe = r#"printf '%s|%s|%s' "${PROMPT_COMMAND-}" "$(type -t __bp_run_precmd)" "${#precmd_functions[@]}""#;
-    let manual = run_niu_with_env(&["-c", &format!(". {file}; {probe}")], &sandbox.envs);
+    let manual = run_native_shell_with_env(&["-c", &format!(". {file}; {probe}")], &sandbox.envs);
     assert_success(&manual, "manual source");
-    let via_rc = run_niu_with_env(&["-c", &format!(". {rc}; {probe}")], &sandbox.envs);
+    let via_rc = run_native_shell_with_env(&["-c", &format!(". {rc}; {probe}")], &sandbox.envs);
     assert_success(&via_rc, "rc-block source");
     assert_eq!(
         stdout_text(&manual),
@@ -273,7 +285,7 @@ fn bash_preexec_loads_identically_to_manual_sourcing() {
         ". {rc}; hook_ran=0; my_hook() {{ hook_ran=$((hook_ran+1)); }}; \
          precmd_functions+=(my_hook); __bp_run_precmd; printf '%s' \"$hook_ran\""
     );
-    let engine = run_niu_with_env(&["-c", &hook], &sandbox.envs);
+    let engine = run_native_shell_with_env(&["-c", &hook], &sandbox.envs);
     assert_success(&engine, "precmd hook run");
     assert_eq!(stdout_text(&engine).trim_end(), "1");
 
@@ -281,7 +293,7 @@ fn bash_preexec_loads_identically_to_manual_sourcing() {
 }
 
 /// §14.6.4 row 3 — bpkg: adopt a `bpkg install`-shaped tree through
-/// `--path` (appendix A WP-S3: niu never downloads; the user's bpkg did).
+/// `--path` (appendix A WP-S3: native-shell never downloads; the user's bpkg did).
 /// The manifest's `scripts` array drives candidate enumeration, the id is
 /// per-package (the tree name, not "bpkg"), and an npm-shaped
 /// `package.json` (scripts as an object) never matches the bpkg
@@ -293,7 +305,7 @@ fn bpkg_package_adoption_uses_manifest_scripts_and_per_package_ids() {
 
     // Explicit kind adopts the tree; the id derives from the tree name
     // (per-install scope), not the manager id.
-    let add = run_niu_with_env(
+    let add = run_native_shell_with_env(
         &["plugin", "add", "bpkg", "--path", &pkg.to_string_lossy()],
         &sandbox.envs,
     );
@@ -313,12 +325,12 @@ fn bpkg_package_adoption_uses_manifest_scripts_and_per_package_ids() {
         "spec entry leaves the id to sync (derived per package): {spec}"
     );
     assert_success(
-        &run_niu_with_env(&["plugin", "trust", "mypkg"], &sandbox.envs),
+        &run_native_shell_with_env(&["plugin", "trust", "mypkg"], &sandbox.envs),
         "trust",
     );
 
     // Manifest scripts are the candidates (tree-relative paths, tagged).
-    let list = run_niu_with_env(&["plugin", "list"], &sandbox.envs);
+    let list = run_native_shell_with_env(&["plugin", "list"], &sandbox.envs);
     let list_out = stdout_text(&list);
     assert!(
         list_out.contains("bin/mypkg.sh [bpkg script]"),
@@ -332,17 +344,17 @@ fn bpkg_package_adoption_uses_manifest_scripts_and_per_package_ids() {
     // Enable one manifest script; the engine runs it and the function the
     // package exports works (including its internal relative source).
     assert_success(
-        &run_niu_with_env(&["plugin", "enable", "mypkg/bin/mypkg.sh"], &sandbox.envs),
+        &run_native_shell_with_env(&["plugin", "enable", "mypkg/bin/mypkg.sh"], &sandbox.envs),
         "enable manifest script",
     );
     let rc = sandbox
         .home
-        .join(".niubash")
+        .join(".native-shell")
         .join("generated")
-        .join("plugins.niu")
+        .join("plugins.nsh")
         .to_string_lossy()
         .into_owned();
-    let engine = run_niu_with_env(
+    let engine = run_native_shell_with_env(
         &[
             "-c",
             &format!(
@@ -364,7 +376,7 @@ fn bpkg_package_adoption_uses_manifest_scripts_and_per_package_ids() {
     // fingerprint — the explicit kind refuses, and auto-detect falls
     // through to the wild file-source layer.
     let npm = fixture("npm-shape");
-    let refused = run_niu_with_env(
+    let refused = run_native_shell_with_env(
         &["plugin", "add", "bpkg", "--path", &npm.to_string_lossy()],
         &sandbox.envs,
     );
@@ -385,7 +397,7 @@ fn bpkg_package_adoption_uses_manifest_scripts_and_per_package_ids() {
 /// §14.4 no-shim red line:
 ///
 /// * directly sourcing the plugin fails with the same "command not found"
-///   GNU bash produces for the missing `_omb_module_require` — niubash
+///   GNU bash produces for the missing `_omb_module_require` — native-shell
 ///   must not mask or shim it;
 /// * with the framework present (what the oh-my-bash loader provides),
 ///   the very same file sources cleanly;
@@ -396,7 +408,8 @@ fn bashmarks_keeps_manual_source_fidelity_no_shim() {
     let sandbox = Sandbox::new("bashmarks");
     let origin = fixture("omb-bashmarks");
 
-    let add = run_niu_with_env(&["plugin", "add", &origin.to_string_lossy()], &sandbox.envs);
+    let add =
+        run_native_shell_with_env(&["plugin", "add", &origin.to_string_lossy()], &sandbox.envs);
     assert_success(&add, "plugin add omb-bashmarks fixture");
     assert!(
         stdout_text(&add).contains("Installed source 'oh-my-bash'"),
@@ -404,7 +417,7 @@ fn bashmarks_keeps_manual_source_fidelity_no_shim() {
         stdout_text(&add)
     );
     assert_success(
-        &run_niu_with_env(&["plugin", "trust", "oh-my-bash"], &sandbox.envs),
+        &run_native_shell_with_env(&["plugin", "trust", "oh-my-bash"], &sandbox.envs),
         "trust",
     );
 
@@ -412,7 +425,7 @@ fn bashmarks_keeps_manual_source_fidelity_no_shim() {
     // own selection mechanism (the loader's plugins array in the managed
     // rc block).
     assert_success(
-        &run_niu_with_env(&["plugin", "enable", "bashmarks"], &sandbox.envs),
+        &run_native_shell_with_env(&["plugin", "enable", "bashmarks"], &sandbox.envs),
         "enable bashmarks",
     );
     let rc = sandbox.rc();
@@ -430,7 +443,7 @@ fn bashmarks_keeps_manual_source_fidelity_no_shim() {
         .to_string_lossy()
         .into_owned()
         .replace('\\', "/");
-    let bare = run_niu_with_env(&["-c", &format!(". '{plugin}'")], &sandbox.envs);
+    let bare = run_native_shell_with_env(&["-c", &format!(". '{plugin}'")], &sandbox.envs);
     assert_eq!(
         bare.status.code(),
         Some(0),
@@ -464,7 +477,7 @@ fn bashmarks_keeps_manual_source_fidelity_no_shim() {
             assert_eq!(
                 gnu.status.code(),
                 bare.status.code(),
-                "exit statuses must match: bash {} vs niu {}",
+                "exit statuses must match: bash {} vs native-shell {}",
                 gnu.status,
                 bare.status
             );
@@ -483,7 +496,7 @@ fn bashmarks_keeps_manual_source_fidelity_no_shim() {
             .into_owned()
             .replace('\\', "/")
     );
-    let engine = run_niu_with_env(&["-c", &with_framework], &sandbox.envs);
+    let engine = run_native_shell_with_env(&["-c", &with_framework], &sandbox.envs);
     assert_success(&engine, "framework-present source");
     assert_eq!(stdout_text(&engine).trim_end(), "function");
 
@@ -529,15 +542,16 @@ fn unknown_shape_repos_list_tagged_candidates_or_fail_honestly() {
     let sandbox = Sandbox::new("unknown-shape");
     let origin = fixture("unknown-shape");
 
-    let add = run_niu_with_env(&["plugin", "add", &origin.to_string_lossy()], &sandbox.envs);
+    let add =
+        run_native_shell_with_env(&["plugin", "add", &origin.to_string_lossy()], &sandbox.envs);
     assert_success(&add, "plugin add unknown-shape");
     assert_success(
-        &run_niu_with_env(&["plugin", "trust", "unknown-shape"], &sandbox.envs),
+        &run_native_shell_with_env(&["plugin", "trust", "unknown-shape"], &sandbox.envs),
         "trust",
     );
 
     // install.sh is a candidate — visible, tagged as installer-like.
-    let list = run_niu_with_env(&["plugin", "list"], &sandbox.envs);
+    let list = run_native_shell_with_env(&["plugin", "list"], &sandbox.envs);
     let list_out = stdout_text(&list);
     assert!(
         list_out.contains("install.sh [installer/test-like"),
@@ -546,13 +560,13 @@ fn unknown_shape_repos_list_tagged_candidates_or_fail_honestly() {
     // Nothing was sourced by default: no rc was ever written and the
     // loader generation carries no sections.
     assert!(
-        !sandbox.rc().contains("# --- niu plugin source:"),
+        !sandbox.rc().contains("# --- native-shell plugin source:"),
         "no section may exist: {}",
         sandbox.rc()
     );
 
     // Source-level enable refuses to guess.
-    let guess = run_niu_with_env(&["plugin", "enable", "unknown-shape"], &sandbox.envs);
+    let guess = run_native_shell_with_env(&["plugin", "enable", "unknown-shape"], &sandbox.envs);
     assert!(!guess.status.success(), "no guessed entry");
     assert!(
         stderr_text(&guess).contains("pick one"),
@@ -562,7 +576,8 @@ fn unknown_shape_repos_list_tagged_candidates_or_fail_honestly() {
 
     // A repo with nothing sourceable at all fails at add time, honestly.
     let none = fixture("no-sourceable");
-    let refused = run_niu_with_env(&["plugin", "add", &none.to_string_lossy()], &sandbox.envs);
+    let refused =
+        run_native_shell_with_env(&["plugin", "add", &none.to_string_lossy()], &sandbox.envs);
     assert!(
         !refused.status.success(),
         "nothing to source must fail the add"

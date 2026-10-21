@@ -1,4 +1,4 @@
-//! niubash#245 regression: the external `niu -c '<producer>' | <reader that
+//! native-shell#245 regression: the external `native-shell -c '<producer>' | <reader that
 //! leaves>` shape must TERMINATE — one diagnostic, non-zero status, no
 //! unbounded `Broken pipe` spam.
 //!
@@ -8,18 +8,18 @@
 //! the pipe whose reader went away, "continues" degenerates on Windows:
 //! every later write fails again (ERROR_BROKEN_PIPE/ERROR_NO_DATA — no
 //! SIGPIPE analogue kills the producer), so an unbounded builtin loop
-//! printed one diagnostic per iteration forever and niu never exited. The
+//! printed one diagnostic per iteration forever and native-shell never exited. The
 //! product layer now interposes a pump between the process's stdout writers
 //! and the real pipe (src/piped_stdout.rs); when the downstream write fails,
-//! niu reports once and exits 1.
+//! native-shell reports once and exits 1.
 //!
 //! Semantics ownership vs rubash#455 (issue440_broken_pipe_shell_survival):
 //! INSIDE a script a broken pipeline member is still an ordinary command
 //! failure and the script keeps running (`inner_pipeline_*` below); the
-//! process-level one-shot diagnostic + status 1 is niu's host contract for
+//! process-level one-shot diagnostic + status 1 is native-shell's host contract for
 //! its own stdout (host_contract::closed_stdout_pipe, this file).
 //!
-//! Every run is deadline-bounded: the pre-fix failure mode was "niu never
+//! Every run is deadline-bounded: the pre-fix failure mode was "native-shell never
 //! exits", so a hang must fail the test, never pass it.
 
 #![cfg(windows)]
@@ -31,15 +31,15 @@ use std::time::{Duration, Instant};
 
 const EXIT_DEADLINE: Duration = Duration::from_secs(15);
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push("niu.exe");
+    fallback.push("native-shell.exe");
     fallback
 }
 
@@ -47,7 +47,8 @@ struct ScratchDir(PathBuf);
 
 impl ScratchDir {
     fn new(tag: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("niubash-245-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("native-shell-245-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create scratch dir");
         ScratchDir(dir)
@@ -68,7 +69,7 @@ impl Drop for ScratchDir {
     }
 }
 
-/// One deadline-bounded closed-stdout run: spawn `niu -c script` with both
+/// One deadline-bounded closed-stdout run: spawn `native-shell -c script` with both
 /// streams piped, read exactly `read_bytes` from stdout, drop the reader,
 /// then wait for the child to exit ON ITS OWN.
 struct ClosedReaderRun {
@@ -82,7 +83,7 @@ fn run_with_reader_gone(script: &str, read_bytes: usize, scratch: &ScratchDir) -
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .arg("-c")
         .arg(script)
         .current_dir(&start)
@@ -92,7 +93,7 @@ fn run_with_reader_gone(script: &str, read_bytes: usize, scratch: &ScratchDir) -
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn niu");
+        .expect("spawn native-shell");
 
     let mut stdout = child.stdout.take().expect("piped stdout");
     let mut buffer = vec![0_u8; read_bytes.max(1)];
@@ -155,7 +156,7 @@ fn assert_single_diagnostic(run: &ClosedReaderRun, context: &str) {
 }
 
 /// The issue's exact producer shape (`while true; do echo; done`): after the
-/// reader leaves, niu must exit — once, with status 1, one diagnostic —
+/// reader leaves, native-shell must exit — once, with status 1, one diagnostic —
 /// instead of looping on per-write failures forever.
 #[test]
 fn unbounded_builtin_loop_exits_once_when_reader_closes() {
@@ -168,7 +169,7 @@ fn unbounded_builtin_loop_exits_once_when_reader_closes() {
     assert_single_diagnostic(&run, "builtin while-true loop");
 }
 
-/// The task's minimal external repro shape (`niu -c 'yes' | head -c 1`):
+/// The task's minimal external repro shape (`native-shell -c 'yes' | head -c 1`):
 /// the unbounded `yes` producer must terminate the same way.
 #[test]
 fn yes_producer_exits_once_when_reader_closes() {
@@ -188,7 +189,7 @@ fn live_reader_receives_full_output_through_the_pump() {
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .arg("-c")
         .arg("echo FIRST; seq 1 50000; echo LAST")
         .current_dir(&start)
@@ -198,7 +199,7 @@ fn live_reader_receives_full_output_through_the_pump() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn niu");
+        .expect("spawn native-shell");
 
     let mut stdout = child.stdout.take().expect("piped stdout");
     let mut collected = String::new();
@@ -226,7 +227,7 @@ fn inner_pipeline_broken_pipe_keeps_gnu_shape() {
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg("-c")
         .arg("yes | head -c 3; echo done-$?")
         .current_dir(&start)
@@ -234,7 +235,7 @@ fn inner_pipeline_broken_pipe_keeps_gnu_shape() {
         .env("USERPROFILE", &home)
         .stdin(Stdio::null())
         .output()
-        .expect("spawn niu");
+        .expect("spawn native-shell");
 
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -265,7 +266,7 @@ fn nonzero_script_status_still_delivers_output() {
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg("-c")
         .arg("echo hi; exit 3")
         .current_dir(&start)
@@ -273,7 +274,7 @@ fn nonzero_script_status_still_delivers_output() {
         .env("USERPROFILE", &home)
         .stdin(Stdio::null())
         .output()
-        .expect("spawn niu");
+        .expect("spawn native-shell");
 
     assert_eq!(output.status.code(), Some(3));
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();

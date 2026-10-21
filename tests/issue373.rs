@@ -1,15 +1,15 @@
-//! niubash#373 regression harness.
+//! native-shell#373 regression harness.
 //!
 //! Sub-item 1: a DSR-silent terminal must not kill the shell.
 //!
 //! GNU bash/readline never asks the terminal where the cursor is (it counts
 //! prompt width from escape heuristics), so a terminal that does not answer
 //! `ESC[6n` — dumb terminals, `script(1)` recordings, some serial/tmux
-//! configurations — still gets its first prompt instantly. niu's line editor
+//! configurations — still gets its first prompt instantly. native-shell's line editor
 //! anchors the prompt with a cursor-position query before the first paint;
 //! on a terminal that never answers, the editor used to stall ~2.6 s, print
-//! "niubash: line editor error: The cursor position could not be read within
-//! a normal duration", and exit before painting any prompt (the niubash#355
+//! "native-shell: line editor error: The cursor position could not be read within
+//! a normal duration", and exit before painting any prompt (the native-shell#355
 //! finding this follow-up closes). After the fix the query is advisory: the
 //! prompt paints without a reply and every later cycle stays interactive.
 //!
@@ -24,7 +24,7 @@
 //! * Windows/ConPTY: conhost forwards the cursor-position request to the
 //!   connected terminal at session attach and BLOCKS THE CLIENT before its
 //!   first instruction — the transcript of a silent session is exactly
-//!   `<ESC>[6n`, no banner, no startup ticks. That wedge lives below niu
+//!   `<ESC>[6n`, no banner, no startup ticks. That wedge lives below native-shell
 //!   (the terminal-side contract: Windows Terminal, pywinpty's agent and
 //!   the shared interactive driver all answer), so on Windows this suite
 //!   pins the contract's other half: with a DSR-answering terminal, normal
@@ -42,7 +42,7 @@ use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
 /// tests/interactive.rs).
 const PROMPT1: &str = "P1> ";
 /// Startup banner head.
-const BANNER: &str = "Niubash";
+const BANNER: &str = "NativeShell";
 /// The line-editor error the pre-fix editor printed when the
 /// cursor-position query timed out (crossterm's wording, unix path).
 const LINE_EDITOR_ERROR: &str = "line editor error";
@@ -62,15 +62,19 @@ const SILENT_FIRST_PROMPT_BUDGET: Duration = Duration::from_secs(10);
 /// exit, no prompt) cannot pass, and neither can an unbounded stall.
 const SILENT_CYCLE_BUDGET: Duration = Duration::from_secs(12);
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
@@ -87,11 +91,11 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
 
 /// Whether interactive tests were explicitly forced on (CI setting).
 fn tests_forced() -> bool {
-    std::env::var_os("NIU_INTERACTIVE_TESTS").is_some_and(|v| v != "0")
+    std::env::var_os("NATIVE_SHELL_INTERACTIVE_TESTS").is_some_and(|v| v != "0")
 }
 
 /// Same gate as the shared driver: skip when this host cannot open a pseudo
-/// terminal (hard failure under NIU_INTERACTIVE_TESTS=1).
+/// terminal (hard failure under NATIVE_SHELL_INTERACTIVE_TESTS=1).
 fn require_pty_or_skip(context: &str) -> bool {
     if std::env::var_os("CI").is_some() && !tests_forced() {
         eprintln!("SKIP {context}: hosted-CI ConPTY is not representative");
@@ -104,7 +108,7 @@ fn require_pty_or_skip(context: &str) -> bool {
         return true;
     }
     if tests_forced() {
-        panic!("NIU_INTERACTIVE_TESTS=1 but no pseudo terminal is available ({context})");
+        panic!("NATIVE_SHELL_INTERACTIVE_TESTS=1 but no pseudo terminal is available ({context})");
     }
     eprintln!("SKIP {context}: no pseudo terminal available on this host");
     false
@@ -141,7 +145,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .map(|pos| pos + needle.len())
 }
 
-/// A niu process under a pseudo terminal whose terminal side either answers
+/// A native-shell process under a pseudo terminal whose terminal side either answers
 /// the `ESC[6n`/`ESC[c` queries a real terminal answers (`answer_queries`)
 /// or stays silent (the DSR-silent regression condition).
 struct SilentSession {
@@ -178,7 +182,7 @@ impl SilentSession {
         let start = root.join("start");
         std::fs::create_dir_all(home.join("tmp")).ok()?;
         std::fs::create_dir_all(&start).ok()?;
-        std::fs::write(home.join(".niubashrc"), rc).ok()?;
+        std::fs::write(home.join(".native-shellrc"), rc).ok()?;
 
         let pty_system = portable_pty::native_pty_system();
         let pair = pty_system
@@ -196,7 +200,7 @@ impl SilentSession {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
         let system32 = system_root.join("System32");
-        let mut command = CommandBuilder::new(niu_binary());
+        let mut command = CommandBuilder::new(native_shell_binary());
         command.cwd(&start);
         command.env_clear();
         command.env("SystemRoot", system_root.clone());
@@ -212,7 +216,7 @@ impl SilentSession {
         command.env("TEMP", home.join("tmp"));
         command.env("TMP", home.join("tmp"));
         command.env("TERM", "xterm");
-        command.env("NIU_LANG", "en");
+        command.env("NATIVE_SHELL_LANG", "en");
         command.env("RUST_LOG", "off");
         command.env("RUST_BACKTRACE", "0");
         let child = slave.spawn_command(command).ok()?;
@@ -360,7 +364,7 @@ impl SilentSession {
 
 /// The deterministic rc: ASCII prompt sentinels, no default plugin packs.
 fn default_rc() -> String {
-    "PS1='P1> '\nPS2='P2> '\nNIU_DISABLE_DEFAULT_PLUGINS=1\n".to_string()
+    "PS1='P1> '\nPS2='P2> '\nNATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n".to_string()
 }
 
 /// One startup + prompt-cycle round trip, timed per stage. Every budget is
@@ -424,7 +428,7 @@ fn dsr_silent_terminal_still_paints_prompt_and_stays_interactive() {
     if cfg!(windows) {
         eprintln!(
             "SKIP silent assertions on Windows/ConPTY: conhost withholds the client \
-             until the terminal answers ESC[6n (session-attach contract, below niu); \
+             until the terminal answers ESC[6n (session-attach contract, below native-shell); \
              the unix leg carries the regression assertions"
         );
         return;

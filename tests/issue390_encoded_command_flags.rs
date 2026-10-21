@@ -1,4 +1,4 @@
-//! niubash#390: `--encoded-command` must honour the leading invocation flags.
+//! native-shell#390: `--encoded-command` must honour the leading invocation flags.
 //!
 //! The quoting-free channel is documented as the agent/CI path with the same
 //! one-shot contract as `-c`, but its launcher arm built the shell directly
@@ -12,26 +12,30 @@
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
 fn run(args: &[&str]) -> Output {
-    Command::new(niu_binary())
+    Command::new(native_shell_binary())
         .args(args)
-        .env_remove("NIU_ENV")
+        .env_remove("NATIVE_SHELL_ENV")
         .env_remove("BASH_ENV")
         .stdin(Stdio::null())
         .output()
-        .expect("spawn niu")
+        .expect("spawn native-shell")
 }
 
 /// Standard RFC 4648 base64, so the tests need no `base64` utility in PATH.

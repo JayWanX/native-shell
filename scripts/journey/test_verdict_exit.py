@@ -4,7 +4,7 @@
 (exit 0) while an unlabeled fail must (exit 1). Labeling, never
 waiving — the BAD lines stay in the verdict with the owning ticket.
 
-Runs against the real module (importlib, no niu.exe, no ConPTY
+Runs against the real module (importlib, no native-shell.exe, no ConPTY
 sessions — the verdict machinery is pure file+dict work). Needs
 pywinpty + pyte importable because the module itself imports them at
 top level; the release journey job installs both before this runs.

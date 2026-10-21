@@ -13,7 +13,7 @@
   the host side), and the --cleanup-sandbox verb must refuse to be a
   foot-gun.
 
-Runs against the real module (importlib, no niu.exe, no ConPTY
+Runs against the real module (importlib, no native-shell.exe, no ConPTY
 sessions). Needs pywinpty + pyte importable because the module itself
 imports them at top level. Exit 0 = contract holds, 1 = broken.
 """
@@ -40,9 +40,9 @@ def load_module():
 
 
 def make_readonly_tree(root: Path) -> None:
-    (root / "home" / ".niubash" / "sources" / "oh-my-bash" / ".git"
+    (root / "home" / ".native-shell" / "sources" / "oh-my-bash" / ".git"
      / "objects").mkdir(parents=True)
-    loose = root / "home" / ".niubash" / "sources" / "oh-my-bash" / ".git" \
+    loose = root / "home" / ".native-shell" / "sources" / "oh-my-bash" / ".git" \
         / "objects" / "ab" / "cdef"
     loose.parent.mkdir(parents=True)
     loose.write_text("loose git object")
@@ -152,7 +152,7 @@ def main() -> int:
 
         renamed_sandbox = Path(tmp) / "kept-for-diagnosis"
         make_readonly_tree(renamed_sandbox)
-        expect("cleanup verb accepts renamed tree with home/.niubash (#449)",
+        expect("cleanup verb accepts renamed tree with home/.native-shell (#449)",
                gj.cleanup_sandbox_verb(renamed_sandbox), 0)
         expect("renamed sandbox tree removed (#449)",
                renamed_sandbox.exists(), False)
@@ -186,8 +186,8 @@ def main() -> int:
         expect("cleanup verb on an arbitrary absent path exits 0 (#449)",
                rc_arbitrary_absent, 0)
 
-    # Main-contract plumbing: --cleanup-sandbox works WITHOUT a niu.exe,
-    # and the niu.exe requirement survives the nargs='?' change. Every
+    # Main-contract plumbing: --cleanup-sandbox works WITHOUT a native-shell.exe,
+    # and the native-shell.exe requirement survives the nargs='?' change. Every
     # child spawn carries CREATE_NO_WINDOW (0x08000000): a probe run must
     # never flash a visible console on the owner's desktop.
     CREATE_NO_WINDOW = {"creationflags": 0x08000000} if os.name == "nt" else {}
@@ -200,7 +200,7 @@ def main() -> int:
              str(sandbox)],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=300, **CREATE_NO_WINDOW)
-        expect("bare --cleanup-sandbox (no niu.exe) exits 0",
+        expect("bare --cleanup-sandbox (no native-shell.exe) exits 0",
                done.returncode, 0)
         expect("bare --cleanup-sandbox removed the tree",
                sandbox.exists(), False)
@@ -222,7 +222,7 @@ def main() -> int:
             [sys.executable, str(MODULE_PATH)],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=300, **CREATE_NO_WINDOW)
-        expect("no niu.exe and no verb is a usage error (exit 2)",
+        expect("no native-shell.exe and no verb is a usage error (exit 2)",
                done.returncode, 2)
     finally:
         gj._rmtree_clearing_readonly(probe_parent)

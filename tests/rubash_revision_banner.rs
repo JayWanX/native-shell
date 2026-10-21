@@ -1,4 +1,4 @@
-//! Pin the `niu --version` banner to the rubash commit that is actually linked.
+//! Pin the `native-shell --version` banner to the rubash commit that is actually linked.
 //!
 //! build.rs used to prefer a sibling `../rubash` checkout over `Cargo.lock`, so
 //! on any machine that had that directory — every developer box — the banner
@@ -57,10 +57,10 @@ fn version_banner_reports_the_locked_rubash_commit() {
         return;
     };
 
-    let output = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_niu")))
+    let output = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_native-shell")))
         .arg("--version")
         .output()
-        .expect("spawn niu --version");
+        .expect("spawn native-shell --version");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let reported = banner_rubash_rev(&stdout)
@@ -77,7 +77,7 @@ fn version_banner_reports_the_locked_rubash_commit() {
 /// build-linux / build-macos "Smoke-test built binary" step) greps the
 /// `--version` banner for two exact substrings:
 ///
-/// - `Niubash <version> ` — the head line must keep the version followed by
+/// - `NativeShell <version> ` — the head line must keep the version followed by
 ///   a space before the tagline.
 /// - `rubash   git <rev>` — the engine line must keep the three spaces and
 ///   the `git ` prefix (printed only when build.rs resolved a real commit).
@@ -86,16 +86,16 @@ fn version_banner_reports_the_locked_rubash_commit() {
 /// here instead of failing a release build's smoke gate.
 #[test]
 fn version_banner_lines_match_release_smoke_greps() {
-    let output = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_niu")))
+    let output = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_native-shell")))
         .arg("--version")
         .output()
-        .expect("spawn niu --version");
+        .expect("spawn native-shell --version");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let head = stdout.lines().next().unwrap_or_default();
     assert!(
-        head.starts_with(&format!("Niubash {} ", env!("CARGO_PKG_VERSION"))),
-        "release smoke greps for 'Niubash <version> ' — banner head was {head:?}"
+        head.starts_with(&format!("Native Shell {} ", env!("CARGO_PKG_VERSION"))),
+        "release smoke greps for 'Native Shell <version> ' — banner head was {head:?}"
     );
 
     if let Some(rev) = banner_rubash_rev(&stdout) {

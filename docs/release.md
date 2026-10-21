@@ -9,7 +9,7 @@ first.**
 
 - Trigger: push of a `v*` tag, or `workflow_dispatch` with an explicit tag.
 - Pushed `v*` tags are protected by the `release-tags-are-immutable`
-  ruleset (niubash#425, [release-tag-ruleset.md](release-tag-ruleset.md)):
+  ruleset (native-shell#425, [release-tag-ruleset.md](release-tag-ruleset.md)):
   creation stays open to anyone with `write`, but moving or deleting a
   tag requires an org-admin bypass. A tag push is therefore one-shot —
   re-fly failures via `workflow_dispatch`, fix bad releases forward with
@@ -20,7 +20,7 @@ first.**
 - Every build job clones rubash `master` as a sibling (`../rubash`, the
   `[patch]` path override), pins its revision into job outputs, and fails if
   that checkout is dirty. `build.rs` embeds the same revision into the
-  binary, so `niu --version` names the engine the binary actually contains.
+  binary, so `native-shell --version` names the engine the binary actually contains.
 - The `release` job refuses to publish if the three platform jobs did not
   compile the same rubash revision (a master commit landing between two
   jobs' clones would otherwise ship mixed engines).
@@ -29,18 +29,18 @@ first.**
 
 | Job | Runner | Rust target | Artifacts | Contents |
 | --- | --- | --- | --- | --- |
-| `build-windows` (x64) | `windows-2025` | `x86_64-pc-windows-msvc` (crt-static) | `niubash-v{ver}-win-x64.zip`, `.tar.gz`, `.7z`, `-setup.exe`, `niubash-win-x64.*` aliases | `niu.exe`, WinuxCmd, bash/sh shims, icons |
+| `build-windows` (x64) | `windows-2025` | `x86_64-pc-windows-msvc` (crt-static) | `native-shell-v{ver}-win-x64.zip`, `.tar.gz`, `.7z`, `-setup.exe`, `native-shell-win-x64.*` aliases | `native-shell.exe`, WinuxCmd, bash/sh shims, icons |
 | `build-windows` (arm64) | `windows-2025` | `aarch64-pc-windows-msvc` (crt-static) | same, `-arm64` | same |
-| `build-linux` (x86_64) | `ubuntu-22.04` | `x86_64-unknown-linux-gnu` | `niubash-v{ver}-linux-x86_64.tar.gz` | `niu`, `README.md`, `LICENSE` |
-| `build-linux` (aarch64) | `ubuntu-22.04-arm` | `aarch64-unknown-linux-gnu` | `niubash-v{ver}-linux-aarch64.tar.gz` | same |
-| `build-macos` (aarch64) | `macos-latest` (arm64) | `aarch64-apple-darwin` | `niubash-v{ver}-macos-aarch64.tar.gz` | same |
-| `build-macos` (x86_64) | `macos-latest` (arm64) | `x86_64-apple-darwin` (cross) | `niubash-v{ver}-macos-x86_64.tar.gz` | same |
+| `build-linux` (x86_64) | `ubuntu-22.04` | `x86_64-unknown-linux-gnu` | `native-shell-v{ver}-linux-x86_64.tar.gz` | `native-shell`, `README.md`, `LICENSE` |
+| `build-linux` (aarch64) | `ubuntu-22.04-arm` | `aarch64-unknown-linux-gnu` | `native-shell-v{ver}-linux-aarch64.tar.gz` | same |
+| `build-macos` (aarch64) | `macos-latest` (arm64) | `aarch64-apple-darwin` | `native-shell-v{ver}-macos-aarch64.tar.gz` | same |
+| `build-macos` (x86_64) | `macos-latest` (arm64) | `x86_64-apple-darwin` (cross) | `native-shell-v{ver}-macos-x86_64.tar.gz` | same |
 
-Each tarball unpacks to a single `niubash-v{ver}-{os}-{arch}/` directory;
-`./niu` runs from anywhere. The `release` job attaches every artifact
+Each tarball unpacks to a single `native-shell-v{ver}-{os}-{arch}/` directory;
+`./native-shell` runs from anywhere. The `release` job attaches every artifact
 (`*.zip`, `*.exe`, `*.tar.gz`, `*.7z`) with `fail_on_unmatched_files: true`.
 
-## Windows portable archives: hardlink-native by design (niubash#470)
+## Windows portable archives: hardlink-native by design (native-shell#470)
 
 The Windows portable tree ships the wpm install layout, whose payload
 families are NTFS hardlinks (the whole `git.exe` family is one shared
@@ -70,7 +70,7 @@ The workflow's "Verify hardlink-native archives" step round-trips both
 companions before upload: byte-identity of every file against the staged
 tree (both formats), plus `fsutil` link-count probes on the `.tar.gz`
 extraction (the bash/sh shim family on every leg; the `git.exe` family when
-niugit pre-installed). The rejected alternative — zero-byte placeholders
+native-git pre-installed). The rejected alternative — zero-byte placeholders
 plus a relink manifest/script — is recorded as such in #470: it breaks
 manual unzip, fights wpm's upgrade path, trips antivirus on zero-byte
 executables, and its symlink fallback fails on FAT32/non-admin; hardlink
@@ -116,7 +116,7 @@ sharing inside a tree of complete files has none of those failure modes.
   demand by the job. The effective macOS deployment floor is whatever the
   runner's SDK + rustc defaults produce; treat the smoke-verified host
   (printed by `sw_vers` in the job log) as the tested configuration.
-- **No bundling on Unix** — Unix tarballs carry only `niu` + `README.md` +
+- **No bundling on Unix** — Unix tarballs carry only `native-shell` + `README.md` +
   `LICENSE`. Native system tools (coreutils etc.) are used as-is. WinuxCmd
   and the wpm package-manager surface are Windows-only by compile-time cfg;
   that red line must not be weakened (no `wpm` strings on non-Windows
@@ -127,20 +127,20 @@ sharing inside a tree of complete files has none of those failure modes.
 Each build job runs, **on the OS it built on, against the exact binary it
 uploads, before anything is uploaded**:
 
-1. `niu --version` — must print `Niubash <tag-version> ` and
+1. `native-shell --version` — must print `Native Shell <tag-version> ` and
    `rubash   git <pinned-revision>`. The substrings are pinned by
    `tests/rubash_revision_banner.rs::version_banner_lines_match_release_smoke_greps`.
-2. `niu -c 'echo ok'` — must print exactly `ok` (engine execution).
-3. `printf 'a\nb\n' | niu -c 'sort | head -1'` — must print exactly `a`
+2. `native-shell -c 'echo ok'` — must print exactly `ok` (engine execution).
+3. `printf 'a\nb\n' | native-shell -c 'sort | head -1'` — must print exactly `a`
    (external commands + pipelines through the platform's native coreutils).
 4. Offline plugin-stack check — with an isolated `HOME` and an empty
-   `NIU_PLUGIN_SPEC`, `niu plugin sync --bootstrap` must exit 0 with zero
+   `NATIVE_SHELL_PLUGIN_SPEC`, `native-shell plugin sync --bootstrap` must exit 0 with zero
    output and touch no network.
 
 5. Invocation-face checks: renamed `bash` and `sh` binaries must print GNU
    `--help` and `--version`, and bind default `$0` to the invoked face.
-   The plain `niu` face must retain `$0 = niu`. Windows verifies the staged
-   package shims and also checks that `niu --help` keeps the product help.
+   The plain `native-shell` face must retain `$0 = native-shell`. Windows verifies the staged
+   package shims and also checks that `native-shell --help` keeps the product help.
 
 Any failure fails the job, so no artifact can leave it. The macOS x86_64 leg
 runs all five through Rosetta 2. The release body tells users every artifact
@@ -156,11 +156,11 @@ release notes.
 ## Windows behavior (unchanged)
 
 `build-windows` keeps its shape: package-release.ps1 + Inno Setup
-installers, WinuxCmd bundling from a matched release, and `niubash-win-*`
+installers, WinuxCmd bundling from a matched release, and `native-shell-win-*`
 latest-compatible aliases. Unix jobs deliberately do not add such aliases.
 
 One stage was added between WinuxCmd staging and packaging
-(niubash#189): **manifest-driven pre-install**. The workflow reads
+(native-shell#189): **manifest-driven pre-install**. The workflow reads
 `scripts/release/preinstall.json`, installs each named package into a
 staged WinuxCmd root with `winuxcmd wpm install <pkg> --root <root>
 --yes` (wpm ships inside winuxcmd.exe — the binary the download step
@@ -180,9 +180,9 @@ instead of blocking the release — currently that only bites the arm64
 legs, whose wpm index has no artifact. Whatever DID install is
 hard-verified in the staged package before upload (`--version` per shim
 plus a plugin-shaped `awk '{print $1}'` pipeline through the packaged
-niu.exe); a package that installed but does not run FAILS the job.
+native-shell.exe); a package that installed but does not run FAILS the job.
 
-niubash#467 adds a byte-level contract to that awk check: the bundled
+native-shell#467 adds a byte-level contract to that awk check: the bundled
 gawk payload is a text-mode mingw build whose CRT rewrote every `\n` as
 `\r\n` on write (and folded `\r\n` into `\n` on read), while every
 winuxcmd applet does binary stdio — `awk '{print}' > f` landed CRLF
@@ -193,7 +193,7 @@ assignment — its only lever — and ignores the `BINMODE` environment
 variable), which flips stdin/stdout/stderr and the program's own opens
 to binary. Because a PowerShell native-command capture silently strips
 `\r`, string equality could never see the regression — the verify step
-instead lets the packaged `niu.exe` redirect the pipeline to a file and
+instead lets the packaged `native-shell.exe` redirect the pipeline to a file and
 asserts the raw bytes (`a\nb\n`, plus the `a\r\nb\r\n` pass-through an
 explicit `ORS="\r\n"` must produce). A release whose bundled forwarder
 lacks the adapter fails the x64 gate.
@@ -211,13 +211,13 @@ git tag v1.3.2 <that-commit>
 git push origin <that-branch> v1.3.2
 
 # 2. run the workflow from the branch that carries the new jobs
-gh workflow run release.yml --repo unixwin/niubash \
+gh workflow run release.yml --repo JayWanX/native-shell \
   --ref <branch-with-this-workflow> -f tag=v1.3.2
-gh run watch --repo unixwin/niubash "$(gh run list --repo unixwin/niubash --workflow release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+gh run watch --repo JayWanX/native-shell "$(gh run list --repo JayWanX/native-shell --workflow release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
 
-# 3. inspect the Niubash v1.3.2 release, download the tarballs onto real
+# 3. inspect the Native Shell v1.3.2 release, download the tarballs onto real
 #    Linux/macOS machines, then clean up:
-gh release delete v1.3.2 --repo unixwin/niubash --yes --cleanup-tag
+gh release delete v1.3.2 --repo JayWanX/native-shell --yes --cleanup-tag
 ```
 
 Only the first real dispatch run can prove the unix legs end-to-end

@@ -6,16 +6,16 @@ param(
     [string]$Arch,
     [string]$BashShimPath,
     [string]$ShShimPath,
-    # Staged wpm pre-install root (niubash#189): a WinuxCmd root whose
+    # Staged wpm pre-install root (native-shell#189): a WinuxCmd root whose
     # usr\bin holds the pre-install shims (gawk.exe, awk.exe) and whose opt\
     # holds the package payloads with their private DLLs. Its usr\bin *.exe
-    # (except winuxcmd.exe itself, which is staged from -WinuxCmdPath) and
+    # (except native-cmd.exe itself, which is staged from -WinuxCmdPath) and
     # its whole opt\ tree are copied into the package's winuxcmd\ directory,
     # so the shim dispatch (<root>\usr\bin\<cmd>.exe -> <root>\opt\<pkg>\)
     # resolves inside the shipped layout. Never ships the .wpm state dir.
     [string]$PreinstallRoot,
     [switch]$AllowPathWinuxCmd,
-    # niubash#470: skip the staged-tree hardlink alignment and the
+    # native-shell#470: skip the staged-tree hardlink alignment and the
     # hardlink-native archives (.tar.gz / .7z), producing only the classic
     # zip. Escape hatch for callers that want the legacy output shape.
     [switch]$SkipHardlinkArchives
@@ -26,7 +26,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Push-Location $RepoRoot
 try {
-    # niubash#470: re-link byte-identical staged files as NTFS hardlinks so
+    # native-shell#470: re-link byte-identical staged files as NTFS hardlinks so
     # the staged tree matches what `wpm install` produces on a real disk.
     # Deterministic: the lexicographically first path of each content group
     # becomes the link target, so re-running the packager yields the same
@@ -89,12 +89,12 @@ try {
     }
 
     if ($Target) {
-        $niubashExe = Join-Path $RepoRoot "target\$Target\$Configuration\niu.exe"
+        $native_shellExe = Join-Path $RepoRoot "target\$Target\$Configuration\native-shell.exe"
     }
     else {
-        $niubashExe = Join-Path $RepoRoot "target\$Configuration\niu.exe"
+        $native_shellExe = Join-Path $RepoRoot "target\$Configuration\native-shell.exe"
     }
-    if (-not (Test-Path -LiteralPath $niubashExe)) {
+    if (-not (Test-Path -LiteralPath $native_shellExe)) {
         $buildArgs = @("build", "--locked")
         if ($Configuration -eq "release") {
             $buildArgs += "--release"
@@ -104,8 +104,8 @@ try {
         }
         cargo @buildArgs
     }
-    if (-not (Test-Path -LiteralPath $niubashExe)) {
-        throw "niu.exe not found at $niubashExe"
+    if (-not (Test-Path -LiteralPath $native_shellExe)) {
+        throw "native-shell.exe not found at $native_shellExe"
     }
 
     function Resolve-RubashShim {
@@ -169,7 +169,7 @@ try {
     }
     else {
         # The shim binary self-identifies through its own argv[0]: copied as
-        # sh.exe it forwards the invocation name (NIU_INVOKED_AS) to niu, which
+        # sh.exe it forwards the invocation name (NATIVE_SHELL_INVOKED_AS) to native-shell, which
         # then enters POSIX mode and shows $0 = sh (GNU shell.c:733-737, the
         # sh-posix contract). The same bytes as bash.exe forward no name and
         # stay in the default bash-compatible mode.
@@ -177,13 +177,13 @@ try {
     }
 
     if (-not $WinuxCmdPath -and $AllowPathWinuxCmd) {
-        $fromWhere = (& where.exe winuxcmd.exe 2>$null | Select-Object -First 1)
+        $fromWhere = (& where.exe native-cmd.exe 2>$null | Select-Object -First 1)
         if ($fromWhere) {
             $WinuxCmdPath = $fromWhere
         }
     }
     if (-not $WinuxCmdPath -or -not (Test-Path -LiteralPath $WinuxCmdPath)) {
-        throw "winuxcmd.exe not found. Pass an explicit -WinuxCmdPath C:\path\to\winuxcmd.exe"
+        throw "native-cmd.exe not found. Pass an explicit -WinuxCmdPath C:\path\to\native-cmd.exe"
     }
 
     $activationScript = Join-Path $RepoRoot "assets\winuxcmd\activate-winuxcmd.sh"
@@ -191,10 +191,10 @@ try {
         throw "Activation script not found at $activationScript"
     }
     $iconFiles = @(
-        Join-Path $RepoRoot "assets\niubash-icon.ico"
-        Join-Path $RepoRoot "assets\niubash-icon-256.png"
-        Join-Path $RepoRoot "assets\niubash-icon-64.png"
-        Join-Path $RepoRoot "assets\niubash-icon.png"
+        Join-Path $RepoRoot "assets\native-shell-icon.ico"
+        Join-Path $RepoRoot "assets\native-shell-icon-256.png"
+        Join-Path $RepoRoot "assets\native-shell-icon-64.png"
+        Join-Path $RepoRoot "assets\native-shell-icon.png"
     )
     foreach ($iconFile in $iconFiles) {
         if (-not (Test-Path -LiteralPath $iconFile)) {
@@ -202,17 +202,17 @@ try {
         }
     }
 
-    # The built-in plugin/theme stack — including the oh-my-niu bundle —
-    # is retired (niubash#145/#161): the product's plugin verbs hard-bail
+    # The built-in plugin/theme stack — including the oh-my-native-shell bundle —
+    # is retired (native-shell#145/#161): the product's plugin verbs hard-bail
     # on bundles, so release packages no longer stage one. The external
-    # bash ecosystem installs on demand through `niu plugin add` sources.
+    # bash ecosystem installs on demand through `native-shell plugin add` sources.
 
     $distDir = Join-Path $RepoRoot "dist"
     if ($Arch) {
-        $packageName = "niubash-v$Version-win-$Arch"
+        $packageName = "native-shell-v$Version-win-$Arch"
     }
     else {
-        $packageName = "niubash-v$Version"
+        $packageName = "native-shell-v$Version"
     }
     $stageDir = Join-Path $distDir $packageName
     $zipPath = Join-Path $distDir "$packageName.zip"
@@ -223,25 +223,25 @@ try {
     New-Item -ItemType Directory -Force -Path (Join-Path $stageDir "winuxcmd\usr\bin") | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $stageDir "assets") | Out-Null
 
-    Copy-Item -LiteralPath $niubashExe -Destination (Join-Path $stageDir "niu.exe") -Force
-    Copy-Item -LiteralPath $WinuxCmdPath -Destination (Join-Path $stageDir "winuxcmd\usr\bin\winuxcmd.exe") -Force
+    Copy-Item -LiteralPath $native_shellExe -Destination (Join-Path $stageDir "native-shell.exe") -Force
+    Copy-Item -LiteralPath $WinuxCmdPath -Destination (Join-Path $stageDir "winuxcmd\usr\bin\native-cmd.exe") -Force
     Copy-Item -LiteralPath $bashShimExe -Destination (Join-Path $stageDir "winuxcmd\usr\bin\bash.exe") -Force
     Copy-Item -LiteralPath $shShimExe -Destination (Join-Path $stageDir "winuxcmd\usr\bin\sh.exe") -Force
     Copy-Item -LiteralPath $bashShimExe -Destination (Join-Path $stageDir "winuxcmd\bin\bash.exe") -Force
     Copy-Item -LiteralPath $shShimExe -Destination (Join-Path $stageDir "winuxcmd\bin\sh.exe") -Force
     Copy-Item -LiteralPath $activationScript -Destination (Join-Path $stageDir "winuxcmd\usr\bin\activate-winuxcmd.sh") -Force
 
-    # niubash#189: pre-installed wpm packages (see -PreinstallRoot above).
-    # The same usr\bin sweep also ships `winuxcmd-shim.exe` (the package-shim
+    # native-shell#189: pre-installed wpm packages (see -PreinstallRoot above).
+    # The same usr\bin sweep also ships `native-cmd-shim.exe` (the package-shim
     # forwarder, staged by the release workflow after the wpm installs) so
     # upgrades replace a stale forwarder and runtime `wpm install` can link
-    # new package shims to it (niubash#466/#468).
+    # new package shims to it (native-shell#466/#468).
     if ($PreinstallRoot) {
         if (-not (Test-Path -LiteralPath (Join-Path $PreinstallRoot "usr\bin"))) {
             throw "PreinstallRoot has no usr\bin: $PreinstallRoot"
         }
         $preinstallShims = Get-ChildItem -LiteralPath (Join-Path $PreinstallRoot "usr\bin") -Filter *.exe |
-            Where-Object { $_.Name -ne "winuxcmd.exe" }
+            Where-Object { $_.Name -ne "native-cmd.exe" }
         foreach ($shim in $preinstallShims) {
             Copy-Item -LiteralPath $shim.FullName -Destination (Join-Path $stageDir "winuxcmd\usr\bin\$($shim.Name)") -Force
         }
@@ -260,7 +260,7 @@ try {
         Copy-Item -LiteralPath $iconFile -Destination (Join-Path $stageDir "assets") -Force
     }
 
-    # niubash#470: restore the real install layout before any archive is
+    # native-shell#470: restore the real install layout before any archive is
     # written. wpm installs hardlink their payloads, but the Copy-Item sweep
     # above flattens every link into an independent full copy (PowerShell
     # Copy-Item never preserves hardlinks), and Compress-Archive would ship
@@ -287,7 +287,7 @@ try {
     Write-Host "Files: $($files.Count)"
     Write-Host "Zip size: $([Math]::Round($size / 1MB, 2)) MB"
 
-    # niubash#470: hardlink-native companions to the zip. The staged tree
+    # native-shell#470: hardlink-native companions to the zip. The staged tree
     # above now carries real NTFS hardlinks, and bsdtar (the Windows built-in
     # tar.exe) records them as tar hardlink entries and restores them on
     # extraction — measured on the v1.4.2 tree: 54.47 MB zip -> 29.63 MB

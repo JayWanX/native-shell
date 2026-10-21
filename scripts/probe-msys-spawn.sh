@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# niubash#141 reproduction probe — external-command spawning under
+# native-shell#141 reproduction probe — external-command spawning under
 # MSYS/Cygwin parents.
 #
-# Reported: `niu -c 'printf "a\nb\n" | sort'` (and cut/rev/xargs/seq/tr
+# Reported: `native-shell -c 'printf "a\nb\n" | sort'` (and cut/rev/xargs/seq/tr
 # pipelines) fail with rc=126 "Unknown error" or silent empty rc=0 when
-# niu runs under a Git-Bash/MSYS2/Cygwin parent, while the same commands
+# native-shell runs under a Git-Bash/MSYS2/Cygwin parent, while the same commands
 # work from Python or WinuxCmd.
 #
 # Run this script FROM the parent shell being investigated:
-#   Git Bash:  bash scripts/probe-msys-spawn.sh path/to/niu.exe
-#   MSYS2:     bash scripts/probe-msys-spawn.sh path/to/niu.exe
-#   Cygwin:    bash scripts/probe-msys-spawn.sh path/to/niu.exe
-#   cmd:       git-bash scripts/probe-msys-spawn.sh C:\...\niu.exe
+#   Git Bash:  bash scripts/probe-msys-spawn.sh path/to/native-shell.exe
+#   MSYS2:     bash scripts/probe-msys-spawn.sh path/to/native-shell.exe
+#   Cygwin:    bash scripts/probe-msys-spawn.sh path/to/native-shell.exe
+#   cmd:       git-bash scripts/probe-msys-spawn.sh C:\...\native-shell.exe
 #
 # Each case prints rc + captured stdout/stderr. With the rubash
 # posix_errors fix, a failed spawn now reports the real Win32 code
 # (e.g. "sort: The parameter is incorrect. (os error 87)") — capture and
 # attach to the issue.
 
-NIU="${1:-niu.exe}"
+NATIVE_SHELL="${1:-native-shell.exe}"
 
 parent_env() {
     echo "=== parent env ==="
@@ -32,15 +32,15 @@ parent_env() {
 run_case() {
     local label="$1" script="$2"
     local out err rc
-    out="$("$NIU" -c "$script" 2>/tmp/niu141-err.$$)"
+    out="$("$NATIVE_SHELL" -c "$script" 2>/tmp/niu141-err.$$)"
     rc=$?
     err="$(cat /tmp/niu141-err.$$)"
     printf '%-28s rc=%-3s out=%-22q err=%q\n' "$label" "$rc" "$out" "$err"
 }
 
 parent_env
-echo "NIU=$NIU"
-"$NIU" --version | head -3
+echo "NATIVE_SHELL=$NATIVE_SHELL"
+"$NATIVE_SHELL" --version | head -3
 echo "--- cases ---"
 run_case "printf|sort"        'printf "a\nb\n" | sort'
 run_case "printf|cut"         'printf "abc\n" | cut -c1'

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Brand-cleanliness gate for the winuxsh -> niubash rename.
+# Brand-cleanliness gate for the winuxsh -> native-shell rename.
 #
 # Fails when the worktree's case-insensitive "winuxsh" residue does not
 # exactly match the checked-in baseline at
@@ -55,7 +55,7 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
     exit 1
 }
 
-# residue_scan: one "<path>:<lineno>:<line>" record per "winuxsh" hit.
+# residue_scan: one "<path>:<lineno>:<line>" record per brand-residue hit.
 # grep -I keeps the scan to text files; -H pins the filename prefix even
 # when xargs hands grep a single file.
 residue_scan() {
@@ -63,7 +63,7 @@ residue_scan() {
         . ':(exclude)Cargo.lock' \
         ':(exclude)scripts/check-rename-clean.sh' \
         ':(exclude)'"$baseline" \
-        | xargs -0 -r grep -i -n -I -H -- winuxsh || true
+        | xargs -0 -r grep -i -n -I -H -E -- 'winuxsh|niubash|(^|[^a-z])niu([^a-z]|$)' || true
 }
 
 # baseline_key: canonical "<path><TAB><line text>" of one scan record — the
@@ -178,13 +178,13 @@ lock_pins() {
 }
 
 root_version=$(top_version Cargo.toml)
-runtime_version=$(top_version crates/niubash-runtime/Cargo.toml)
+runtime_version=$(top_version crates/native-shell-runtime/Cargo.toml)
 if [ -z "$root_version" ]; then
     echo "FAIL: root Cargo.toml has no top-level version"
     exit 1
 fi
 if [ -z "$runtime_version" ]; then
-    echo "FAIL: crates/niubash-runtime/Cargo.toml has no top-level version"
+    echo "FAIL: crates/native-shell-runtime/Cargo.toml has no top-level version"
     exit 1
 fi
 if [ "$root_version" != "$runtime_version" ]; then
@@ -192,11 +192,11 @@ if [ "$root_version" != "$runtime_version" ]; then
     exit 1
 fi
 
-check 'root package is named niubash' grep -q '^name = "niubash"' Cargo.toml
-check 'binary is named niu' grep -q '^name = "niu"$' Cargo.toml
-check 'runtime crate is named niubash-runtime' grep -q '^name = "niubash-runtime"' crates/niubash-runtime/Cargo.toml
-check "Cargo.lock pins niubash $root_version" lock_pins niubash "$root_version"
-check "Cargo.lock pins niubash-runtime $runtime_version" lock_pins niubash-runtime "$runtime_version"
+check 'root package is named native-shell' grep -q '^name = "native-shell"' Cargo.toml
+check 'binary is named native-shell' grep -q '^name = "native-shell"$' Cargo.toml
+check 'runtime crate is named native-shell-runtime' grep -q '^name = "native-shell-runtime"' crates/native-shell-runtime/Cargo.toml
+check "Cargo.lock pins native-shell $root_version" lock_pins native-shell "$root_version"
+check "Cargo.lock pins native-shell-runtime $runtime_version" lock_pins native-shell-runtime "$runtime_version"
 
 rubash_pinned=no
 for version in 0.1.0 1.0.0 1.0.1 1.0.2 1.1.0 1.2.0 1.2.1 1.2.2 1.2.3 1.2.4 1.2.5 1.3.0 1.3.1 1.3.2 1.3.3 1.3.4 1.4.0 1.4.1 1.4.2 1.4.3 1.5.0 2.0.0; do
@@ -210,6 +210,6 @@ if [ "$rubash_pinned" = no ]; then
     exit 1
 fi
 
-echo "cargo metadata OK (niubash $root_version, rubash $rubash_pinned)"
+echo "cargo metadata OK (native-shell $root_version, rubash $rubash_pinned)"
 
 echo "rename acceptance: ALL CHECKS PASSED"

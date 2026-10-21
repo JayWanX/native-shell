@@ -2,7 +2,7 @@
 """Offline ConPTY probe: the one-run out-of-box wizard journey.
 
 Owner ruling 2026-10-03 (装完即选主题): a fresh user who picks the
-'recommended' plugin collection gets the theme pick in the SAME `niu
+'recommended' plugin collection gets the theme pick in the SAME `native-shell
 setup` run — the wizard trusts the freshly installed source on an
 explicit yes, then offers its theme gallery. This probe drives exactly
 that journey over a real ConPTY (pywinpty + pyte, the
@@ -10,7 +10,7 @@ scripts/test_setup_wizard_pty.py pattern):
 
     fresh HOME → Q1 empty-gallery note → recommended collection →
     Apply → untrusted install → trust-now question → pick agnoster →
-    rc rewritten → fresh `niu -c` shows OSH_THEME=agnoster.
+    rc rewritten → fresh `native-shell -c` shows OSH_THEME=agnoster.
 
 Everything runs inside a throwaway sandbox; the collection's `git
 clone`s resolve through a seeded local mirror (mirrors.toml insteadOf
@@ -19,7 +19,7 @@ real HOME, no real plugin/mirror state is touched.
 
 Exit codes: 0 pass, 1 fail, 2 skip (missing python deps / git / pty).
 
-Usage: python scripts/smoke-wizard-journey.py <niu.exe> [sandbox-root]
+Usage: python scripts/smoke-wizard-journey.py <native-shell.exe> [sandbox-root]
        (called by scripts/smoke-test-1.3.0.sh leg D2)
 """
 
@@ -55,7 +55,7 @@ ENTER = "\r"
 
 
 class Session:
-    """A niu.exe under ConPTY with a pyte-parsed screen."""
+    """A native-shell.exe under ConPTY with a pyte-parsed screen."""
 
     def __init__(self, argv, cwd, env, cols=120, rows=36):
         self.proc = PtyProcess.spawn(argv, cwd=str(cwd), env=env,
@@ -108,12 +108,12 @@ class Session:
 
 def seed_mirror_repo(git: Path, src: Path, dest: Path):
     """`dest` becomes a real git repo holding the fixture tree — the
-    offline mirror niu's `git clone` resolves to."""
+    offline mirror native-shell's `git clone` resolves to."""
     shutil.copytree(src, dest)
     for args in (
         ["init", "-q"],
-        ["-c", "user.email=smoke@niu", "-c", "user.name=niu-smoke", "add", "-A"],
-        ["-c", "user.email=smoke@niu", "-c", "user.name=niu-smoke",
+        ["-c", "user.email=smoke@native-shell", "-c", "user.name=niu-smoke", "add", "-A"],
+        ["-c", "user.email=smoke@native-shell", "-c", "user.name=niu-smoke",
          "commit", "-qm", "seed"],
     ):
         done = subprocess.run(
@@ -130,7 +130,7 @@ def run_journey(exe: Path, root: Path) -> None:
     home = root / "home"
     sources = root / "sources"
     mirror = root / "mirror"
-    (home / ".niubash").mkdir(parents=True, exist_ok=True)
+    (home / ".native-shell").mkdir(parents=True, exist_ok=True)
     sources.mkdir(parents=True, exist_ok=True)
 
     git = shutil.which("git")
@@ -146,9 +146,9 @@ def run_journey(exe: Path, root: Path) -> None:
     seed_mirror_repo(git, FIXTURES / "bash-completion",
                       mirror / "scop" / "bash-completion.git")
     mirror_base = mirror.resolve().as_posix()
-    (home / ".niubash" / "mirrors.toml").write_text(
+    (home / ".native-shell" / "mirrors.toml").write_text(
         "# smoke journey: rewrite GitHub fetches to the seeded local mirror\n"
-        'schema = "niubash:mirrors@0.1.0"\n'
+        'schema = "native-shell:mirrors@0.1.0"\n'
         'active = "custom"\n\n'
         "[github]\n"
         f'git_instead_of = "file:///{mirror_base}/"\n',
@@ -166,10 +166,10 @@ def run_journey(exe: Path, root: Path) -> None:
         "TEMP": str(home / "tmp"),
         "TMP": str(home / "tmp"),
         "TERM": "xterm",
-        "NIU_LANG": "en",
-        "NIU_PLUGIN_SOURCES_ROOT": str(sources),
-        "NIU_PLUGIN_SPEC": str(home / ".niubash" / "plugins.toml"),
-        "NIU_MIRRORS": str(home / ".niubash" / "mirrors.toml"),
+        "NATIVE_SHELL_LANG": "en",
+        "NATIVE_SHELL_PLUGIN_SOURCES_ROOT": str(sources),
+        "NATIVE_SHELL_PLUGIN_SPEC": str(home / ".native-shell" / "plugins.toml"),
+        "NATIVE_SHELL_MIRRORS": str(home / ".native-shell" / "mirrors.toml"),
         "PATH": os.pathsep.join([
             str(git.parent), system_root + r"\System32", system_root,
         ]),
@@ -213,9 +213,9 @@ def run_journey(exe: Path, root: Path) -> None:
         s.close()
 
     # The same run wrote the guarded activation block into the rc.
-    rc = (home / ".niubashrc").read_text(encoding="utf-8")
+    rc = (home / ".native-shellrc").read_text(encoding="utf-8")
     assert "OSH_THEME='agnoster'" in rc, f"rc misses the theme: {rc}"
-    journal = (home / ".niubash" / "setup-journal.toml").read_text(
+    journal = (home / ".native-shell" / "setup-journal.toml").read_text(
         encoding="utf-8")
     assert "theme = 'agnoster'" in journal, journal
     assert "collection = 'recommended'" in journal, journal
@@ -223,14 +223,14 @@ def run_journey(exe: Path, root: Path) -> None:
     # 1.3.1: the journey ends spec-managed — the post-pick adoption
     # declared the collection's sources (canonical origins; the mirror is
     # transport-only) with the picked theme snapshotted.
-    spec = (home / ".niubash" / "plugins.toml").read_text(encoding="utf-8")
+    spec = (home / ".native-shell" / "plugins.toml").read_text(encoding="utf-8")
     assert "https://github.com/ohmybash/oh-my-bash.git" in spec, spec
     assert "https://github.com/scop/bash-completion.git" in spec, spec
     assert "theme = 'agnoster'" in spec, spec
 
     # And a fresh shell sees the theme.
     probe = subprocess.run(
-        [str(exe), "-c", ". ~/.niubashrc; echo $OSH_THEME"],
+        [str(exe), "-c", ". ~/.native-shellrc; echo $OSH_THEME"],
         env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         timeout=60,
     )
@@ -247,7 +247,7 @@ def main() -> int:
         return 2
     exe = Path(sys.argv[1])
     if not exe.is_file():
-        print(f"SKIP: niu binary not found: {exe}")
+        print(f"SKIP: native-shell binary not found: {exe}")
         return 2
     parent = Path(sys.argv[2]) if len(sys.argv) > 2 else None
     if parent is not None:

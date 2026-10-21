@@ -4,24 +4,24 @@ Status: proposed contract and acceptance plan; this document does not implement
 the behavior below. Existing startup, setup, and plugin-management behavior must
 not be described as compliant until the corresponding tests pass.
 
-Implementation update (niubash#359 case A, 1.4.2): the plugin-management half
-is implemented — `generated/plugins.niu` exists (`plugins::loader`), the host
+Implementation update (native-shell#359 case A, 1.4.2): the plugin-management half
+is implemented — `generated/plugins.nsh` exists (`plugins::loader`), the host
 sources it read-only before the user rc with a double-execution guard and the
-`NIU_PLUGIN_LOADER=off` rollback switch, plugin verbs write the sidecar
-manifest only, and `niu plugin migrate-rc` is the read-only migration
-diagnostic. Still unimplemented here: `niu setup` create-only (the wizard's
+`NATIVE_SHELL_PLUGIN_LOADER=off` rollback switch, plugin verbs write the sidecar
+manifest only, and `native-shell plugin migrate-rc` is the read-only migration
+diagnostic. Still unimplemented here: `native-shell setup` create-only (the wizard's
 whole-file rc write converges in 1.4.3), the `startup.rc-policy` enum, and the
 config-writer rework it depends on. Gate evidence: `tests/rc_readonly_loader.rs`
 (359.4-359.9, 359.12) plus the stage-1 suites.
 
 ## Ownership Boundary
 
-`~/.niubashrc` is user-owned shell code, not a generated database. "Read-only"
-describes Niubash's management of that file; it does not prevent users from
+`~/.native-shellrc` is user-owned shell code, not a generated database. "Read-only"
+describes Native Shell's management of that file; it does not prevent users from
 editing it or running their own startup commands. User aliases, functions,
 exports, plugin selections, and prompt overrides remain valid shell code.
 
-Niubash must not append, normalize, deduplicate, reformat, replace, truncate,
+Native Shell must not append, normalize, deduplicate, reformat, replace, truncate,
 rename, or repair an existing user rc. A backup does not authorize replacement.
 The same protection applies to legacy `~/.winuxshrc` and `~/.winshrc`, symlink
 targets, and rc files explicitly selected by users.
@@ -31,7 +31,7 @@ Do not read, migrate, copy, rename, repair, or delete them automatically. Preser
 their bytes as user files; do not recommend legacy fallback compatibility.
 This proposal changes the earlier recommendation, not production behavior yet.
 
-`~/.niubashrc` remains primary. If absent, the default is native defaults without
+`~/.native-shellrc` remains primary. If absent, the default is native defaults without
 a user rc. A future explicit setup choice may select a specific `~/.bashrc`,
 subject to the review below. This round implements no automatic fallback. File
 existence is not consent; invalid or unreadable primary rc must not select a
@@ -40,13 +40,13 @@ different file. Startup must not create missing files or rewrite parse errors.
 ## Optional `.bashrc`: Explicit Choice, Not Safety Assurance
 
 Future explicit setup may offer native defaults (the default), create-only
-`.niubashrc`, or review and select an existing `.bashrc` when `.niubashrc` is
+`.native-shellrc`, or review and select an existing `.bashrc` when `.native-shellrc` is
 absent. Show the resolved path, warn about arbitrary code execution, and require
 explicit confirmation. Non-interactive setup requires unambiguous opt-in;
 existence or a syntax check is not approval. Never source a candidate to preview
 it or discover settings. This round designs this choice but does not implement it.
 
-Persist exactly one enum setting in structured `~/.niubash/config.toml`:
+Persist exactly one enum setting in structured `~/.native-shell/config.toml`:
 proposed `startup.rc-policy = "primary-only"` (default) or
 `"bashrc-fallback"` (explicit setup opt-in). The key is proposed, not implemented.
 Do not add competing booleans, marker files, or environment-based implicit grants.
@@ -56,7 +56,7 @@ does not repair or rewrite that state. Only explicit setup may persist or revoke
 this policy; other config commands must preserve it without changing its value.
 
 Setup must not modify either rc or source `.bashrc` as a trial. Selecting fallback
-must not create an empty `.niubashrc`, which would suppress the selected fallback.
+must not create an empty `.native-shellrc`, which would suppress the selected fallback.
 Creating a new primary rc is a different explicit create-only action. Display the
 resolved candidate path and risks; cancellation or failed persistence leaves the
 previous policy and both rc files unchanged. Provide no-rc recovery and revocation
@@ -76,13 +76,13 @@ content. This is required production follow-up, not a fix delivered here.
 Apply this policy only where the existing startup contract would select the
 default interactive user rc. Preserve existing `--norc`, `--rcfile`, POSIX,
 login, and non-interactive boundaries, including their precedence and diagnostics.
-Do not turn this into extra startup-file discovery or change NIU_ENV/BASH_ENV/ENV.
+Do not turn this into extra startup-file discovery or change NATIVE_SHELL_ENV/BASH_ENV/ENV.
 Do not additionally scan profiles, `/etc`, MSYS installations, or WSL homes.
 
 Within that default-rc branch, primary-only never considers `.bashrc`. Under
 explicit bashrc-fallback, inspect the primary directory entry without following
 away a broken symlink: only genuine primary NotFound makes `.bashrc` eligible.
-An existing `.niubashrc` exclusively owns the slot even when empty, unreadable,
+An existing `.native-shellrc` exclusively owns the slot even when empty, unreadable,
 syntactically invalid, a directory, or a dangling/cyclic/otherwise broken symlink.
 Permission, traversal, IO, or ambiguous errors are not absence. Never interpret
 an open/source failure after an existence decision as permission to try `.bashrc`;
@@ -93,7 +93,7 @@ existing diagnostics without promising recovery from arbitrary user code.
 Audit scenarios, not claims about a particular user file:
 
 - `BASH_VERSION`, `BASH_VERSINFO`, `$BASH`, `$0`, and `$-` guards can select code
-  expecting GNU Bash features or builtins. Audit the actual Niubash identity and
+  expecting GNU Bash features or builtins. Audit the actual Native Shell identity and
   capability contract; a version string does not prove compatibility. Do not
   spoof versions to bypass guards.
 - MSYS/Git Bash assumptions involving `MSYSTEM`, `OSTYPE`, `uname`, `/etc/profile`,
@@ -164,7 +164,7 @@ management command but must not invoke it. This is a configuration ownership
 contract, not a blanket ban on independent history or explicitly enabled session
 logging; such facilities must not mutate configuration as a side effect.
 
-User-written rc code may intentionally invoke management commands. Niubash must
+User-written rc code may intentionally invoke management commands. Native Shell must
 not inject such calls or require them for ordinary startup. Clearly distinguish
 that user choice from product-owned startup behavior.
 
@@ -189,12 +189,12 @@ Keep the manifest-backed registry as the plugin control plane. Separate desired
 selection, installed/pinned source state, authorization, and effective activation;
 do not make the user rc a second machine-maintained source of truth.
 
-All generated per-user plugin files belong under `~/.niubash/`, for example:
+All generated per-user plugin files belong under `~/.native-shell/`, for example:
 
 - `plugins.toml`: declarative source/asset/theme selections.
 - `sources/registry.toml`: installed origins, versions, pins, and policy state.
 - `sources/<id>/`: installed source trees and adapter-owned activation assets.
-- `generated/plugins.niu`: a proposed generated activation entry point, not an
+- `generated/plugins.nsh`: a proposed generated activation entry point, not an
   existing stable interface. Its final name and loading API require review.
 
 Only explicit management commands may materialize or replace generated files.
@@ -282,18 +282,18 @@ These are proposed implementation tasks, not changes delivered by this document:
 
 ## Implementation Review Map
 
-- `crates/niubash-runtime/src/repl.rs`: first-run wizard and startup sequencing.
-- `crates/niubash-runtime/src/shell.rs`: remove legacy lookup and migration;
+- `crates/native-shell-runtime/src/repl.rs`: first-run wizard and startup sequencing.
+- `crates/native-shell-runtime/src/shell.rs`: remove legacy lookup and migration;
   design future explicit `.bashrc` selection without automatic fallback.
-- `crates/niubash-runtime/src/setup_wizard.rs`: setup output, rc writes, generated
+- `crates/native-shell-runtime/src/setup_wizard.rs`: setup output, rc writes, generated
   bootstrap, post-install authorization, and theme application.
-- `crates/niubash-runtime/src/config.rs:504`: replace destructive typed-subset
+- `crates/native-shell-runtime/src/config.rs:504`: replace destructive typed-subset
   serialization before persisting the proposed rc-policy enum; audit every
   shared-config writer for unknown-key/comment and policy preservation.
 - `src/main.rs`: legacy bootstrap dispatch and explicit plugin command behavior.
-- `crates/niubash-runtime/src/plugins/{spec,sync,sources,assets,trust}.rs`:
+- `crates/native-shell-runtime/src/plugins/{spec,sync,sources,assets,trust}.rs`:
   declarations, reconciliation, registry IO, activation writers, and integrity.
-- `crates/niubash-runtime/src/doctor.rs`: read-only diagnostics versus explicit
+- `crates/native-shell-runtime/src/doctor.rs`: read-only diagnostics versus explicit
   repair; inspect any diagnostic helper for hidden writes.
 - `tests/{startup_files,plugin_spec_sync,plugin_assets,plugin_sources,smoke_1_3_0,defaults_floor}.rs`
   and wizard unit tests: contracts to revise and extend, not proof of compliance.

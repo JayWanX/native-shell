@@ -1,13 +1,13 @@
 # Release tag immutability ruleset
 
-`unixwin/niubash` protects every `v*` git tag with the repository ruleset
-`release-tags-are-immutable` (niubash#425, rubash#827 recommendation 4).
+`JayWanX/native-shell` protects every `v*` git tag with the repository ruleset
+`release-tags-are-immutable` (native-shell#425, rubash#827 recommendation 4).
 It is a **tag ruleset**, enforced by GitHub on the server side — not a
 hook, not a convention.
 
 ## Why
 
-rubash#827's forensics recorded the niubash `v1.4.0` tag being re-pushed
+rubash#827's forensics recorded the native-shell `v1.4.0` tag being re-pushed
 at least six times in one release cycle (heads `b9799a40` / `7e399890` /
 `285d87f9` / `c7b9ae2b` / `7c9a10d1` — all red → `03af1a65` green →
 `20ec3ef0` final) to wait out a green pipeline. Each re-push fired a
@@ -35,9 +35,9 @@ Effects once active:
   (`vX.Y.(Z+1)`-style), never by rewriting the old one — the same
   fix-forward rule rubash#827 applied to already-shipped assets.
 - A failed release run on a tag that is itself correct is re-flown with
-  `workflow_dispatch` against that tag (the workflow accepts `tag`,
-  `winuxcmd_tag`, `winuxcmd_sha256` inputs and publishes through the same
-  `release` job).
+  `workflow_dispatch` against that tag (the workflow derives the version from `Cargo.toml`, so it needs no
+  `tag` input, and takes an optional `native_cmd_tag`; it publishes through the
+  same `release` job).
 - The ruleset guards the **git ref only**. Release-page prose and asset
   uploads stay editable — normal release maintenance, out of scope.
 
@@ -56,11 +56,11 @@ an org admin — repository rulesets need Administration write.
 
 ```sh
 scripts/release/apply-tag-ruleset.sh
-NIUBASH_REPO=owner/repo scripts/release/apply-tag-ruleset.sh   # other repos
+NATIVE_SHELL_REPO=owner/repo scripts/release/apply-tag-ruleset.sh   # other repos
 
 # inspect
-gh api repos/unixwin/niubash/rulesets --jq '.[] | {id, name, target, enforcement}'
-gh api repos/unixwin/niubash/rulesets/<id>
+gh api repos/JayWanX/native-shell/rulesets --jq '.[] | {id, name, target, enforcement}'
+gh api repos/JayWanX/native-shell/rulesets/<id>
 ```
 
 Changing the protection is a PR against `tag-ruleset.json` plus one run
@@ -73,8 +73,7 @@ of the script — the API object is the reviewable artifact.
   bypass. The release runbook's ignition sequence was updated for this
   (docs/release-runbook.md).
 - **Re-fly, don't re-push.** For a failed run on a correct tag, use
-  `gh workflow run release.yml -f tag=vX.Y.Z -f winuxcmd_tag=... -f
-  winuxcmd_sha256=...` instead of moving the tag.
+  `gh workflow run release.yml -f native_cmd_tag=...` instead of moving the tag.
 - **Emergencies.** Org admins bypass always (`current_user_can_bypass:
   always`); everyone else is hard-blocked. The bypass exists for genuine
   emergencies, not as the re-trigger path.
@@ -82,6 +81,6 @@ of the script — the API object is the reviewable artifact.
 ## Not covered here
 
 - The `v1.3.4` ghost version (`485a12cd` — tag exists, release run
-  37218948432 failed, no release page ever published). niubash#425 leaves
+  37218948432 failed, no release page ever published). native-shell#425 leaves
   "publish a tombstone page" vs "record as never-released" to the owner;
   neither option touches the tag ref.

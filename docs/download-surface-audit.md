@@ -1,6 +1,6 @@
 # Download Surface Audit (wt49/smokesweep, 2026-10-02)
 
-Owner ruling: "类似所有的问题都要处理" — every place niubash fetches bytes
+Owner ruling: "类似所有的问题都要处理" — every place native-shell fetches bytes
 over the network must be pure-Rust driven (no shelling out to `curl` /
 `wget` / `Invoke-WebRequest`), except where an explicit ruling sanctions a
 process boundary. This is the repo-wide audit behind that sweep.
@@ -13,12 +13,12 @@ Every network-touching call point in `crates/`, `src/`, `scripts/`,
 
 | Call point | Mechanism | Ruling |
 | --- | --- | --- |
-| `crates/niubash-runtime/src/fonts.rs` | system `curl.exe` (System32) / `curl` | **The known case** — migration to the pure-Rust driver is owned by the wt49/wpmretract lane; this lane must not touch it. |
-| `crates/niubash-runtime/src/plugins/download.rs` | `ureq` over rustls (`http_get_bytes`) | The sanctioned pure-Rust driver (owner ruling 2026-10-03). All executable-asset downloads route here. |
+| `crates/native-shell-runtime/src/fonts.rs` | system `curl.exe` (System32) / `curl` | **The known case** — migration to the pure-Rust driver is owned by the wt49/wpmretract lane; this lane must not touch it. |
+| `crates/native-shell-runtime/src/plugins/download.rs` | `ureq` over rustls (`http_get_bytes`) | The sanctioned pure-Rust driver (owner ruling 2026-10-03). All executable-asset downloads route here. |
 | `src/self_update.rs` | WinHTTP via `windows-sys` bindings | Pure-Rust driven (native API, no external process). Compliant. |
-| `crates/niubash-runtime/src/plugins/sources.rs`, `plugins/distros.rs` | `git` external command | Sanctioned two-driver world (git tree sources vs direct binary downloads, see the `plugins::download` module doc). `git` is the VCS driver, not a download helper. |
-| `crates/niubash-runtime/src/setup_wizard.rs` (`install_niu_git`) | `wpm install niugit` | Explicit user choice in the wizard delegating to the user's own package manager (owner directive, Windows-only); not a niubash fetch of bytes. |
-| `crates/niubash-runtime/src/completion/command.rs`, `shell.rs` | `curl`/`wget` as completion word-list entries | Not download call points. |
+| `crates/native-shell-runtime/src/plugins/sources.rs`, `plugins/distros.rs` | `git` external command | Sanctioned two-driver world (git tree sources vs direct binary downloads, see the `plugins::download` module doc). `git` is the VCS driver, not a download helper. |
+| `crates/native-shell-runtime/src/setup_wizard.rs` (`install_native_shell_git`) | `wpm install native-git` | Explicit user choice in the wizard delegating to the user's own package manager (owner directive, Windows-only); not a native-shell fetch of bytes. |
+| `crates/native-shell-runtime/src/completion/command.rs`, `shell.rs` | `curl`/`wget` as completion word-list entries | Not download call points. |
 
 **Conclusion: no residual external-tool download call points exist outside
 `fonts.rs`.** Scripts (`scripts/*.py`, `scripts/*.ps1`) and the installer
@@ -35,7 +35,7 @@ exact declared name. Fixed in `plugins/download.rs`:
 
 - `resolve_bin()` accepts `<bin>` or `<bin>.exe` on Windows, preferring the
   exact name;
-- `ToolRecord.bins` records the resolved on-disk name (so `niu plugin tool
+- `ToolRecord.bins` records the resolved on-disk name (so `native-shell plugin tool
   list` shows reality);
 - the staging directory is removed when unpack/bin verification fails (a
   failed install no longer leaves `.staging/<id>.unpacked` residue);
@@ -53,15 +53,15 @@ bins (`fzf`, `starship` are root-level), so this is latent, not shipped.
 ## Retraction addendum (2026-10-04, wt50/dlretract — supersedes the ledger above)
 
 The download surface audited above no longer exists. Owner final ruling:
-niu carries zero network/HTTP download responsibility — `plugins/download.rs`
+native-shell carries zero network/HTTP download responsibility — `plugins/download.rs`
 (the ureq/rustls driver), the `zip`/`tar`/`flate2` unpack stack, the
 `fonts.rs` download path, the mirror HTTP prefix channel, and the
-`niu plugin mirror test` probe were all deleted. Surviving network call
+`native-shell plugin mirror test` probe were all deleted. Surviving network call
 points:
 
 | Call point | Mechanism | Status |
 | --- | --- | --- |
-| `plugins/sources.rs`, `plugins/distros.rs` | external `git` | The sanctioned and *only* extension transport (`niu plugin add <git-url>`). |
+| `plugins/sources.rs`, `plugins/distros.rs` | external `git` | The sanctioned and *only* extension transport (`native-shell plugin add <git-url>`). |
 | `src/self_update.rs` | WinHTTP via `windows-sys` | Product self-update channel (not an extension install); goes direct since the mirror prefix channel is gone. |
 
 Executable tools install through real package managers (wpm first on

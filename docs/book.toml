@@ -1,12 +1,12 @@
 [book]
-title = "Niubash"
-description = "Bash, native on Windows. Documentation for the Niubash shell, its plugins, and its agent contract."
-authors = ["Niubash Team"]
+title = "NativeShell"
+description = "Bash, native on Windows. Documentation for the NativeShell shell, its plugins, and its agent contract."
+authors = ["NativeShell Team"]
 language = "en"
 
 [build]
 create-missing = false
 
 [output.html]
-git-repository-url = "https://github.com/unixwin/niubash"
-edit-url-template = "https://github.com/unixwin/niubash/edit/master/docs/src/{path}"
+git-repository-url = "https://github.com/JayWanX/native-shell"
+edit-url-template = "https://github.com/JayWanX/native-shell/edit/master/docs/src/{path}"

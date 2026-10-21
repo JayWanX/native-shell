@@ -1,16 +1,16 @@
 <#
 .SYNOPSIS
   file-locker.ps1 -- holds an exclusive lock on a file to simulate an
-  antivirus scanner or a crashed editor holding ~/.niubashrc open
+  antivirus scanner or a crashed editor holding ~/.native-shellrc open
   (adversarial-matrix lane AM06).
 
 .DESCRIPTION
   Opens a FileStream with FileShare::None so ANY other writer (or reader-
   with-write) gets a sharing violation (IOException 0x80070020) for the
   hold duration, then exits and releases. This is the "locked files
-  (AV-style)" injection: `niu plugin enable/disable` and the rc writer
+  (AV-style)" injection: `native-shell plugin enable/disable` and the rc writer
   must fail LOUDLY (nonzero + named reason + rc intact), never print
-  success while the write was dropped -- the niu#175 "fake success" class.
+  success while the write was dropped -- the native-shell#175 "fake success" class.
 
   PowerShell 5.1 compatible. Stdlib only.
 

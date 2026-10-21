@@ -41,7 +41,7 @@ apply to every lane below. This document adds the axes they do not cover.
 
 ## 1. The failure record this matrix must have caught
 
-Full records: `gh issue view N --repo unixwin/niubash`. One-line shapes,
+Full records: `gh issue view N --repo JayWanX/native-shell`. One-line shapes,
 with the lane that would have caught each FIRST:
 
 | Issue | Shape in one line | First-catching lane |
@@ -62,7 +62,7 @@ with the lane that would have caught each FIRST:
 | #157/#159 | setup-wizard rc generator emitted unclosed `${…//\` / missing backslash — every alias dead, syntax error every start | AM11 (rc-writer regression walk), AM08 (old rc shapes) |
 | five TLS-burned release runs (2026-10-03) | github.com TLS resets burned five release journeys; product behavior under fetch failure (deferred ledger, bounded startup) untested | AM01 (primary — deterministic resets offline) |
 | "6s source" (1.3.0) | bootstrap re-fetched the full clone on EVERY terminal when a fingerprint rejected | AM02 (aged state) + AM09 (throttled re-fetch churn) |
-| wt80 known-fail | wizard undo receipt `niu plugin disable <theme>` fails when the theme exists in two installed sources | AM03 |
+| wt80 known-fail | wizard undo receipt `native-shell plugin disable <theme>` fails when the theme exists in two installed sources | AM03 |
 | #117 family | inherited Git Bash PS1 → `__git_ps1: command not found` every prompt (gate scrubs env; real terminals don't) | AM07 (env-poisoner `gitbash` preset) |
 | #162 family | TUI child fails to launch under env/DLL path pollution | AM07 (`msys-parent`, `garbage-niu` presets) |
 
@@ -100,12 +100,12 @@ Each lane lists: injection mechanism (concrete), probe scenarios
 clone clean, so a red is attributable to the fault, not the fixture.
 
 **Probes.**
-1. `niu plugin add <url>` under `reset-after-bytes`: fetch dies mid-pack.
+1. `native-shell plugin add <url>` under `reset-after-bytes`: fetch dies mid-pack.
 2. Wizard apply (collection full) under `reset-every 2`: some clones live,
    some die — partial install state.
 3. Fresh terminal at startup with a declared-but-unfetched source while
    dead (DNS tier): the five-TLS-runs shape.
-4. `niu plugin sync` while dead, then heal (proxy off) and sync again.
+4. `native-shell plugin sync` while dead, then heal (proxy off) and sync again.
 5. Dead-proxy env var pointing at a closed port, fresh terminal.
 
 **Assertions.** Failed add leaves **zero residue**: no spec entry, no
@@ -142,7 +142,7 @@ rest: `registry-attribution-flip` (the #168 mechanism),
 5. `truncate-spec`/`corrupt-spec-toml` at startup.
 
 **Assertions.** Prompt ≤10 s in every case, at most the documented
-notices (deferred/`tree missing — repair with niu plugin restore`),
+notices (deferred/`tree missing — repair with native-shell plugin restore`),
 awaiting-trust bounds derived from the sandbox registry; NO re-fetch churn
 across terminals (the 6s-source class); the user's hand line inside the
 managed block survives sync or is migrated with a warning — never silent
@@ -171,7 +171,7 @@ shape for setup, and the local fixture source follows the
    framework's block activates? spec attribution agrees?
 2. Switch A(OMB)→B(bash-it, same name)→A through the wizard, byte-snapshot
    the rc after every hop.
-3. `niu plugin source remove` of the framework holding the ACTIVE theme;
+3. `native-shell plugin source remove` of the framework holding the ACTIVE theme;
    re-add; undo-receipt execution from the setup journal.
 4. Third-fixture source with an AMBIGUOUS theme name: execute the undo
    receipt anyway.
@@ -194,20 +194,20 @@ activates (#170 truthfulness under collision).
 
 ### AM04 — concurrency (axis 4) · wave 2 · OWN harness
 
-**Injection.** Two (and three) real niu processes on one sandbox HOME,
+**Injection.** Two (and three) real native-shell processes on one sandbox HOME,
 started with overlapping windows. No dedicated tool needed — the harness
 orchestrates processes directly (the kit's proxies still apply to
 whichever process should see a hostile network). Worst offenders: a
-foreground interactive session while `niu plugin sync` rewrites the rc it
+foreground interactive session while `native-shell plugin sync` rewrites the rc it
 is sourcing; the wizard applying while a background sync from another
 terminal materializes; `plugin source remove` in process A while process
 B's loader sources that tree; two wizards finishing within the same
 second.
 
 **Probes.**
-1. Interactive session (themed prompt alive) + `niu plugin sync` from a
-   second process, then `source ~/.niubashrc` in session one.
-2. Wizard Apply (cloning) + parallel `niu plugin sync` + a third terminal
+1. Interactive session (themed prompt alive) + `native-shell plugin sync` from a
+   second process, then `source ~/.native-shellrc` in session one.
+2. Wizard Apply (cloning) + parallel `native-shell plugin sync` + a third terminal
    opening mid-apply.
 3. Process A: `plugin source remove oh-my-bash` while process B idles at
    the themed prompt from that tree.
@@ -274,11 +274,11 @@ wt87 fingerprint-artifact class, #117 (foreign glyph rows).
 to real ENOSPC HRESULT 0x80070070, disposable) with the sandbox HOME ON the
 VHD for install/apply probes; read-only HOME via deny-ACL (`icacls
 <path> /deny Everyone:(WD,AD)` on the sandbox home between sessions);
-`file-locker.ps1` holding `~/.niubashrc` FileShare::None (AV shape,
+`file-locker.ps1` holding `~/.native-shellrc` FileShare::None (AV shape,
 demoed: append fails `Device or resource busy`) during plugin verbs.
 
 **Probes.**
-1. `niu plugin add` + collection apply with HOME on a FULL VHD.
+1. `native-shell plugin add` + collection apply with HOME on a FULL VHD.
 2. Enable/disable with the rc locked by `file-locker.ps1`.
 3. Sync (materialization rewrite) with HOME read-only.
 4. Startup with HOME read-only (can it even write its journal/ledgers?).
@@ -303,7 +303,7 @@ never truncated — #157/#159 class under I/O failure).
 
 **Injection.** `env-poisoner.py` presets as session env (demoed: Git-Bash
 PS1+MSYSTEM, HOME/USERPROFILE split, both unset, 64 KB values,
-CRLF+unicode values, BASH_ENV probe, garbage NIU_*); sandbox HOME paths
+CRLF+unicode values, BASH_ENV probe, garbage NATIVE_SHELL_*); sandbox HOME paths
 with spaces, CJK (`工作区`), 240+ char length; a theme name of 200 chars
 in the spec; rc lines with unbalanced quotes as pre-existing user content.
 
@@ -346,7 +346,7 @@ fixture trees, no clones needed for the upgrade itself).
 **Probes.**
 1. Imperative-era sandbox → first terminal → `sync` → `sync --adopt` →
    `sync` again (journey P9-S1 exactly).
-2. #159-era rc + new binary: fresh terminal, then `niu setup` re-run over it.
+2. #159-era rc + new binary: fresh terminal, then `native-shell setup` re-run over it.
 3. 1.2.x rc + 1.3.4 binary + registry pins: `plugin update` moves pins
    without re-cloning what exists.
 4. Old journal undo receipts executed by the new binary.
@@ -407,7 +407,7 @@ five-TLS class (slow-net cousin).
 
 **Injection.** EVERYTHING AT ONCE: `state-corrupter --op age-all` on a
 week-old sandbox + `throttle-git --rate-kb-per-s 10 --stall-after-bytes N`
-rotating to `reset-proxy --mode reset-every 2` mid-run + a second niu
+rotating to `reset-proxy --mode reset-every 2` mid-run + a second native-shell
 process syncing in the background + a terminal resize mid-battery + the
 `env-poisoner gitbash` preset — then the FULL daily battery, including
 the engine-parity battery (volume pipes `seq 200000 | wc -l`, merged
@@ -521,7 +521,7 @@ results in [`scripts/adversarial/README.md`](../../scripts/adversarial/README.md
 | `throttle-git.py` | `--rate-kb-per-s 8` → per-connection `avg 7.9 KB/s`, clone completes slowly; `--stall-after-bytes 200` → `Operation too slow` rc 128 in 3 s; `--mode blackhole` → same bounded failure in 4 s with `http.lowSpeedLimit` set |
 | `diskfull-vhd.ps1` | `New` mounted M: (200 MB, diskpart path; `New-VHD` auto-fallback works), `Fill` → `ENOSPC hit after 187 files … HRESULT 0x80070070`, 2 MB write refused, `Status` OK, `Remove` detached+deleted |
 | `state-corrupter.py` | `--init-demo` seeded a week-old dual-source install; `--op age-all` produced mixed CRLF + in-block hand line + real-schema schannel bootstrap memo + foreign PS1 + renamed tree file; `duplicate-block` doubled the markers (4); `registry-attribution-flip` flipped the adapter; `--op restore` rolled the files back |
-| `env-poisoner.py` | `gitbash,garbage-niu` child observed `PS1=\[…`, `MSYSTEM=MINGW64`, `NIU_LANG=zh_CN.bogus`, `TERM=/`; `no-home` child observed both HOME and USERPROFILE unset |
+| `env-poisoner.py` | `gitbash,garbage-niu` child observed `PS1=\[…`, `MSYSTEM=MINGW64`, `NATIVE_SHELL_LANG=zh_CN.bogus`, `TERM=/`; `no-home` child observed both HOME and USERPROFILE unset |
 | `file-locker.ps1` | append while locked → `Device or resource busy` rc 1; `-Test` → `LOCKED … being used by another process` rc 9; after release → append rc 0 |
 
 Design rules (see README): the kit injects, lanes assert; deliberate

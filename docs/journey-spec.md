@@ -37,7 +37,7 @@ through both live P0s**:
 
 ## 1. Method
 
-1. Mine every issue from the last two weeks (unixwin/niubash #138–#168, plus
+1. Mine every issue from the last two weeks (JayWanX/native-shell #138–#168, plus
    the rubash-side theme/prompt family #415–#423) and the journey-gate
    KNOWN_FAILS registry.
 2. For each incident classify: **would a J1–J6 walk have caught it?** Almost
@@ -62,42 +62,42 @@ gate's class).
 
 | Incident | Journey phase | J1–J6 verdict | Why |
 | --- | --- | --- | --- |
-| niu#159 setup rc backslash syntax error (1.2.4) | P1 | CAUGHT (today) | J3's zero-syntax-errors on `source ~/.niubashrc` — closed only after the burn |
-| niu#157 setup rc unclosed `${…//\}` — every alias dead (1.2.1) | P1 | CAUGHT (today) | same J3 assertion, same story |
-| niu#85 wizard Enter skips next question; arrows move 2 rows; ESC ignores default | P1 | MISSED | J2 drives one happy path; per-question input integrity never asserted |
-| niu#143 user hand-migrates a theme (custom PS1 + PROMPT_COMMAND) | P4 | MISSED | wizard re-run + hand-edited rc coexistence never walked |
+| native-shell#159 setup rc backslash syntax error (1.2.4) | P1 | CAUGHT (today) | J3's zero-syntax-errors on `source ~/.native-shellrc` — closed only after the burn |
+| native-shell#157 setup rc unclosed `${…//\}` — every alias dead (1.2.1) | P1 | CAUGHT (today) | same J3 assertion, same story |
+| native-shell#85 wizard Enter skips next question; arrows move 2 rows; ESC ignores default | P1 | MISSED | J2 drives one happy path; per-question input integrity never asserted |
+| native-shell#143 user hand-migrates a theme (custom PS1 + PROMPT_COMMAND) | P4 | MISSED | wizard re-run + hand-edited rc coexistence never walked |
 | KNOWN_FAIL `bash-preexec-recipe-entry` (apply reports `1 entries failed`) | P1 | CAUGHT | J2 asserts "no failed lines" (registered red) |
-| niu#146 `niu -i` with non-tty stdin skips rc (GNU sources it) | P2 | OUT (sibling) | ConPTY is a tty; needs the piped-stdin probe as a plain-subprocess leg |
-| niu#145 interactive startup hang (async git-status thread) | P3 | CAUGHT (today) | J4 "prompt renders" — the incident that produced the gate |
-| niu#117 inherited Git Bash PS1 → `__git_ps1: command not found` every prompt | P2/P10 | MISSED | the gate scrubs the environment; no real user's terminal is scrubbed |
-| niu#141 MSYS-parent spawn failures (rc=126, silent empty pipes) | P2/P10 | MISSED (partial) | gate's parent is python.exe; env-level approximation only |
-| niu#160 `niu -c` unclosed quote exits silently rc=1 (GNU: message + rc 2) | P2 | MISSED | the journey never invokes `-c` mode |
-| niu#148 `niu --norc -C '…'` argument-order misdispatch | P2 | MISSED | the journey never passes flags |
-| niu#138 `~/.niubash_profile` (non-interactive/login env, mise) | P2/P9 | MISSED | feature documented as requested; no journey leg |
-| **niu#167 first-key eat after clock repaint (P0)** | P3 | **MASKED** | Ctrl-U wake hides it; gate green through a live P0 |
-| **niu#168 theme rebound across source/new terminal (P0, OPEN)** | P3/P4 | **MISSED** | J4/J5 assert non-default prompt; rebound theme is non-default; no rc byte-stability or theme-identity assertion |
+| native-shell#146 `native-shell -i` with non-tty stdin skips rc (GNU sources it) | P2 | OUT (sibling) | ConPTY is a tty; needs the piped-stdin probe as a plain-subprocess leg |
+| native-shell#145 interactive startup hang (async git-status thread) | P3 | CAUGHT (today) | J4 "prompt renders" — the incident that produced the gate |
+| native-shell#117 inherited Git Bash PS1 → `__git_ps1: command not found` every prompt | P2/P10 | MISSED | the gate scrubs the environment; no real user's terminal is scrubbed |
+| native-shell#141 MSYS-parent spawn failures (rc=126, silent empty pipes) | P2/P10 | MISSED (partial) | gate's parent is python.exe; env-level approximation only |
+| native-shell#160 `native-shell -c` unclosed quote exits silently rc=1 (GNU: message + rc 2) | P2 | MISSED | the journey never invokes `-c` mode |
+| native-shell#148 `native-shell --norc -C '…'` argument-order misdispatch | P2 | MISSED | the journey never passes flags |
+| native-shell#138 `~/.native-shell_profile` (non-interactive/login env, mise) | P2/P9 | MISSED | feature documented as requested; no journey leg |
+| **native-shell#167 first-key eat after clock repaint (P0)** | P3 | **MASKED** | Ctrl-U wake hides it; gate green through a live P0 |
+| **native-shell#168 theme rebound across source/new terminal (P0, OPEN)** | P3/P4 | **MISSED** | J4/J5 assert non-default prompt; rebound theme is non-default; no rc byte-stability or theme-identity assertion |
 | "6s source" — 1.3.0 bootstrap re-fetched clones every terminal (F5/F6) | P3/P5 | CAUGHT (today) | J4 "no Cloning into" — added post-incident; the model works |
-| niu#147 cd into a git repo → `unexpected EOF … matching ')'` + stray `)` at prompt | P5 | MISSED | the battery never enters a git repository |
+| native-shell#147 cd into a git repo → `unexpected EOF … matching ')'` + stray `)` at prompt | P5 | MISSED | the battery never enters a git repository |
 | rubash#423 `cd dir && ls` lists the OLD dir (children keep stale cwd) | P5 | MISSED | battery uses builtin `pwd` only |
-| niu#155 `seq 200000 \| wc -l` silently loses 75%+ of the data | P5 | MISSED | battery is tiny-data; no volume probe |
-| niu#158 `seq 20000 \| cat` hangs forever past ~64 KB | P5 | MISSED | same — no volume probe |
-| niu#144 merged `2>&1` stderr reordered + withheld until exit | P5 | MISSED | battery has no merged-redirect stage |
-| niu#166 bare `tr` in a pipe stage silently idles | P5 | MISSED | battery has no `tr` stage |
-| niu#154/#163 `${x:?}`/`set -u` failure rc=127 (GNU 1) | P5 | MISSED | battery never fails an expansion |
-| niu#162 opencode TUI fails to launch (env/DLL path pollution; cmd/PS fine) | P5/P10 | MISSED | battery spawns no env-sensitive child |
+| native-shell#155 `seq 200000 \| wc -l` silently loses 75%+ of the data | P5 | MISSED | battery is tiny-data; no volume probe |
+| native-shell#158 `seq 20000 \| cat` hangs forever past ~64 KB | P5 | MISSED | same — no volume probe |
+| native-shell#144 merged `2>&1` stderr reordered + withheld until exit | P5 | MISSED | battery has no merged-redirect stage |
+| native-shell#166 bare `tr` in a pipe stage silently idles | P5 | MISSED | battery has no `tr` stage |
+| native-shell#154/#163 `${x:?}`/`set -u` failure rc=127 (GNU 1) | P5 | MISSED | battery never fails an expansion |
+| native-shell#162 opencode TUI fails to launch (env/DLL path pollution; cmd/PS fine) | P5/P10 | MISSED | battery spawns no env-sensitive child |
 | five release runs burned by TLS resets (2026-10-03 22:11–23:26) | P5 | RED-noise only | the gate *inherits* network truth but never tests the PRODUCT's failure behavior (deferred ledger, bounded startup) |
 | J6 release gluing / input-delivery losses (runs 37149660449, 37153503706) | driver | CAUGHT | input-delivery hardening — driver-side, done |
 | KNOWN_FAIL `wt56-bash-completion-syntax` (bash_completion:1376) | P6 | CAUGHT | J6 (registered red) |
-| niu#168 family: trust a SECOND source while one is active | P6 | MISSED | J6 trusts exactly one source, once |
+| native-shell#168 family: trust a SECOND source while one is active | P6 | MISSED | J6 trusts exactly one source, once |
 | F4 (changelog 1.3.1): uninstall must drop the spec declaration or the source resurrects | P8 | MISSED | remove/remove-with-active-theme never walked |
 | F5 ledger: failed startup install memoized, retried only on explicit sync | P3/P5 | MISSED | aged state never seeded; every terminal is born just-written |
 | F1–F4 (changelog 1.3.1): imperative-mode dead end — nag on every terminal, `--adopt` migration | P9 | MISSED | the gate always ends spec-managed; upgrading an OLD install is never walked |
 | rubash#416 OMB iterate: single-quoted `${var/pat/repl}` in `$()` → theme loses all segments | P4 | MISSED | exactly ONE theme (powerline-multiline) is ever activated; 60+ gallery themes never sourced |
 | rubash#417 hawaii50 / #418 powerbash10k+brainy right-prompt render family | P4 | MISSED | same |
 | rubash#420/#421/#422 PROMPT_DIRTRIM, `\u` empty USER, `\[ \]` markers on 22/82 themes | P4 | MISSED | same |
-| niu#150 WinGet portable install loses the winuxcmd tree → STATUS_DLL_NOT_FOUND | P1/P9 | OUT | packaging CI owns the installer; but the *startup validation* behavior (degrade with a message, never a silent wrong shell) is journey-testable |
-| niu#161 release stages the retired oh-my-niu bundle | P1 | OUT | packaging gate, not a terminal journey |
-| niu#162 follow-on: PATH without winuxcmd at startup | P10 | MISSED | env-per-session variant never driven |
+| native-shell#150 WinGet portable install loses the winuxcmd tree → STATUS_DLL_NOT_FOUND | P1/P9 | OUT | packaging CI owns the installer; but the *startup validation* behavior (degrade with a message, never a silent wrong shell) is journey-testable |
+| native-shell#161 release stages the retired oh-my-native-shell bundle | P1 | OUT | packaging gate, not a terminal journey |
+| native-shell#162 follow-on: PATH without winuxcmd at startup | P10 | MISSED | env-per-session variant never driven |
 
 **Score: of the 30+ in-scope incidents, J1–J6 as shipped catches 6 — and 5 of
 those 6 were added only after the incident burned a release or a P0.**
@@ -116,9 +116,9 @@ Guards: #157, #159, #85, #143, KNOWN_FAIL `bash-preexec-recipe-entry`, #161 (out
 
 | Step | The user's move | Assertions | Feasibility | Priority |
 | --- | --- | --- | --- | --- |
-| P1-S1 *(=J1)* | fresh HOME → run `niu` | `Niubash <version>` welcome line + the dim first-run hint naming `niu setup`; REPL prompt alive; the wizard never auto-starts (#359 stage 1) | `conpty` | — |
-| P1-S2 *(=J2)* | at the J1 prompt: `niu setup` → collection `full` → Apply → watch clones → Trust now → gallery → pick `powerline-multiline` | wizard welcome block (v-banner, environment panel, "No external themes installed yet"); clone lines; rc (the pick's ownership note) + the generated loader (theme activation) + spec + journal written; undo receipts listed; >60 themes on disk; REPL alive | `conpty` | — |
-| P1-S3 | same walk but **Decline** the trust question | no trust flip; next startup shows the documented per-source `awaiting-trust` notice and prints the exact `niu plugin trust <id>` (plugins-guide contract: "Declining changes nothing"); enable refuses while untrusted | `conpty` | 2 |
+| P1-S1 *(=J1)* | fresh HOME → run `native-shell` | `Native Shell <version>` welcome line + the dim first-run hint naming `native-shell setup`; REPL prompt alive; the wizard never auto-starts (#359 stage 1) | `conpty` | — |
+| P1-S2 *(=J2)* | at the J1 prompt: `native-shell setup` → collection `full` → Apply → watch clones → Trust now → gallery → pick `powerline-multiline` | wizard welcome block (v-banner, environment panel, "No external themes installed yet"); clone lines; rc (the pick's ownership note) + the generated loader (theme activation) + spec + journal written; undo receipts listed; >60 themes on disk; REPL alive | `conpty` | — |
+| P1-S3 | same walk but **Decline** the trust question | no trust flip; next startup shows the documented per-source `awaiting-trust` notice and prints the exact `native-shell plugin trust <id>` (plugins-guide contract: "Declining changes nothing"); enable refuses while untrusted | `conpty` | 2 |
 | P1-S4 | per-question input integrity: one DOWN = exactly one row (highlight row-number delta 1); ESC takes the documented default; Enter never double-advances to the question after next | guards #85's three symptoms as a class (menu single-key semantics), not one republish of each | `conpty` | 3 |
 | P1-S5 | apply honesty: a collection entry that fails (`failed` lines, e.g. the bash-preexec seed) keeps the step RED until its ticket lands | stays a registered KNOWN_FAIL; never absorbed as green | `conpty` (exists) | — |
 
@@ -128,10 +128,10 @@ Guards: #146, #117, #141, #160, #148, #138.
 
 | Step | The user's move | Assertions | Feasibility | Priority |
 | --- | --- | --- | --- | --- |
-| P2-S1 *(=J3)* | `source ~/.niubashrc` in a live session | completes; zero syntax errors | `conpty` | — |
-| P2-S2 | day-one flag invocations from the same sandbox: `niu -c 'echo ok'`, `niu --norc -c 'echo ok'`, `niu -c $'echo \\"'` (unclosed quote) | `-c` prints `ok` with the theme's aliases NOT required; `--norc` order-independent (#148); unclosed quote prints the EOF diagnostic and exits rc 2 (#160, GNU parity) | `subproc` | 3 |
+| P2-S1 *(=J3)* | `source ~/.native-shellrc` in a live session | completes; zero syntax errors | `conpty` | — |
+| P2-S2 | day-one flag invocations from the same sandbox: `native-shell -c 'echo ok'`, `native-shell --norc -c 'echo ok'`, `native-shell -c $'echo \\"'` (unclosed quote) | `-c` prints `ok` with the theme's aliases NOT required; `--norc` order-independent (#148); unclosed quote prints the EOF diagnostic and exits rc 2 (#160, GNU parity) | `subproc` | 3 |
 | P2-S3 | spawn a session carrying a real terminal's baggage: inherited `PS1` (Git Bash shape), `MSYSTEM=MINGW64`, `SHELL=/usr/bin/bash` | prompt renders; zero `__git_ps1: command not found`; zero foreign-PS1 glyphs at prompt #1 (guards #117/#141 class: inherited env must be discarded or honored, never leaked) | `conpty+env` | 2 |
-| P2-S4 | non-interactive login contract (`~/.niubash_profile`, #138) | once the feature lands: `niu -c` login path sources it (mise activation visible); until then do NOT add the step — feature-pending, tracked by #138 | `feature-pending` | 3 |
+| P2-S4 | non-interactive login contract (`~/.native-shell_profile`, #138) | once the feature lands: `native-shell -c` login path sources it (mise activation visible); until then do NOT add the step — feature-pending, tracked by #138 | `feature-pending` | 3 |
 
 ### P3 — second session, state persistence, state aging  *(base exists: J4; the P0 phase)*
 
@@ -140,9 +140,9 @@ Guards: **#168**, **#167**, the 6s-source family (kept green by J4), F5 ledger.
 | Step | The user's move | Assertions | Feasibility | Priority |
 | --- | --- | --- | --- | --- |
 | P3-S1 *(=J4)* | three fresh terminals | no `Cloning into`, no `not declared`, ≤ documented `awaiting-trust` lines, prompt renders | `conpty` | — |
-| P3-S2 | **theme-block byte-stability + theme identity across terminals** (#168): snapshot `~/.niubashrc` bytes after J2; `source ~/.niubashrc` in a live session; open two fresh terminals; snapshot bytes after each | (a) the theme block bytes (the oh-my-bash managed guard region) identical after every source/terminal, present exactly once, no `activated`/`deactivated` flip of the theme source — the whole-rc comparison is an informational note only (a spec-declared block may legally materialize once trusted, e.g. the bash-completion block J6 trusts; wt87 calibration); (b) the picked theme's variable (`OSH_THEME`/`BASH_IT_THEME` = `powerline-multiline`) still present and unchanged; (c) the string `selection materialized` NEVER appears during an unchanged-spec source/startup (it is the #168 rewrite tell); (d) terminal 2's first prompt row equals terminal 1's modulo clock digits | `conpty` | **1** |
+| P3-S2 | **theme-block byte-stability + theme identity across terminals** (#168): snapshot `~/.native-shellrc` bytes after J2; `source ~/.native-shellrc` in a live session; open two fresh terminals; snapshot bytes after each | (a) the theme block bytes (the oh-my-bash managed guard region) identical after every source/terminal, present exactly once, no `activated`/`deactivated` flip of the theme source — the whole-rc comparison is an informational note only (a spec-declared block may legally materialize once trusted, e.g. the bash-completion block J6 trusts; wt87 calibration); (b) the picked theme's variable (`OSH_THEME`/`BASH_IT_THEME` = `powerline-multiline`) still present and unchanged; (c) the string `selection materialized` NEVER appears during an unchanged-spec source/startup (it is the #168 rewrite tell); (d) terminal 2's first prompt row equals terminal 1's modulo clock digits | `conpty` | **1** |
 | P3-S3 | **first-key integrity as product behavior** (the #167 anti-masking step): after the themed prompt idles ≥1.2 s (≥1 clock repaint), send `echo` with the driver's Ctrl-U wake DISABLED for this one probe | the full word executes (`echo: usage`-class output or silent success) — never `cho: command not found`; one labeled probe per session; the general wake stays for everything else | `conpty+wake-flag` | **1** |
-| P3-S4 | **aged state**: between sessions, damage one installed tree (rename a file inside a trusted source) and seed a `bootstrap-failures.toml` entry for a declared-but-missing origin | next terminal reaches a prompt bounded ≤10 s with at most the documented one-line notices (`deferred`, `tree missing — repair with niu plugin restore <id>`; awaiting-trust notices name only still-untrusted sources, at most one per — the bound derived from the sandbox registry, wt78 expanded `full` to nine entries so no literal cap); the guarded loader no-ops silently (no error storm); `niu plugin sync` (explicit) retries and repairs; the terminal after that is silent | `conpty+seed` | **1** |
+| P3-S4 | **aged state**: between sessions, damage one installed tree (rename a file inside a trusted source) and seed a `bootstrap-failures.toml` entry for a declared-but-missing origin | next terminal reaches a prompt bounded ≤10 s with at most the documented one-line notices (`deferred`, `tree missing — repair with native-shell plugin restore <id>`; awaiting-trust notices name only still-untrusted sources, at most one per — the bound derived from the sandbox registry, wt78 expanded `full` to nine entries so no literal cap); the guarded loader no-ops silently (no error storm); `native-shell plugin sync` (explicit) retries and repairs; the terminal after that is silent | `conpty+seed` | **1** |
 
 ### P4 — re-running setup + switching themes  *(nothing exists today)*
 
@@ -150,9 +150,9 @@ Guards: **#168** (owner's entry door: "向导重选后"), #157/#159 (the rc writ
 
 | Step | The user's move | Assertions | Feasibility | Priority |
 | --- | --- | --- | --- | --- |
-| P4-S1 | re-run `niu setup` on the P3-state sandbox (`rerun_wizard()` is a supported flow: "Re-run the setup wizard even if the user already has a startup rc") | wizard completes; ends with exactly one theme state: the freshly picked theme active in rc AND spec AND rendered prompt — never a third state; zero syntax errors | `conpty` | **1** |
+| P4-S1 | re-run `native-shell setup` on the P3-state sandbox (`rerun_wizard()` is a supported flow: "Re-run the setup wizard even if the user already has a startup rc") | wizard completes; ends with exactly one theme state: the freshly picked theme active in rc AND spec AND rendered prompt — never a third state; zero syntax errors | `conpty` | **1** |
 | P4-S2 | theme switch A→B→A through the wizard gallery: `powerline-multiline` → a second theme (e.g. `edsonarios`) → back to A | after each pick: new terminal renders THAT theme (prompt shape + rc variable agree); returning to A restores the managed block byte-identically to its original | `conpty` | **1** |
-| P4-S3 | execute the undo receipts the finish screen printed (per-entry undo commands; `niu plugin rollback` family — read the exact verbs from `~/.niubash/setup-journal.toml`) | after undo: rc/spec/registry return to the pre-wizard state (files restored or absent); re-running the wizard afterwards succeeds; nothing resurrects on the next sync (F4) | `conpty` | 2 |
+| P4-S3 | execute the undo receipts the finish screen printed (per-entry undo commands; `native-shell plugin rollback` family — read the exact verbs from `~/.native-shell/setup-journal.toml`) | after undo: rc/spec/registry return to the pre-wizard state (files restored or absent); re-running the wizard afterwards succeeds; nothing resurrects on the next sync (F4) | `conpty` | 2 |
 | P4-S4 | dual-framework same-name theme: with `full` (OMB + bash-it both installed) pick `powerbash10k` (exists in both frameworks — #168's exact shape) | exactly ONE framework's block activates it; spec's framework attribution agrees with the rc guard block; a second terminal does not flip the framework; green since wt72/themeback landed (1.3.4) — a red is a plain #168 regression | `conpty` | **1** |
 | P4-S5 | theme breadth smoke: source ~8 gallery themes (one per family: `edsonarios`, `hawaii50`, `brainy`, `iterate`, `powerbash10k`, …), one throwaway session each | zero syntax errors; prompt renders per theme; known-bad themes register as KNOWN-FAILs with their rubash issue numbers (guards the rubash#416/#417/#418/#420/#421/#422 family instead of one theme forever) | `conpty` | 2 |
 
@@ -166,9 +166,9 @@ Guards: #155, #158, #144, #166, #147, #423, #154/#163, #162, the five TLS-burned
 | P5-S2 | volume battery: `seq 200000 \| wc -l` → `200000`; `seq 20000 \| cat` returns | exact count (no silent EPIPE loss, #155); no permanent hang (#158) | `conpty` | 2 |
 | P5-S3 | merged-redirect battery: `ls nofile 2>&1 \| wc -l` → `1`; `echo out 2>&1 \| grep out` | stderr reaches the pipe once, ordered, not withheld (#144) | `conpty` | 3 |
 | P5-S4 | git-repo cd: `mkdir r && cd r && git init -q`, then a new prompt, then `cd r && ls` | prompt renders with no `unexpected EOF` and no stray `)` (#147); `ls` lists r's contents (children see the current cwd, #423) | `conpty` | 2 |
-| P5-S5 | failing expansions: `niu -c 'set -u; echo $x'` | diagnostic printed, exit code 1 (GNU parity; #154/#163) | `subproc` | 3 |
-| P5-S6 | env-sensitive child: `niu -c 'env'` carries no mangled drive-paths (the `B:/~BUN` shape of #162); if `less` is on PATH, page a file and quit | child env sane; TUI exits, prompt alive | `conpty` (best-effort, skip-if-absent) | 3 |
-| P5-S7 | **startup under broken network**: the driver installs a dead git transport for the sandbox (sandbox gitconfig `insteadOf` rewrite of `https://github.com/` → `http://127.0.0.1:1/`) with a declared-but-unfetched source | fresh terminal reaches a prompt bounded ≤10 s with exactly the one-line deferred/failed notices — no hang, no re-fetch storm (the five TLS release runs; F5); `niu plugin sync` while still dead reports per-source failure readably; remove the rewrite → `niu plugin sync` repairs and clears the ledger → next terminal silent | `conpty+netfail` | **1** |
+| P5-S5 | failing expansions: `native-shell -c 'set -u; echo $x'` | diagnostic printed, exit code 1 (GNU parity; #154/#163) | `subproc` | 3 |
+| P5-S6 | env-sensitive child: `native-shell -c 'env'` carries no mangled drive-paths (the `B:/~BUN` shape of #162); if `less` is on PATH, page a file and quit | child env sane; TUI exits, prompt alive | `conpty` (best-effort, skip-if-absent) | 3 |
+| P5-S7 | **startup under broken network**: the driver installs a dead git transport for the sandbox (sandbox gitconfig `insteadOf` rewrite of `https://github.com/` → `http://127.0.0.1:1/`) with a declared-but-unfetched source | fresh terminal reaches a prompt bounded ≤10 s with exactly the one-line deferred/failed notices — no hang, no re-fetch storm (the five TLS release runs; F5); `native-shell plugin sync` while still dead reports per-source failure readably; remove the rewrite → `native-shell plugin sync` repairs and clears the ledger → next terminal silent | `conpty+netfail` | **1** |
 
 ### P6 — trust lifecycle  *(base exists: J6)*
 
@@ -176,23 +176,23 @@ Guards: KNOWN_FAIL `wt56-bash-completion-syntax`, #168's dual-active world, F4, 
 
 | Step | The user's move | Assertions | Feasibility | Priority |
 | --- | --- | --- | --- | --- |
-| P6-S1 *(=J6)* | `niu plugin trust bash-completion` → `source` → fresh terminal | trusted; zero syntax errors; `_init_completion` loaded | `conpty` | — |
-| P6-S2 | trust a SECOND source while one is active: `niu plugin trust bash-preexec` (it has sat untrusted since J2) → `source` → fresh terminal | both active; zero errors; both awaiting-trust notices gone | `conpty` | 2 |
-| P6-S3 | remove a source with active assets: `niu plugin source remove bash-completion` | rc re-materialized without it (its loader line gone); spec declaration dropped (F4: no resurrection at the next sync); fresh terminal clean | `conpty` | **1** |
-| P6-S4 | checksum tier: rename a file inside a trusted tree, new terminal, then `niu plugin restore <id>` | startup stays silent (guarded loader no-op, documented `tree missing` contract) or prints the documented repair line — never an error storm; restore rebuilds from the pin; next terminal loads again | `conpty+seed` | 2 |
+| P6-S1 *(=J6)* | `native-shell plugin trust bash-completion` → `source` → fresh terminal | trusted; zero syntax errors; `_init_completion` loaded | `conpty` | — |
+| P6-S2 | trust a SECOND source while one is active: `native-shell plugin trust bash-preexec` (it has sat untrusted since J2) → `source` → fresh terminal | both active; zero errors; both awaiting-trust notices gone | `conpty` | 2 |
+| P6-S3 | remove a source with active assets: `native-shell plugin source remove bash-completion` | rc re-materialized without it (its loader line gone); spec declaration dropped (F4: no resurrection at the next sync); fresh terminal clean | `conpty` | **1** |
+| P6-S4 | checksum tier: rename a file inside a trusted tree, new terminal, then `native-shell plugin restore <id>` | startup stays silent (guarded loader no-op, documented `tree missing` contract) or prints the documented repair line — never an error storm; restore rebuilds from the pin; next terminal loads again | `conpty+seed` | 2 |
 
 ### P7 — spec hand-editing  *(nothing exists today)*
 
 Guards: the documented contracts in plugins-guide ("you can equally hand-edit
-the spec and run `niu plugin sync`"; the merge semantics; unmanaged themes) —
+the spec and run `native-shell plugin sync`"; the merge semantics; unmanaged themes) —
 and #168's inverse invariant (sync claims only what the spec declares).
 
 | Step | The user's move | Assertions | Feasibility | Priority |
 | --- | --- | --- | --- | --- |
-| P7-S1 | hand-add an `enable` entry to `~/.niubash/plugins.toml` → `niu plugin sync` → `niu plugin sync` again | first sync materializes it into the rc; second sync is a byte-identical no-op | `conpty` | **1** |
-| P7-S2 | hand-add a marker line inside the managed rc block → `niu plugin sync` | the hand line survives every sync (documented `hand_added ∪ next(spec)` rule); the spec's own set is intact | `conpty` | **1** |
-| P7-S3 | corrupt the spec (invalid TOML) → `niu plugin sync`, then a fresh terminal | sync fails with a readable error and does NOT destructively rewrite the rc; the fresh terminal still reaches a prompt bounded ≤10 s (a corrupt spec must never wedge startup — hang class) | `conpty` | **1** |
-| P7-S4 | unmanaged theme: drop the `theme` key from the spec, hand-set `OSH_THEME` in the rc → `niu plugin sync` → fresh terminal | the hand theme survives (spec declares none → "keeps the current theme"); sync never rewrites it — #168's inverse invariant | `conpty` | **1** |
+| P7-S1 | hand-add an `enable` entry to `~/.native-shell/plugins.toml` → `native-shell plugin sync` → `native-shell plugin sync` again | first sync materializes it into the rc; second sync is a byte-identical no-op | `conpty` | **1** |
+| P7-S2 | hand-add a marker line inside the managed rc block → `native-shell plugin sync` | the hand line survives every sync (documented `hand_added ∪ next(spec)` rule); the spec's own set is intact | `conpty` | **1** |
+| P7-S3 | corrupt the spec (invalid TOML) → `native-shell plugin sync`, then a fresh terminal | sync fails with a readable error and does NOT destructively rewrite the rc; the fresh terminal still reaches a prompt bounded ≤10 s (a corrupt spec must never wedge startup — hang class) | `conpty` | **1** |
+| P7-S4 | unmanaged theme: drop the `theme` key from the spec, hand-set `OSH_THEME` in the rc → `native-shell plugin sync` → fresh terminal | the hand theme survives (spec declares none → "keeps the current theme"); sync never rewrites it — #168's inverse invariant | `conpty` | **1** |
 
 ### P8 — plugin add/remove/update cycles with live themes  *(nothing exists today)*
 
@@ -200,10 +200,10 @@ Guards: F4 (resurrection), F6 fingerprint family, #161 (out-of-scope pointer), t
 
 | Step | The user's move | Assertions | Feasibility | Priority |
 | --- | --- | --- | --- | --- |
-| P8-S1 | `niu plugin add <small-wild-repo>` while themes are active → trust → enable one file → `source` | add adopts/installs untrusted; trust question names the id; enabled file sources clean alongside the active theme | `conpty` (network) | 2 |
-| P8-S2 | `niu plugin update <id>` on a source with an active theme | pin moves to the ref tip; theme still active; rc block unchanged byte-for-byte | `conpty` (network) | 2 |
-| P8-S3 | `niu plugin rollback` / `restore` round-trip on that source | tree returns to the prior pin; enablement unchanged; fresh terminal clean | `conpty` | 2 |
-| P8-S4 | **remove the source providing the ACTIVE theme** (`niu plugin source remove` of the theme-bearing framework) | documented degradation: guarded loader no-ops, prompt falls back cleanly, no syntax-error storm, spec declaration dropped (F4); re-add + re-enable restores the theme | `conpty` | **1** |
+| P8-S1 | `native-shell plugin add <small-wild-repo>` while themes are active → trust → enable one file → `source` | add adopts/installs untrusted; trust question names the id; enabled file sources clean alongside the active theme | `conpty` (network) | 2 |
+| P8-S2 | `native-shell plugin update <id>` on a source with an active theme | pin moves to the ref tip; theme still active; rc block unchanged byte-for-byte | `conpty` (network) | 2 |
+| P8-S3 | `native-shell plugin rollback` / `restore` round-trip on that source | tree returns to the prior pin; enablement unchanged; fresh terminal clean | `conpty` | 2 |
+| P8-S4 | **remove the source providing the ACTIVE theme** (`native-shell plugin source remove` of the theme-bearing framework) | documented degradation: guarded loader no-ops, prompt falls back cleanly, no syntax-error storm, spec declaration dropped (F4); re-add + re-enable restores the theme | `conpty` | **1** |
 
 ### P9 — upgrade / migration first run  *(nothing exists today)*
 
@@ -211,9 +211,9 @@ Guards: changelog 1.3.1 F1–F6 (every one of them shipped in this phase), #150 
 
 | Step | The user's move | Assertions | Feasibility | Priority |
 | --- | --- | --- | --- | --- |
-| P9-S1 | imperative-mode machine: seed the sandbox with `registry.toml` + installed sources but NO `plugins.toml` (the documented pre-1.3.1 state) → first terminal → `niu plugin sync` → `niu plugin sync --adopt` → `niu plugin sync` again | first run: NO "installed but not declared" nag (F1); sync prints the migration one-liner (F3); `--adopt` snapshots enablement + theme; the following plain sync is a byte-stable no-op (F2) | `conpty+seed` | **1** |
-| P9-S2 | old rc + new binary: seed a 1.2.x-era `~/.niubashrc` (the #159-era generator shape, pre-spec) → fresh terminal | rc loads with zero syntax errors; aliases work; the new binary never "fixes" the file silently behind the user's back | `conpty+seed` | 2 |
-| P9-S3 | seed a `bootstrap-failures.toml` from a previous version with a stale origin | startup defers with one line (F5); no fetch churn; explicit `niu plugin sync` retries | `conpty+seed` | 2 |
+| P9-S1 | imperative-mode machine: seed the sandbox with `registry.toml` + installed sources but NO `plugins.toml` (the documented pre-1.3.1 state) → first terminal → `native-shell plugin sync` → `native-shell plugin sync --adopt` → `native-shell plugin sync` again | first run: NO "installed but not declared" nag (F1); sync prints the migration one-liner (F3); `--adopt` snapshots enablement + theme; the following plain sync is a byte-stable no-op (F2) | `conpty+seed` | **1** |
+| P9-S2 | old rc + new binary: seed a 1.2.x-era `~/.native-shellrc` (the #159-era generator shape, pre-spec) → fresh terminal | rc loads with zero syntax errors; aliases work; the new binary never "fixes" the file silently behind the user's back | `conpty+seed` | 2 |
+| P9-S3 | seed a `bootstrap-failures.toml` from a previous version with a stale origin | startup defers with one line (F5); no fetch churn; explicit `native-shell plugin sync` retries | `conpty+seed` | 2 |
 
 ### P10 — multi-day drift  *(nothing exists today)*
 
@@ -224,7 +224,7 @@ Guards: #167 across sessions, #150's startup-validation behavior, #117/#141 envi
 | P10-S1 | timezone drift: spawn a session with `TZ=Pacific/Auckland` | clock segment renders; prompt alive; the P3-S3 first-key probe still passes under the other TZ | `conpty+env` | 3 |
 | P10-S2 | degraded PATH: spawn with the winuxcmd directory stripped from PATH | startup degrades with the documented validation message (the #150-era behavior) — never a silent wrong-shell or a bare crash | `conpty+env` | 2 |
 | P10-S3 | long-lived terminal: ≥30 s idle against the per-second clock (≥30 repaints; the overnight-terminal shape), plus a few hundred scrolled lines | prompt alive; scrollback sane; first-key probe passes (#167 across long idle) | `conpty` | 3 |
-| P10-S4 | real MSYS parent (full #141 shape: spawn niu from an actual MSYS/Cygwin parent) | external applets spawn; pipes not silently empty | partial via `conpty+env` (`MSYSTEM`); full shape needs a parent-process driver capability — mark explicitly partial | 3 |
+| P10-S4 | real MSYS parent (full #141 shape: spawn native-shell from an actual MSYS/Cygwin parent) | external applets spawn; pipes not silently empty | partial via `conpty+env` (`MSYSTEM`); full shape needs a parent-process driver capability — mark explicitly partial | 3 |
 
 ## 4. Feasibility legend + driver capability requests
 

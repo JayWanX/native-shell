@@ -10,7 +10,7 @@ hand-written mirrors.toml with `git_instead_of = <fixtures>/gh/github.com/`.
 
 The registry/spec still record canonical GitHub URLs (the iron invariant),
 so every verb behaves exactly as it would online — only the bytes travel
-from localhost. Fixture layouts follow crates/niubash-runtime/src/plugins/
+from localhost. Fixture layouts follow crates/native-shell-runtime/src/plugins/
 descriptors.rs fingerprints exactly:
 
 - oh-my-bash:  oh-my-bash.sh + themes/<name>/<name>.theme.sh (+ plugins,
@@ -45,12 +45,12 @@ fi
 
 BC_STUB = """\
 # fixture bash-completion root entry (audit wt82-L02)
-__niu_fixture_bash_completion_loaded=1
+__native_shell_fixture_bash_completion_loaded=1
 """
 
 PREEXEC_STUB = """\
 # fixture bash-preexec (audit wt82-L02)
-__niu_fixture_bash_preexec_loaded=1
+__native_shell_fixture_bash_preexec_loaded=1
 """
 
 # name -> PS1 the theme stub sets (activation is observable in the REPL)
@@ -115,11 +115,11 @@ def build_fixtures(fixtures_root: Path) -> Path:
         _write(omb, f"themes/{name}/{name}.theme.sh",
                f"# fixture omb theme {name}\nPS1='{ps1}'\n")
     _write(omb, "plugins/git/git.plugin.sh",
-           "# fixture omb plugin\n__niu_fixture_omb_git=1\n")
+           "# fixture omb plugin\n__native_shell_fixture_omb_git=1\n")
     _write(omb, "aliases/git.aliases.sh",
-           "# fixture omb alias\nalias __niu_fixture_omb_alias='true'\n")
+           "# fixture omb alias\nalias __native_shell_fixture_omb_alias='true'\n")
     _write(omb, "completions/git.completion.sh",
-           "# fixture omb completion\n__niu_fixture_omb_comp=1\n")
+           "# fixture omb completion\n__native_shell_fixture_omb_comp=1\n")
     _commit(omb, "fixture oh-my-bash")
 
     bashit = gh / "Bash-it" / "bash-it"
@@ -129,7 +129,7 @@ def build_fixtures(fixtures_root: Path) -> Path:
         _write(bashit, f"themes/{name}/{name}.theme.bash",
                f"# fixture bash-it theme {name}\nPS1='{ps1}'\n")
     _write(bashit, "aliases/available/git.aliases.bash",
-           "# fixture bash-it alias\nalias __niu_fixture_bit_alias='true'\n")
+           "# fixture bash-it alias\nalias __native_shell_fixture_bit_alias='true'\n")
     _commit(bashit, "fixture bash-it")
 
     bc = gh / "scop" / "bash-completion"
@@ -152,10 +152,10 @@ def build_fixtures(fixtures_root: Path) -> Path:
 
 
 def write_mirrors(mirrors_file: Path, base: str):
-    """The transport-only insteadOf mirror file (NIU_MIRRORS target)."""
+    """The transport-only insteadOf mirror file (NATIVE_SHELL_MIRRORS target)."""
     mirrors_file.parent.mkdir(parents=True, exist_ok=True)
     mirrors_file.write_text(
-        f'schema = "niubash:mirrors@0.1.0"\n'
+        f'schema = "native-shell:mirrors@0.1.0"\n'
         f'active = "custom"\n'
         f"\n[github]\n"
         f'git_instead_of = "{base}"\n',

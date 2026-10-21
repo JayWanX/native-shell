@@ -2,7 +2,7 @@
 """Golden check for the embedded WinuxCmd completion assets.
 
 Regenerates the completion TOMLs and the Rust asset module from the committed
-`--help` transcript corpus (`crates/niubash-runtime/tests/fixtures/
+`--help` transcript corpus (`crates/native-shell-runtime/tests/fixtures/
 winuxcmd-help-corpus/`) and diffs both against what is committed. Drift means
 either the generator changed without regenerating the assets, or the assets
 were hand-edited — both must be resolved by re-running the generator.
@@ -24,9 +24,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GENERATOR = ROOT / "scripts" / "generate-winuxcmd-completions.py"
-CORPUS = ROOT / "crates" / "niubash-runtime" / "tests" / "fixtures" / "winuxcmd-help-corpus"
-ASSETS = ROOT / "crates" / "niubash-runtime" / "assets" / "completions" / "winuxcmd"
-RUST_MODULE = ROOT / "crates" / "niubash-runtime" / "src" / "completion" / "winuxcmd_assets.rs"
+CORPUS = ROOT / "crates" / "native-shell-runtime" / "tests" / "fixtures" / "winuxcmd-help-corpus"
+ASSETS = ROOT / "crates" / "native-shell-runtime" / "assets" / "completions" / "winuxcmd"
+RUST_MODULE = ROOT / "crates" / "native-shell-runtime" / "src" / "completion" / "winuxcmd_assets.rs"
 
 
 def main() -> int:

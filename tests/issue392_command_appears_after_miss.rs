@@ -1,8 +1,8 @@
-//! niubash#392: transient `command not found` (127) for an existing, unrelated
+//! native-shell#392: transient `command not found` (127) for an existing, unrelated
 //! command, coinciding with a concurrent wpm/winuxcmd update.
 //!
-//! Reporter shape: inside ONE `niu -c` invocation a loop calling `awk` failed
-//! 5/5 with `niu: line 1: awk: command not found`, healed in the next process,
+//! Reporter shape: inside ONE `native-shell -c` invocation a loop calling `awk` failed
+//! 5/5 with `native-shell: line 1: awk: command not found`, healed in the next process,
 //! while `.wpm` mtimes showed an update swapping the command layer in the same
 //! window. `awk` is a WPM-managed link; wpm replaces links by unlink+create
 //! (WinuxCmd#1188/#1206), so a lookup that lands in the absent window decides
@@ -14,7 +14,7 @@
 //! poisoned the rest of the process. The fix stops memoizing misses and
 //! validates a cached listing against the directory mtime before concluding a
 //! miss. These tests run the deterministic no-race shape of that mechanism
-//! through the real `niu` binary, so a niubash build wired to a stale
+//! through the real `native-shell` binary, so a native-shell build wired to a stale
 //! (pre-#769) rubash fails here even though the engine repo is fixed.
 //!
 //! Contract:
@@ -31,15 +31,19 @@ use std::process::Command;
 const PROBE_A: &str = "niu392probe_a";
 const PROBE_B: &str = "niu392probe_b";
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
@@ -89,8 +93,8 @@ fn install_executable(dir: &Path, donor: &Path, name: &str) -> PathBuf {
     target
 }
 
-fn run_niu_with_probe_dir(
-    niu: &Path,
+fn run_native_shell_with_probe_dir(
+    native_shell: &Path,
     probe_dir: &Path,
     donor: &Path,
     script: &str,
@@ -101,7 +105,7 @@ fn run_niu_with_probe_dir(
         path.push(sep);
         path.push_str(&existing);
     }
-    let output = Command::new(niu)
+    let output = Command::new(native_shell)
         .arg("-c")
         .arg(script)
         .env("PATH", path)
@@ -111,7 +115,7 @@ fn run_niu_with_probe_dir(
         .env("NIU392_DONOR", donor)
         .env("NIU392_DIR", probe_dir)
         .output()
-        .expect("spawn niu -c");
+        .expect("spawn native-shell -c");
     (
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -127,11 +131,11 @@ fn probe_call(name: &str) -> String {
 
 /// The deterministic #392 shape, no race needed: miss a name, create the
 /// executable in the already-consulted PATH directory, call again - all in one
-/// `niu -c` process. GNU bash finds it immediately; the pre-#769 engine kept
+/// `native-shell -c` process. GNU bash finds it immediately; the pre-#769 engine kept
 /// answering 127 for the life of the process (the reported 5/5 loop).
 #[test]
 fn command_appears_after_miss_in_one_process() {
-    let niu = niu_binary();
+    let native_shell = native_shell_binary();
     let dir = unique_scratch_dir("appear");
     let donor = donor_exe();
 
@@ -150,7 +154,8 @@ fn command_appears_after_miss_in_one_process() {
         )
     );
 
-    let (stdout, stderr, _code) = run_niu_with_probe_dir(&niu, &dir, &donor, &script);
+    let (stdout, stderr, _code) =
+        run_native_shell_with_probe_dir(&native_shell, &dir, &donor, &script);
     let _ = std::fs::remove_dir_all(&dir);
 
     let rcs: Vec<&str> = stdout.lines().collect();
@@ -175,11 +180,12 @@ fn command_appears_after_miss_in_one_process() {
 /// fails", and pins the reporter's ability to trust a 127).
 #[test]
 fn genuinely_absent_name_still_fails_127_twice() {
-    let niu = niu_binary();
+    let native_shell = native_shell_binary();
     let dir = unique_scratch_dir("absent");
 
     let script = format!("{}{}", probe_call(PROBE_A), probe_call(PROBE_A));
-    let (stdout, stderr, _code) = run_niu_with_probe_dir(&niu, &dir, &donor_exe(), &script);
+    let (stdout, stderr, _code) =
+        run_native_shell_with_probe_dir(&native_shell, &dir, &donor_exe(), &script);
     let _ = std::fs::remove_dir_all(&dir);
 
     let rcs: Vec<&str> = stdout.lines().collect();
@@ -196,7 +202,7 @@ fn genuinely_absent_name_still_fails_127_twice() {
 /// must not hold the primed "this is the whole directory" answer).
 #[test]
 fn second_name_added_after_primed_listing_resolves() {
-    let niu = niu_binary();
+    let native_shell = native_shell_binary();
     let dir = unique_scratch_dir("primed");
     let donor = donor_exe();
 
@@ -216,7 +222,8 @@ fn second_name_added_after_primed_listing_resolves() {
         )
     );
 
-    let (stdout, stderr, _code) = run_niu_with_probe_dir(&niu, &dir, &donor, &script);
+    let (stdout, stderr, _code) =
+        run_native_shell_with_probe_dir(&native_shell, &dir, &donor, &script);
     let _ = std::fs::remove_dir_all(&dir);
 
     let rcs: Vec<&str> = stdout.lines().collect();
@@ -232,7 +239,7 @@ fn second_name_added_after_primed_listing_resolves() {
 /// repeated calls - the miss-path hardening must not disturb the hit path.
 #[test]
 fn existing_command_keeps_resolving_repeatedly() {
-    let niu = niu_binary();
+    let native_shell = native_shell_binary();
     let dir = unique_scratch_dir("stable");
     let donor = donor_exe();
 
@@ -242,7 +249,8 @@ fn existing_command_keeps_resolving_repeatedly() {
         "n=0; while [ $n -lt 20 ]; do\n{}n=$((n+1)); done",
         probe_call(PROBE_A)
     );
-    let (stdout, stderr, _code) = run_niu_with_probe_dir(&niu, &dir, &donor, &script);
+    let (stdout, stderr, _code) =
+        run_native_shell_with_probe_dir(&native_shell, &dir, &donor, &script);
     let _ = std::fs::remove_dir_all(&dir);
 
     let rcs: Vec<&str> = stdout.lines().collect();

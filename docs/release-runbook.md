@@ -34,34 +34,38 @@ rules and the failure catalog earned by the v1.4.0 ignition campaign
    must match `^v\d+\.\d+\.\d+$` AND the `Cargo.toml` `version` at that
    commit.
 5. **`workflow_dispatch` is not the release trigger, but it IS the
-   re-fly path** — it requires `winuxcmd_tag` and `winuxcmd_sha256`
-   inputs, checks out an existing tag, and publishes through the same
+   re-fly path** — it needs no `tag` input (the version comes from
+   `Cargo.toml`) and takes an optional `native_cmd_tag` (empty = the
+   committed pin); it checks out an existing tag, and publishes through the same
    `release` job. Real releases go by tag-push; a failed run on a
    correct tag is re-flown by dispatching that tag, because re-pushing
-   the tag is blocked by the ruleset (#425).
+   the tag is blocked by the ruleset (#425). A dispatch may also run
+   **before** the tag exists: the version comes from `Cargo.toml`, the
+   per-job `git checkout` then falls back to the checked-out ref, and
+   `action-gh-release` creates the tag on `github.sha`.
 
 ## Pre-flight checklist (all boxes before cutting the tag)
 
 - [ ] `origin/master` CI green (build-and-test, both repos if rubash
-      moved — niubash vendors rubash via `[patch]` + git dependency,
+      moved — native-shell vendors rubash via `[patch]` + git dependency,
       and its lockfile must carry the matching rubash version; see the
       2026-10-10 lock incident: bump rubash version → one-line lock
       sync).
 - [ ] Open issues at zero on the blocking repos (owner gate, 2026-10-12).
 - [ ] Pins updated and mutually consistent:
-      `scripts/release/winuxcmd-pin.json` (version + both SHA-256),
-      `scripts/release/preinstall.json` (package pins incl. niugit —
+      
+      `scripts/release/preinstall.json` (package pins incl. native-git —
       a wpm-source index update without this pin = fail-open skip =
       verify throw, run 4).
 - [ ] crates.io: the workspace versions bumped together, the
-      `rubash`/`niubash-runtime` requirement strings in dependents
+      `rubash`/`native-shell-runtime` requirement strings in dependents
       updated, and the release secret name verified against the repo
       settings (`CRATES_IO_TOKEN`, mapped in release.yml).
 
-- [ ] For the current WinuxCmd pin, download both `*-win-x64.zip` and
-      `*-win-arm64.zip`, verify their SHA-256 values against the GitHub release
-      API, and keep the exact values in `scripts/release/winuxcmd-pin.json`.
-   The v1.1.10 pin was verified on 2026-10-16.
+- [ ] Confirm which command-layer release the bundle will carry. Nothing is
+      committed: the release follows `JayWanX/native-cmd`'s latest published
+      release, so check that page first. Pass `native_cmd_tag` on a dispatch
+      to pin a specific one.
 - [ ] CHANGELOG folded for everything user-visible since the last tag.
 - [ ] Local install smoke of the previous release still upgrades (the
       installer lane has its own R1-R7 risk list, docs/store/).
@@ -70,7 +74,7 @@ rules and the failure catalog earned by the v1.4.0 ignition campaign
 
 ```sh
 # 0. everything merged, origin/master = <sha>, CI green
-gh api repos/unixwin/niubash/commits/master --jq .sha   # note <sha>
+gh api repos/JayWanX/native-shell/commits/master --jq .sha   # note <sha>
 
 # 1. cut the tag — one shot: the ruleset rejects moving a pushed v* tag
 git ls-remote --tags origin vX.Y.Z   # must be EMPTY before you push
@@ -78,12 +82,11 @@ git tag vX.Y.Z <sha>
 git push origin vX.Y.Z        # this push IS the trigger
 
 #    re-fly a failed run on the same (correct) tag instead of re-pushing:
-#    gh workflow run release.yml -R unixwin/niubash -f tag=vX.Y.Z \
-#      -f winuxcmd_tag=vA.B.C \
-#      -f winuxcmd_sha256='{"windows-x64":"…","windows-arm64":"…"}'
+#    gh workflow run release.yml -R JayWanX/native-shell \
+#      -f native_cmd_tag=vA.B.C
 
 # 2. watch
-gh run list --repo unixwin/niubash --workflow=release.yml --limit 1
+gh run list --repo JayWanX/native-shell --workflow=release.yml --limit 1
 ```
 
 Expected wall time ~45-60 min (perfbudget alone measured 2351 s on run
@@ -111,8 +114,8 @@ the extractor sample and compare block shape).
 | Symptom | Root cause | Fix |
 | --- | --- | --- |
 | checkout/journey fails on files that exist on master | tag cut before fixes merged (iron rule 1) | cut the NEXT patch tag on master — the pushed tag is immutable (#425) |
-| `Required input 'winuxcmd_tag'` on dispatch | wrong trigger; releases go by tag-push | push the tag |
-| preinstall verify throw, niugit missing | wpm index updated, `preinstall.json` pin not | sync the pin |
+| `Invalid release tag` on dispatch | the `tag` input disagrees with `Cargo.toml` | leave it empty |
+| preinstall verify throw, native-git missing | wpm index updated, `preinstall.json` pin not | sync the pin |
 | crates publish "secret not found" | secret name mismatch | map `CRATES_IO_TOKEN` |
 | crates "already uploaded" on retry | expected — tolerated by pattern in release.yml | no-op |
 | armv7 "linker not found" | NDK r19+ name is `armv7a-linux-androideabi*-clang` | #327, keep |
@@ -122,7 +125,7 @@ the extractor sample and compare block shape).
 
 ## After green (the downstream chain, in order)
 
-1. `wpm-source` index PR: niubash vX.Y.Z entry (the release URL +
+1. `wpm-source` index PR: native-shell vX.Y.Z entry (the release URL +
    SHA-256 from `SHA256SUMS`).
 2. winget: upgrade the open manifest PR to vX.Y.Z in place
    (InstallerSha256 straight from `SHA256SUMS`; winget convention wants

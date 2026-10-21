@@ -7,7 +7,7 @@
 # deprecated-interface block (`_omb_deprecate_declare 20000 SDIRS …`,
 # `_omb_deprecate_function 20000 _echo_usage …`, `_omb_util_print`) is
 # deliberately NOT reproduced here: those are framework-lib calls that the
-# REAL oh-my-bash loader provides through its own lib chain, and niubash
+# REAL oh-my-bash loader provides through its own lib chain, and native-shell
 # ships no shim layer for them (owner ruling 2026-10-02, design doc
 # appendix D — framework assets load through the framework loader; a
 # manually sourced framework plugin fails with the same missing-function

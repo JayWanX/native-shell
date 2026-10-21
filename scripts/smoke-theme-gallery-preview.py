@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Offline ConPTY golden: the theme gallery's live prompt preview.
 
-niubash#170 owner shape: when the gallery highlight moves to a theme, the
+native-shell#170 owner shape: when the gallery highlight moves to a theme, the
 pane below the menu renders that theme's ACTUAL prompt — the real PS1
 expanded with that theme's config (multi-line structure, colors, right
 alignment, powerline glyphs) — like lazy.nvim's floating preview. This probe
-walks a real `niu setup` gallery over a real ConPTY (pywinpty + pyte, the
+walks a real `native-shell setup` gallery over a real ConPTY (pywinpty + pyte, the
 scripts/smoke-wizard-journey.py pattern) and snapshots the preview block for
 every representative theme class:
 
@@ -28,7 +28,7 @@ Artifacts (journey manifest format, docs/journey-gate.md): verdict.json
 
 Exit codes: 0 pass, 1 fail, 2 skip (missing python deps / pty).
 
-Usage: python scripts/smoke-theme-gallery-preview.py <niu.exe> [sandbox-root]
+Usage: python scripts/smoke-theme-gallery-preview.py <native-shell.exe> [sandbox-root]
 """
 
 import json
@@ -86,7 +86,7 @@ THEMES = {
 
 
 class Session:
-    """A niu.exe under ConPTY with a pyte-parsed screen."""
+    """A native-shell.exe under ConPTY with a pyte-parsed screen."""
 
     def __init__(self, argv, cwd, env, cols=120, rows=40):
         self.proc = PtyProcess.spawn(argv, cwd=str(cwd), env=env,
@@ -199,7 +199,7 @@ def build_source_tree(staged: Path):
 
 def run_golden(exe: Path, root: Path) -> None:
     # Absolute sandbox paths are load-bearing: the source registry records
-    # the staged origin verbatim, and the niu children run with cwd=home — a
+    # the staged origin verbatim, and the native-shell children run with cwd=home — a
     # relative root would register a path that degrades from every process
     # whose cwd differs.
     root = root.resolve()
@@ -207,7 +207,7 @@ def run_golden(exe: Path, root: Path) -> None:
     home = root / "home"
     sources = root / "sources"
     staged = root / "staged-oh-my-bash"
-    (home / ".niubash").mkdir(parents=True, exist_ok=True)
+    (home / ".native-shell").mkdir(parents=True, exist_ok=True)
     sources.mkdir(parents=True, exist_ok=True)
     build_source_tree(staged)
 
@@ -223,9 +223,9 @@ def run_golden(exe: Path, root: Path) -> None:
         "TEMP": str(home / "tmp"),
         "TMP": str(home / "tmp"),
         "TERM": "xterm",
-        "NIU_LANG": "en",
-        "NIU_PLUGIN_SOURCES_ROOT": str(sources),
-        "NIU_PLUGIN_SPEC": str(home / ".niubash" / "plugins.toml"),
+        "NATIVE_SHELL_LANG": "en",
+        "NATIVE_SHELL_PLUGIN_SOURCES_ROOT": str(sources),
+        "NATIVE_SHELL_PLUGIN_SPEC": str(home / ".native-shell" / "plugins.toml"),
         "PATH": os.pathsep.join([
             str(Path(exe).parent), system_root + r"\System32", system_root,
         ]),
@@ -236,7 +236,7 @@ def run_golden(exe: Path, root: Path) -> None:
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               timeout=120)
         assert done.returncode == 0, (
-            f"niu {' '.join(verb_args)} failed: "
+            f"native-shell {' '.join(verb_args)} failed: "
             f"{done.stderr.decode(errors='replace')}"
         )
 
@@ -371,11 +371,11 @@ def run_golden(exe: Path, root: Path) -> None:
     finally:
         s.close()
 
-    rc = (home / ".niubashrc")
+    rc = (home / ".native-shellrc")
     rc_text = rc.read_text(encoding="utf-8") if rc.is_file() else ""
     check("the picked theme is in the rc", "OSH_THEME='twoline'" in rc_text,
           rc_text[-400:])
-    # Isolation (niubash#170): renders ran in throwaway children — the
+    # Isolation (native-shell#170): renders ran in throwaway children — the
     # gallery browse must not have written any other theme into the rc, and
     # no OSH_THEME leaked into the environment files the sandbox keeps.
     stray = [name for name in THEMES
@@ -385,7 +385,7 @@ def run_golden(exe: Path, root: Path) -> None:
     pass_count = sum(1 for entry in checks if entry["pass"])
     verdict = {
         "gate": "theme-gallery-preview-golden",
-        "ticket": "niubash#170",
+        "ticket": "native-shell#170",
         "binary": str(exe),
         "checks": checks,
         "preview_snapshots": previews,
@@ -397,7 +397,7 @@ def run_golden(exe: Path, root: Path) -> None:
     }
     (root / "verdict.json").write_text(
         json.dumps(verdict, indent=2, ensure_ascii=False), encoding="utf-8")
-    lines = ["THEME GALLERY PREVIEW GOLDEN (niubash#170)", ""]
+    lines = ["THEME GALLERY PREVIEW GOLDEN (native-shell#170)", ""]
     for entry in checks:
         mark = "PASS" if entry["pass"] else "FAIL"
         lines.append(f"  [{mark}] {entry['name']} {entry['detail']}".rstrip())
@@ -423,7 +423,7 @@ def main() -> int:
         return 2
     exe = Path(args[0])
     if not exe.is_file():
-        print(f"SKIP: niu binary not found: {exe}")
+        print(f"SKIP: native-shell binary not found: {exe}")
         return 2
     parent = Path(args[1]) if len(args) > 1 else None
     if parent is not None:

@@ -1,13 +1,13 @@
-//! unixwin/niubash#431: `niu -c` and stdin scripts accepted `(A;B);)` — the
+//! JayWanX/native-shell#431: `native-shell -c` and stdin scripts accepted `(A;B);)` — the
 //! subshell ran and the stray `)` was silently dropped (rc 0) — while GNU
 //! bash 5.3.0 rejects the shape in every mode with `syntax error near
 //! unexpected token ')'`, rc 2, and the subshell unexecuted.
 //!
 //! Oracle note: the earliest "GNU 5.3 (msys) tolerates the tail" record was
 //! produced against `winuxcmd/usr/bin/bash.exe`, which is a launcher shim
-//! that spawns niu itself — the tolerant verdict was niu's own behavior
+//! that spawns native-shell itself — the tolerant verdict was native-shell's own behavior
 //! echoed back (rubash#852). The authority is WSL GNU bash 5.3.0 (re-run
-//! 2026-10-19, bash copied to argv[0] `niu` for name-identical capture):
+//! 2026-10-19, bash copied to argv[0] `native-shell` for name-identical capture):
 //! every form — `-c` single-line, `-c` with the newline after the `;`,
 //! stdin script single/multi-line, script file — rejects, rc 2; a list
 //! terminated by `;`+newline before the stray token still runs first
@@ -26,24 +26,28 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
 fn run_c(command: &str) -> (String, String, i32) {
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg("-c")
         .arg(command)
         .output()
-        .expect("spawn niu -c");
+        .expect("spawn native-shell -c");
     (
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -51,7 +55,7 @@ fn run_c(command: &str) -> (String, String, i32) {
     )
 }
 
-/// Feed `input` to niu as a non-interactive stdin script (the no-flag `niu`
+/// Feed `input` to native-shell as a non-interactive stdin script (the no-flag `native-shell`
 /// route: GNU shell.c:780-786 read_from_stdin).
 fn run_stdin_script(input: &str) -> (String, String, i32) {
     let dir = std::env::temp_dir().join(format!("niu-issue431-{}", std::process::id()));
@@ -60,10 +64,10 @@ fn run_stdin_script(input: &str) -> (String, String, i32) {
     let input_path = dir.join("input.sh");
     std::fs::write(&input_path, input).expect("write stdin input");
     let stdin = std::fs::File::open(&input_path).expect("open stdin input");
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .stdin(Stdio::from(stdin))
         .output()
-        .expect("spawn niu stdin script");
+        .expect("spawn native-shell stdin script");
     let result = (
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -82,8 +86,8 @@ fn c_stray_close_after_subshell_list_rejects() {
     assert_eq!(
         stderr,
         concat!(
-            "niu: -c: line 1: syntax error near unexpected token `)'\n",
-            "niu: -c: line 1: `(printf a; printf b);)'\n"
+            "native-shell: -c: line 1: syntax error near unexpected token `)'\n",
+            "native-shell: -c: line 1: `(printf a; printf b);)'\n"
         ),
         "GNU-verbatim diagnostic (y.error echoes the input line)"
     );
@@ -100,8 +104,8 @@ fn c_stray_close_newline_form_rejects() {
     assert_eq!(
         stderr,
         concat!(
-            "niu: -c: line 2: syntax error near unexpected token `)'\n",
-            "niu: -c: line 2: `printf b);)'\n"
+            "native-shell: -c: line 2: syntax error near unexpected token `)'\n",
+            "native-shell: -c: line 2: `printf b);)'\n"
         )
     );
     assert_eq!(code, 2);
@@ -158,11 +162,11 @@ fn s_flag_stray_close_rejects() {
     let input_path = dir.join("input.sh");
     std::fs::write(&input_path, "(printf a; printf b);)\n").expect("write stdin input");
     let stdin = std::fs::File::open(&input_path).expect("open stdin input");
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg("-s")
         .stdin(Stdio::from(stdin))
         .output()
-        .expect("spawn niu -s");
+        .expect("spawn native-shell -s");
     assert_eq!(String::from_utf8_lossy(&output.stdout), "");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -184,10 +188,10 @@ fn script_file_stray_close_runs_prefix_then_rejects() {
     let script = dir.join("stray.sh");
     std::fs::write(&script, b"(printf a;\nprintf b);\n)\necho after\n").expect("write script");
 
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg(&script)
         .output()
-        .expect("spawn niu script");
+        .expect("spawn native-shell script");
     assert_eq!(String::from_utf8_lossy(&output.stdout), "ab");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -210,8 +214,8 @@ fn mid_command_stray_close_and_verbatim_echo() {
     assert_eq!(
         stderr,
         concat!(
-            "niu: -c: line 1: syntax error near unexpected token `)'\n",
-            "niu: -c: line 1: `echo a)'\n"
+            "native-shell: -c: line 1: syntax error near unexpected token `)'\n",
+            "native-shell: -c: line 1: `echo a)'\n"
         )
     );
     assert_eq!(code, 2);
@@ -221,8 +225,8 @@ fn mid_command_stray_close_and_verbatim_echo() {
     assert_eq!(
         stderr,
         concat!(
-            "niu: -c: line 1: syntax error near unexpected token `;;'\n",
-            "niu: -c: line 1: `echo a;;'\n"
+            "native-shell: -c: line 1: syntax error near unexpected token `;;'\n",
+            "native-shell: -c: line 1: `echo a;;'\n"
         ),
         "the echo must be the input verbatim, not token-reconstructed"
     );

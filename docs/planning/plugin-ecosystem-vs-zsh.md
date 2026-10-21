@@ -1,14 +1,14 @@
-# Plugin ecosystem: niubash vs zsh — openness audit
+# Plugin ecosystem: native-shell vs zsh — openness audit
 
 Status: planning input for the post-1.0.0 ecosystem roadmap.
-Scope: how open is the niubash/oh-my-niu plugin story compared with the zsh
+Scope: how open is the native-shell/oh-my-native-shell plugin story compared with the zsh
 ecosystem, and which gaps are worth closing first.
 
 ## Verdict
 
 Feature coverage is competitive; **openness is the real gap**. The zsh world
-lets anyone ship a plugin by pushing a git repo; niubash today funnels
-everything through one officially curated bundle (oh-my-niu) and a
+lets anyone ship a plugin by pushing a git repo; native-shell today funnels
+everything through one officially curated bundle (oh-my-native-shell) and a
 manifest-backed registry. That design bought us a permission model and
 reviewed defaults, but it leaves three distribution channels missing.
 
@@ -26,26 +26,26 @@ The zsh ecosystem's superpower is a **zero-metadata convention**: a directory
 with a `.plugin.zsh` file is a plugin. Discovery (awesome lists), loading
 (zinit et al.) and safety (none) are all layered on top by other tools.
 
-## Where niubash is
+## Where native-shell is
 
-- One official bundle (oh-my-niu) with ~40 reviewed packs; manifest declares
+- One official bundle (oh-my-native-shell) with ~40 reviewed packs; manifest declares
   permissions; source packs may only load bundle-local scripts.
 - Process plugins give an ABI for external adapters (debug bridges, providers).
-- Local customization lives in `~/.niubash/custom` (manual file placement).
+- Local customization lives in `~/.native-shell/custom` (manual file placement).
 - External completion definitions already load from TOML, and the
   manifest-backed registry is the control plane.
 
 ## The openness gaps
 
 1. **No third-party distribution channel.** There is no
-   `niu plugin add <git-url>`; the only blessed bundle is oh-my-niu.
+   `native-shell plugin add <git-url>`; the only blessed bundle is oh-my-native-shell.
 2. **Single-curator registry.** New packs must pass the official review
    queue; there is no federation of community indexes.
-3. **Heavy authoring convention.** A zsh plugin is a file; an oh-my-niu pack
+3. **Heavy authoring convention.** A zsh plugin is a file; an oh-my-native-shell pack
    is manifest + layout + review. Nothing accepts "just a directory".
 4. **No theme long tail.** Themes exist but community contribution has no
    self-serve path.
-5. **Discovery is zero.** No index page, no `niu plugin search`.
+5. **Discovery is zero.** No index page, no `native-shell plugin search`.
 
 ## What we should NOT copy
 
@@ -55,10 +55,10 @@ with a `.plugin.zsh` file is a plugin. Discovery (awesome lists), loading
 
 ## Roadmap proposal
 
-- **P0 — third-party install channel.** `niu plugin add <git-url>[@ref]`
-  clones into `~/.niubash/external/<name>`, registers as `external_bundle`
-  (untrusted), and requires an explicit `niu plugin trust <name>` before
-  source packs activate. `niu plugin list/remove/search` round it out.
+- **P0 — third-party install channel.** `native-shell plugin add <git-url>[@ref]`
+  clones into `~/.native-shell/external/<name>`, registers as `external_bundle`
+  (untrusted), and requires an explicit `native-shell plugin trust <name>` before
+  source packs activate. `native-shell plugin list/remove/search` round it out.
 - **P1 — federated indexes.** `index.toml` gains sources: official by
   default, user-added git/URL indexes appended. Discovery without curation.
 - **P2 — classic mode.** Accept a plain directory (or single `.winux` file)

@@ -1,4 +1,4 @@
-//! Windows-native host contract tests for the `niu -c` surface.
+//! Windows-native host contract tests for the `native-shell -c` surface.
 //!
 //! These tests intentionally exercise the built binary instead of internal
 //! helpers: this is the contract humans and agents rely on.
@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
@@ -17,7 +17,11 @@ fn niu_binary() -> PathBuf {
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
@@ -27,7 +31,7 @@ fn cwd_cd_pwd_and_windows_child_process_agree() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-cwd");
+    let temp = unique_temp_dir("native-shell-host-cwd");
     let home = temp.join("home");
     let start = temp.join("start");
     let target = temp.join("target");
@@ -57,12 +61,12 @@ fn cwd_cd_pwd_and_windows_child_process_agree() {
 
 #[test]
 fn noninteractive_history_does_not_load_or_write_the_host_history_file() {
-    let temp = unique_temp_dir("niubash-host-history-provider");
+    let temp = unique_temp_dir("native-shell-host-history-provider");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
-    let history = home.join(".niubash_history");
+    let history = home.join(".native-shell_history");
     std::fs::write(&history, "first command\nsecond command\n").unwrap();
 
     let output = run_niu("history; echo rc=$?", &start, &home, &[]);
@@ -88,7 +92,7 @@ fn noninteractive_history_does_not_load_or_write_the_host_history_file() {
 
 #[test]
 fn noninteractive_history_files_require_explicit_read_and_write() {
-    let temp = unique_temp_dir("niubash-explicit-history");
+    let temp = unique_temp_dir("native-shell-explicit-history");
     let home = temp.join("home");
     std::fs::create_dir_all(&home).unwrap();
     let history = temp.join("input-history");
@@ -110,23 +114,23 @@ fn noninteractive_history_files_require_explicit_read_and_write() {
         normalize_text(&std::fs::read(&written).unwrap()),
         "seed-entry\nsession-entry"
     );
-    assert!(!home.join(".niubash_history").exists());
+    assert!(!home.join(".native-shell_history").exists());
     let _ = std::fs::remove_dir_all(temp);
 }
 
 #[test]
 fn script_and_stdin_history_do_not_load_the_interactive_history_file() {
-    let temp = unique_temp_dir("niubash-script-history-isolation");
+    let temp = unique_temp_dir("native-shell-script-history-isolation");
     let home = temp.join("home");
     std::fs::create_dir_all(&home).unwrap();
-    let history = home.join(".niubash_history");
+    let history = home.join(".native-shell_history");
     std::fs::write(&history, "private-interactive-entry\n").unwrap();
     let script = temp.join("probe.sh");
     let source = "history; history -s script-entry; history; history -c\n";
     std::fs::write(&script, source).unwrap();
 
     for from_stdin in [false, true] {
-        let mut command = Command::new(niu_binary());
+        let mut command = Command::new(native_shell_binary());
         command
             .current_dir(&temp)
             .env("HOME", &home)
@@ -150,7 +154,7 @@ fn script_and_stdin_history_do_not_load_the_interactive_history_file() {
 
 #[test]
 fn command_mode_runs_when_history_file_cannot_be_created() {
-    let temp = unique_temp_dir("niubash-host-history-fallback");
+    let temp = unique_temp_dir("native-shell-host-history-fallback");
     let home = temp.join("home-file");
     let start = temp.join("start");
     std::fs::create_dir_all(&temp).unwrap();
@@ -169,7 +173,7 @@ fn command_mode_runs_when_history_file_cannot_be_created() {
     let _ = std::fs::remove_dir_all(temp);
 }
 
-/// niubash#134: a history *file* that exists but cannot be opened (restricted
+/// native-shell#134: a history *file* that exists but cannot be opened (restricted
 /// token sandbox reports os error 5; a directory in its place fails the same
 /// way) must degrade to in-memory history instead of aborting startup. The
 /// `-c` one-shot contract — exact stdout, empty stderr, rc 0 — is what agent
@@ -177,14 +181,14 @@ fn command_mode_runs_when_history_file_cannot_be_created() {
 /// load_history() tolerates every history-file read failure.
 #[test]
 fn command_mode_runs_when_history_path_is_a_directory() {
-    let temp = unique_temp_dir("niubash-host-history-directory");
+    let temp = unique_temp_dir("native-shell-host-history-directory");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
     // A directory where the history file should be: opening it for read+write
     // fails with access denied on Windows (os error 5) and EISDIR elsewhere.
-    std::fs::create_dir_all(home.join(".niubash_history")).unwrap();
+    std::fs::create_dir_all(home.join(".native-shell_history")).unwrap();
 
     let output = run_niu("printf '%s' dir-ok; echo rc=$?", &start, &home, &[]);
     assert_success(&output, "history directory fallback command mode");
@@ -194,7 +198,7 @@ fn command_mode_runs_when_history_path_is_a_directory() {
         "",
         "degradation must be log::warn only, never stderr"
     );
-    assert!(home.join(".niubash_history").is_dir());
+    assert!(home.join(".native-shell_history").is_dir());
 
     let _ = std::fs::remove_dir_all(temp);
 }
@@ -205,7 +209,7 @@ fn script_mode_keeps_engine_history_data_plane() {
     // `set -H`, fc, and the history builtin behave as under rubash/GNU. The
     // REPL path (enter_interactive) remains the place where engine history
     // storage is disabled in favor of reedline.
-    let temp = unique_temp_dir("niubash-host-history-owner");
+    let temp = unique_temp_dir("native-shell-host-history-owner");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -225,13 +229,13 @@ fn script_mode_keeps_engine_history_data_plane() {
 
 #[test]
 fn bash_style_noexec_option_reaches_rubash() {
-    let temp = unique_temp_dir("niubash-host-noexec");
+    let temp = unique_temp_dir("native-shell-host-noexec");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .args(["-n", "-c", "printf should-not-run"])
         .current_dir(&start)
         .env("HOME", &home)
@@ -249,13 +253,13 @@ fn bash_style_noexec_option_reaches_rubash() {
 
 #[test]
 fn bash_style_errexit_option_reaches_rubash() {
-    let temp = unique_temp_dir("niubash-host-errexit");
+    let temp = unique_temp_dir("native-shell-host-errexit");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .args(["-e", "-c", "false; printf should-not-run"])
         .current_dir(&start)
         .env("HOME", &home)
@@ -270,13 +274,13 @@ fn bash_style_errexit_option_reaches_rubash() {
 
 #[test]
 fn bash_style_login_option_after_c_reaches_rubash() {
-    let temp = unique_temp_dir("niubash-host-c-login");
+    let temp = unique_temp_dir("native-shell-host-c-login");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .args(["-c", "-l", "printf '%s\\n' hi"])
         .current_dir(&start)
         .env("HOME", &home)
@@ -306,7 +310,7 @@ fn slash_drive_input_cd_works_and_pwd_renders_persona_form() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-slash-drive");
+    let temp = unique_temp_dir("native-shell-host-slash-drive");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -328,7 +332,7 @@ fn slash_drive_root_cd_switches_to_drive_root() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-slash-drive-root-cd");
+    let temp = unique_temp_dir("native-shell-host-slash-drive-root-cd");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -367,10 +371,10 @@ fn slash_drive_mktemp_template_creates_file() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-slash-drive-mktemp");
+    let temp = unique_temp_dir("native-shell-host-slash-drive-mktemp");
     let home = temp.join("home");
     let start = temp.join("start");
-    let output_dir = temp.join("backups").join("niubash-phase12");
+    let output_dir = temp.join("backups").join("native-shell-phase12");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
@@ -408,7 +412,7 @@ fn slash_drive_mktemp_template_creates_file() {
 
 #[test]
 fn winshrc_does_not_run_for_non_interactive_modes() {
-    let temp = unique_temp_dir("niubash-host-winshrc");
+    let temp = unique_temp_dir("native-shell-host-winshrc");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -428,17 +432,17 @@ echo SHOULD_NOT_PRINT
 
     let script = temp.join("script.sh");
     std::fs::write(&script, "echo script-ok\n").unwrap();
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg(&script)
         .current_dir(&start)
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .output()
-        .unwrap_or_else(|err| panic!("spawn niubash script file: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell script file: {err}"));
     assert_success(&output, "script-file .winshrc isolation");
     assert_eq!(normalize_text(&output.stdout), "script-ok");
 
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .current_dir(&start)
         .env("HOME", &home)
         .env("USERPROFILE", &home)
@@ -446,7 +450,7 @@ echo SHOULD_NOT_PRINT
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niubash stdin script: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell stdin script: {err}"));
     child
         .stdin
         .as_mut()
@@ -462,7 +466,7 @@ echo SHOULD_NOT_PRINT
 
 #[test]
 fn command_mode_sets_bash_execution_string() {
-    let temp = unique_temp_dir("niubash-host-bash-execution-string");
+    let temp = unique_temp_dir("native-shell-host-bash-execution-string");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -477,8 +481,8 @@ fn command_mode_sets_bash_execution_string() {
 }
 
 #[test]
-fn rubash_executor_sees_niu_shell_name() {
-    let temp = unique_temp_dir("niubash-host-shell-name");
+fn rubash_executor_sees_native_shell_shell_name() {
+    let temp = unique_temp_dir("native-shell-host-shell-name");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -489,7 +493,7 @@ fn rubash_executor_sees_niu_shell_name() {
     assert!(
         normalize_text(&output.stdout)
             .to_ascii_lowercase()
-            .contains("niu"),
+            .contains("native-shell"),
         "stdout was {:?}",
         normalize_text(&output.stdout)
     );
@@ -498,8 +502,8 @@ fn rubash_executor_sees_niu_shell_name() {
 }
 
 #[test]
-fn niu_reports_niu_as_interactive_shell_zero() {
-    let temp = unique_temp_dir("niubash-host-shell-zero");
+fn native_shell_reports_native_shell_as_interactive_shell_zero() {
+    let temp = unique_temp_dir("native-shell-host-shell-zero");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -507,14 +511,14 @@ fn niu_reports_niu_as_interactive_shell_zero() {
 
     let output = run_niu("printf '%s' \"$0\"", &start, &home, &[]);
     assert_success(&output, "shell $0");
-    assert_eq!(normalize_text(&output.stdout), "niu");
+    assert_eq!(normalize_text(&output.stdout), "native-shell");
 
     let _ = std::fs::remove_dir_all(temp);
 }
 
 #[test]
 fn interactive_alias_defaults_and_explicit_disable_reach_command_mode() {
-    let temp = unique_temp_dir("niubash-host-interactive-alias");
+    let temp = unique_temp_dir("native-shell-host-interactive-alias");
     std::fs::create_dir_all(&temp).unwrap();
     let probe = "if shopt -q expand_aliases; then printf on; else printf off; fi";
     for (arguments, expected) in [
@@ -533,14 +537,14 @@ fn interactive_alias_defaults_and_explicit_disable_reach_command_mode() {
             "alias-done",
         ),
     ] {
-        let output = Command::new(niu_binary())
+        let output = Command::new(native_shell_binary())
             .args(&arguments)
             .current_dir(&temp)
             .env("HOME", &temp)
             .env("USERPROFILE", &temp)
             .env_remove("BASH_ENV")
             .env_remove("ENV")
-            .env_remove("NIU_INVOKED_AS")
+            .env_remove("NATIVE_SHELL_INVOKED_AS")
             .env_remove("BASH_ARGV0")
             .output()
             .unwrap();
@@ -553,7 +557,7 @@ fn interactive_alias_defaults_and_explicit_disable_reach_command_mode() {
 
 #[test]
 fn invocation_face_from_argv0_preserves_help_version_and_name_precedence() {
-    let temp = unique_temp_dir("niubash-host-argv0-face");
+    let temp = unique_temp_dir("native-shell-host-argv0-face");
     let home = temp.join("home");
     let bin = temp.join("bin");
     std::fs::create_dir_all(&home).unwrap();
@@ -566,12 +570,12 @@ fn invocation_face_from_argv0_preserves_help_version_and_name_precedence() {
             .current_dir(&home)
             .env("HOME", &home)
             .env("USERPROFILE", &home)
-            .env_remove("NIU_INVOKED_AS")
+            .env_remove("NATIVE_SHELL_INVOKED_AS")
             .env_remove("BASH_ARGV0")
             .env_remove("BASH_ENV")
             .env_remove("ENV");
         if let Some(face) = forwarded {
-            command.env("NIU_INVOKED_AS", face);
+            command.env("NATIVE_SHELL_INVOKED_AS", face);
         }
         let output = command
             .output()
@@ -593,7 +597,7 @@ fn invocation_face_from_argv0_preserves_help_version_and_name_precedence() {
             face.to_string()
         };
         let target = bin.join(file_name);
-        std::fs::copy(niu_binary(), &target).unwrap();
+        std::fs::copy(native_shell_binary(), &target).unwrap();
 
         let stdout = run(&target, &["--help"], None);
         assert!(
@@ -605,45 +609,45 @@ fn invocation_face_from_argv0_preserves_help_version_and_name_precedence() {
             "{face} --help usage did not name the invocation face:\n{stdout}"
         );
         assert!(
-            !stdout.contains("Niubash ") && !stdout.contains("Usage:  niu"),
+            !stdout.contains("Native Shell ") && !stdout.contains("Usage:  native-shell"),
             "{face} --help leaked the product help:\n{stdout}"
         );
 
         let stdout = run(&target, &["--version"], None);
         assert!(
-            stdout.contains("GNU bash, version") && !stdout.contains("Niubash "),
+            stdout.contains("GNU bash, version") && !stdout.contains("Native Shell "),
             "{face} --version did not print the GNU version:\n{stdout}"
         );
 
         for forwarded in [
             None,
             Some(if face == "bash" { "sh" } else { "bash" }),
-            Some("niu"),
+            Some("native-shell"),
         ] {
             let expected = forwarded.unwrap_or(face);
             if forwarded.is_some() {
                 let stdout = run(&target, &["--help"], forwarded);
-                if expected == "niu" {
+                if expected == "native-shell" {
                     assert!(
-                        stdout.contains("Niubash ") && !stdout.contains("GNU bash, version"),
-                        "{face} with NIU_INVOKED_AS=niu --help:\n{stdout}"
+                        stdout.contains("Native Shell ") && !stdout.contains("GNU bash, version"),
+                        "{face} with NATIVE_SHELL_INVOKED_AS=native-shell --help:\n{stdout}"
                     );
                 } else {
                     assert!(
                         stdout.contains(&format!("Usage:\t{expected} ")),
-                        "{face} with NIU_INVOKED_AS={expected}:\n{stdout}"
+                        "{face} with NATIVE_SHELL_INVOKED_AS={expected}:\n{stdout}"
                     );
                 }
                 let stdout = run(&target, &["--version"], forwarded);
                 assert_eq!(
-                    stdout.contains("Niubash "),
-                    expected == "niu",
-                    "{face} with NIU_INVOKED_AS={expected} --version:\n{stdout}"
+                    stdout.contains("Native Shell "),
+                    expected == "native-shell",
+                    "{face} with NATIVE_SHELL_INVOKED_AS={expected} --version:\n{stdout}"
                 );
                 assert_eq!(
                     stdout.contains("GNU bash, version"),
-                    expected != "niu",
-                    "{face} with NIU_INVOKED_AS={expected} --version:\n{stdout}"
+                    expected != "native-shell",
+                    "{face} with NATIVE_SHELL_INVOKED_AS={expected} --version:\n{stdout}"
                 );
             }
             for prefix in [vec!["-c"], vec!["-o", "posix", "-c"]] {
@@ -652,30 +656,33 @@ fn invocation_face_from_argv0_preserves_help_version_and_name_precedence() {
                 assert_eq!(
                     run(&target, &args, forwarded),
                     format!("{expected}|"),
-                    "{face} with NIU_INVOKED_AS={forwarded:?}: default $0"
+                    "{face} with NATIVE_SHELL_INVOKED_AS={forwarded:?}: default $0"
                 );
                 args.extend(["explicit-command-name", "argument"]);
                 assert_eq!(
                     run(&target, &args, forwarded),
                     "explicit-command-name|argument",
-                    "{face} with NIU_INVOKED_AS={forwarded:?}: explicit -c name"
+                    "{face} with NATIVE_SHELL_INVOKED_AS={forwarded:?}: explicit -c name"
                 );
             }
         }
     }
 
-    let target = niu_binary();
+    let target = native_shell_binary();
     let stdout = run(&target, &["--help"], None);
-    assert!(stdout.contains("Niubash "), "niu --help: {stdout}");
+    assert!(
+        stdout.contains("Native Shell "),
+        "native-shell --help: {stdout}"
+    );
     let stdout = run(&target, &["--version"], None);
     assert!(
-        stdout.contains("Niubash ") && !stdout.contains("GNU bash, version"),
-        "niu --version: {stdout}"
+        stdout.contains("Native Shell ") && !stdout.contains("GNU bash, version"),
+        "native-shell --version: {stdout}"
     );
     assert_eq!(
         run(&target, &["-c", "printf %s \"$0\""], Some("sh")),
         "sh",
-        "explicit NIU_INVOKED_AS must override the niu executable name"
+        "explicit NATIVE_SHELL_INVOKED_AS must override the native-shell executable name"
     );
 
     let _ = std::fs::remove_dir_all(temp);
@@ -683,7 +690,7 @@ fn invocation_face_from_argv0_preserves_help_version_and_name_precedence() {
 
 #[test]
 fn starship_receives_bash_shell_identity() {
-    let temp = unique_temp_dir("niubash-host-starship-shell");
+    let temp = unique_temp_dir("native-shell-host-starship-shell");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -698,7 +705,7 @@ fn starship_receives_bash_shell_identity() {
 
 #[test]
 fn exit_trap_runs_for_non_interactive_modes() {
-    let temp = unique_temp_dir("niubash-host-exit-trap");
+    let temp = unique_temp_dir("native-shell-host-exit-trap");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -727,18 +734,18 @@ fn exit_trap_runs_for_non_interactive_modes() {
         ),
     )
     .unwrap();
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg(&script)
         .current_dir(&start)
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .output()
-        .unwrap_or_else(|err| panic!("spawn niubash script file: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell script file: {err}"));
     assert_success(&output, "script-file EXIT trap");
     assert_eq!(std::fs::read_to_string(&script_marker).unwrap(), "script");
 
     let stdin_marker = temp.join("stdin-marker");
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .current_dir(&start)
         .env("HOME", &home)
         .env("USERPROFILE", &home)
@@ -746,7 +753,7 @@ fn exit_trap_runs_for_non_interactive_modes() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niubash stdin script: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell stdin script: {err}"));
     child
         .stdin
         .as_mut()
@@ -768,13 +775,13 @@ fn exit_trap_runs_for_non_interactive_modes() {
 
 #[test]
 fn internal_pipeline_helpers_work_when_rubash_is_embedded() {
-    let temp = unique_temp_dir("niubash-host-internal-pipeline");
+    let temp = unique_temp_dir("native-shell-host-internal-pipeline");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .arg("--internal-wc")
         .current_dir(&start)
         .env("HOME", &home)
@@ -783,7 +790,7 @@ fn internal_pipeline_helpers_work_when_rubash_is_embedded() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niubash internal wc: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell internal wc: {err}"));
     child
         .stdin
         .as_mut()
@@ -806,8 +813,8 @@ fn internal_pipeline_helpers_work_when_rubash_is_embedded() {
 }
 
 #[test]
-fn temporary_assignment_reaches_nested_niubash_child() {
-    let temp = unique_temp_dir("niubash-host-nested-env");
+fn temporary_assignment_reaches_nested_native_shell_child() {
+    let temp = unique_temp_dir("native-shell-host-nested-env");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -815,14 +822,14 @@ fn temporary_assignment_reaches_nested_niubash_child() {
 
     let output = run_niu(
         &format!(
-            "FOO_NIU_PROBE=bar {} -c 'printf FOO=$FOO_NIU_PROBE'",
-            shell_quote(&shell_path(&niu_binary()))
+            "FOO_NATIVE_SHELL_PROBE=bar {} -c 'printf FOO=$FOO_NATIVE_SHELL_PROBE'",
+            shell_quote(&shell_path(&native_shell_binary()))
         ),
         &start,
         &home,
         &[],
     );
-    assert_success(&output, "temporary assignment reaches nested niubash");
+    assert_success(&output, "temporary assignment reaches nested native-shell");
     assert_eq!(normalize_text(&output.stdout), "FOO=bar");
 
     let _ = std::fs::remove_dir_all(temp);
@@ -830,7 +837,7 @@ fn temporary_assignment_reaches_nested_niubash_child() {
 
 #[test]
 fn rubash_shopt_is_visible_when_sourcing_startup_rc() {
-    let temp = unique_temp_dir("niubash-host-shopt");
+    let temp = unique_temp_dir("native-shell-host-shopt");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -901,7 +908,7 @@ fn native_backslash_drive_paths_work_for_cd() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-native-path");
+    let temp = unique_temp_dir("native-shell-host-native-path");
     let home = temp.join("home");
     let start = temp.join("start");
     let target = temp.join("target");
@@ -936,7 +943,7 @@ fn drive_only_cd_and_bare_drive_commands_switch_to_drive_root() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-drive-switch");
+    let temp = unique_temp_dir("native-shell-host-drive-switch");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -995,13 +1002,13 @@ fn drive_only_cd_and_bare_drive_commands_switch_to_drive_root() {
 }
 
 #[test]
-#[ignore = "requires real winuxcmd.exe command links; run with --ignored"]
+#[ignore = "requires real native-cmd.exe command links; run with --ignored"]
 fn native_backslash_drive_paths_work_for_winuxcmd() {
     if !cfg!(windows) {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-native-path-winuxcmd");
+    let temp = unique_temp_dir("native-shell-host-native-path-winuxcmd");
     let home = temp.join("home");
     let start = temp.join("start");
     let target = temp.join("target");
@@ -1010,7 +1017,7 @@ fn native_backslash_drive_paths_work_for_winuxcmd() {
     std::fs::create_dir_all(&target).unwrap();
     std::fs::write(target.join("marker.txt"), "ok").unwrap();
     let winuxcmd = real_winuxcmd_for_test()
-        .unwrap_or_else(|| panic!("real winuxcmd.exe with command links is required"));
+        .unwrap_or_else(|| panic!("real native-cmd.exe with command links is required"));
     let target_native_path = native_path(&target);
     let output = run_niu(
         &format!("ls {}", target_native_path),
@@ -1038,7 +1045,7 @@ fn winuxcmd_ls_preserves_unicode_filenames() {
         return;
     };
 
-    let temp = unique_temp_dir("niubash-host-unicode-ls");
+    let temp = unique_temp_dir("native-shell-host-unicode-ls");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -1078,7 +1085,7 @@ fn installed_winuxcmd_links_back_logical_bin_namespaces_without_root_copies() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-installed-winuxcmd-logical-bin");
+    let temp = unique_temp_dir("native-shell-installed-winuxcmd-logical-bin");
     let home = temp.join("home");
     let start = temp.join("start");
     let root = temp.join("root");
@@ -1091,7 +1098,7 @@ fn installed_winuxcmd_links_back_logical_bin_namespaces_without_root_copies() {
         &home,
         &[
             ("WINUXCMD_PATH", native_path(&winuxcmd)),
-            ("NIU_ROOT", native_path(&root)),
+            ("NATIVE_SHELL_ROOT", native_path(&root)),
         ],
     );
     assert_success(&output, "installed WinuxCmd logical bin provider");
@@ -1114,7 +1121,7 @@ fn redirected_recursive_cp_delegates_to_engine_external_layer() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-cp-native");
+    let temp = unique_temp_dir("native-shell-host-cp-native");
     let home = temp.join("home");
     let start = temp.join("start");
     let source = start.join("source");
@@ -1148,7 +1155,7 @@ fn path_lookup_finds_windows_pathextext_commands() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-path");
+    let temp = unique_temp_dir("native-shell-host-path");
     let home = temp.join("home");
     let start = temp.join("start");
     let bin = temp.join("bin");
@@ -1184,19 +1191,19 @@ fn sourced_rc_keeps_winuxcmd_visible_to_windows_children() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-winuxcmd-child-path");
+    let temp = unique_temp_dir("native-shell-host-winuxcmd-child-path");
     let home = temp.join("home");
     let start = temp.join("start");
     let bin = temp.join("winuxcmd");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
-    for name in ["winuxcmd.exe", "ls.exe", "cat.exe", "grep.exe", "ln.exe"] {
+    for name in ["native-cmd.exe", "ls.exe", "cat.exe", "grep.exe", "ln.exe"] {
         std::fs::write(bin.join(name), b"").unwrap();
     }
     std::fs::write(
         home.join(".winshrc"),
-        r#"export PATH="$PATH;C:\does-not-exist-niubash-test""#,
+        r#"export PATH="$PATH;C:\does-not-exist-native-shell-test""#,
     )
     .unwrap();
 
@@ -1208,7 +1215,7 @@ fn sourced_rc_keeps_winuxcmd_visible_to_windows_children() {
         &[
             ("PATH", old_path),
             ("PATHEXT", ".COM;.EXE;.BAT;.CMD".to_string()),
-            ("WINUXCMD_PATH", native_path(&bin.join("winuxcmd.exe"))),
+            ("WINUXCMD_PATH", native_path(&bin.join("native-cmd.exe"))),
         ],
     );
 
@@ -1229,7 +1236,7 @@ fn sourced_rc_keeps_winuxcmd_visible_to_windows_children() {
         expected_winuxcmd_dirs
     );
     assert!(
-        normalized_stdout.contains("c:/does-not-exist-niubash-test"),
+        normalized_stdout.contains("c:/does-not-exist-native-shell-test"),
         "stdout was {stdout:?}"
     );
 
@@ -1242,14 +1249,14 @@ fn exported_env_reaches_windows_child_processes() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-env");
+    let temp = unique_temp_dir("native-shell-host-env");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
     let output = run_niu(
-        "export NIU_HOST_CONTRACT=ok; cmd.exe /C echo %NIU_HOST_CONTRACT%",
+        "export NATIVE_SHELL_HOST_CONTRACT=ok; cmd.exe /C echo %NATIVE_SHELL_HOST_CONTRACT%",
         &start,
         &home,
         &[],
@@ -1277,7 +1284,7 @@ fn exported_env_case_insensitive_pair_reaches_windows_child() {
     // The command string is quoted because an unquoted `|` is parsed by
     // cmd.exe as a pipe before variable expansion, and its right-hand side
     // would then be read as a command name (exit 127).
-    let temp = unique_temp_dir("niubash-host-env-case");
+    let temp = unique_temp_dir("native-shell-host-env-case");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -1306,7 +1313,7 @@ fn tilde_resolves_to_normal_windows_home() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-home");
+    let temp = unique_temp_dir("native-shell-host-home");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -1336,7 +1343,7 @@ fn stdout_stderr_and_exit_code_are_preserved() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-stdio");
+    let temp = unique_temp_dir("native-shell-host-stdio");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -1362,13 +1369,13 @@ fn piped_stdin_without_args_runs_plain_script_surface() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-piped-stdin");
+    let temp = unique_temp_dir("native-shell-host-piped-stdin");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .current_dir(&start)
         .env("HOME", &home)
         .env("USERPROFILE", &home)
@@ -1376,7 +1383,7 @@ fn piped_stdin_without_args_runs_plain_script_surface() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"));
 
     child
         .stdin
@@ -1400,12 +1407,12 @@ fn piped_stdin_without_args_runs_multiline_compound_block() {
     if !cfg!(windows) {
         return;
     }
-    let temp = unique_temp_dir("niubash-host-piped-stdin-multiline");
+    let temp = unique_temp_dir("native-shell-host-piped-stdin-multiline");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .current_dir(&start)
         .env("HOME", &home)
         .env("USERPROFILE", &home)
@@ -1413,7 +1420,7 @@ fn piped_stdin_without_args_runs_multiline_compound_block() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"));
     child
         .stdin
         .as_mut()
@@ -1432,12 +1439,12 @@ fn piped_stdin_without_args_runs_heredoc_as_one_chunk() {
     if !cfg!(windows) {
         return;
     }
-    let temp = unique_temp_dir("niubash-host-piped-stdin-heredoc");
+    let temp = unique_temp_dir("native-shell-host-piped-stdin-heredoc");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .current_dir(&start)
         .env("HOME", &home)
         .env("USERPROFILE", &home)
@@ -1445,7 +1452,7 @@ fn piped_stdin_without_args_runs_heredoc_as_one_chunk() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"));
     child
         .stdin
         .as_mut()
@@ -1464,7 +1471,7 @@ fn piped_stdin_child_script_reads_unconsumed_parent_input() {
     if !cfg!(windows) {
         return;
     }
-    let temp = unique_temp_dir("niubash-host-stdin-child");
+    let temp = unique_temp_dir("native-shell-host-stdin-child");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -1476,16 +1483,16 @@ fn piped_stdin_child_script_reads_unconsumed_parent_input() {
     let script = format!(
         "echo before calling input-line.sub\n${{THIS_SH}} {sub_arg}\nthis line for input-line.sub\necho finished with input-line.sub\n"
     );
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .current_dir(&start)
         .env("HOME", &home)
         .env("USERPROFILE", &home)
-        .env("THIS_SH", shell_path(&niu_binary()))
+        .env("THIS_SH", shell_path(&native_shell_binary()))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"));
     child
         .stdin
         .as_mut()
@@ -1510,7 +1517,7 @@ fn command_mode_grep_capture_stays_plain() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-grep-capture");
+    let temp = unique_temp_dir("native-shell-host-grep-capture");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -1531,13 +1538,13 @@ fn command_mode_pipeline_first_stage_reads_host_stdin() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-pipeline-stdin");
+    let temp = unique_temp_dir("native-shell-host-pipeline-stdin");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .arg("-c")
         .arg("grep alpha | cat")
         .current_dir(&start)
@@ -1547,7 +1554,7 @@ fn command_mode_pipeline_first_stage_reads_host_stdin() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"));
 
     child
         .stdin
@@ -1570,7 +1577,7 @@ fn script_file_args_populate_positional_parameters() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-script-args");
+    let temp = unique_temp_dir("native-shell-host-script-args");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -1582,7 +1589,7 @@ fn script_file_args_populate_positional_parameters() {
     )
     .unwrap();
 
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg(&script)
         .arg("first")
         .arg("second")
@@ -1590,7 +1597,7 @@ fn script_file_args_populate_positional_parameters() {
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .output()
-        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"));
 
     assert_success(&output, "script args");
     let stdout = normalize_text(&output.stdout);
@@ -1608,7 +1615,7 @@ fn script_file_while_read_redirect_does_not_wait_for_parent_stdin() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-script-read-redirect");
+    let temp = unique_temp_dir("native-shell-host-script-read-redirect");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -1621,7 +1628,7 @@ fn script_file_while_read_redirect_does_not_wait_for_parent_stdin() {
     )
     .unwrap();
 
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .arg(&script)
         .current_dir(&start)
         .env("HOME", &home)
@@ -1630,7 +1637,7 @@ fn script_file_while_read_redirect_does_not_wait_for_parent_stdin() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niubash script read redirect: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell script read redirect: {err}"));
     let _open_parent_stdin = child.stdin.take().unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -1676,7 +1683,7 @@ fn slash_drive_script_file_argument_executes_script() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-slash-drive-script");
+    let temp = unique_temp_dir("native-shell-host-slash-drive-script");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -1688,13 +1695,13 @@ fn slash_drive_script_file_argument_executes_script() {
         return;
     };
 
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg(script_slash_drive)
         .current_dir(&start)
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .output()
-        .unwrap_or_else(|err| panic!("spawn niubash slash-drive script: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell slash-drive script: {err}"));
 
     assert_success(&output, "slash-drive script file");
     assert_eq!(normalize_text(&output.stdout), "slash-drive-script-ok");
@@ -1709,7 +1716,7 @@ fn command_mode_accepts_base_prefixed_arithmetic_in_function_body() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-arithmetic-base");
+    let temp = unique_temp_dir("native-shell-host-arithmetic-base");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -1733,7 +1740,7 @@ fn command_mode_parameter_pattern_removal_handles_escaped_quotes() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-param-pattern");
+    let temp = unique_temp_dir("native-shell-host-param-pattern");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -1757,7 +1764,7 @@ fn command_mode_set_positional_splits_custom_ifs() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-custom-ifs");
+    let temp = unique_temp_dir("native_shell-host-custom-ifs");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
@@ -1781,13 +1788,13 @@ fn closed_stdout_pipe_does_not_print_broken_pipe_error() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-host-broken-pipe");
+    let temp = unique_temp_dir("native_shell-host-broken-pipe");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .arg("-c")
         .arg("i=0; while true; do echo line-$i; i=$((i+1)); done")
         .current_dir(&start)
@@ -1796,7 +1803,7 @@ fn closed_stdout_pipe_does_not_print_broken_pipe_error() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native_shell: {err}"));
 
     let mut stdout = child.stdout.take().unwrap();
     let mut buffer = [0_u8; 32];
@@ -1814,7 +1821,7 @@ fn closed_stdout_pipe_does_not_print_broken_pipe_error() {
 
     assert!(
         status.is_some(),
-        "niubash did not exit after stdout pipe closed; stderr: {stderr:?}"
+        "native_shell did not exit after stdout pipe closed; stderr: {stderr:?}"
     );
 
     assert!(
@@ -1826,7 +1833,7 @@ fn closed_stdout_pipe_does_not_print_broken_pipe_error() {
 }
 
 fn run_niu(script: &str, cwd: &Path, home: &Path, extra_env: &[(&str, String)]) -> Output {
-    let mut command = Command::new(niu_binary());
+    let mut command = Command::new(native_shell_binary());
     command
         .arg("-c")
         .arg(script)
@@ -1840,7 +1847,7 @@ fn run_niu(script: &str, cwd: &Path, home: &Path, extra_env: &[(&str, String)]) 
 
     command
         .output()
-        .unwrap_or_else(|err| panic!("spawn niubash: {err}"))
+        .unwrap_or_else(|err| panic!("spawn native_shell: {err}"))
 }
 
 fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> Option<ExitStatus> {
@@ -1961,10 +1968,12 @@ fn real_winuxcmd_for_test() -> Option<PathBuf> {
                 .parent()?
                 .to_path_buf();
             [
-                repo_root.join("WinuxCmd/build-vs/winuxcmd.exe"),
-                repo_root.join("WinuxCmd/build-vs-release/winuxcmd.exe"),
-                repo_root.join("niubash/dist/niubash-v0.7.1-win-x64/winuxcmd/winuxcmd.exe"),
-                repo_root.join("niubash/dist/niubash-v0.7.0-win-x64/winuxcmd/winuxcmd.exe"),
+                repo_root.join("WinuxCmd/build-vs/native-cmd.exe"),
+                repo_root.join("WinuxCmd/build-vs-release/native-cmd.exe"),
+                repo_root
+                    .join("native_shell/dist/native_shell-v0.7.1-win-x64/winuxcmd/native-cmd.exe"),
+                repo_root
+                    .join("native_shell/dist/native_shell-v0.7.0-win-x64/winuxcmd/native-cmd.exe"),
             ]
             .into_iter()
             .find(|path| winuxcmd_test_path_has_command_links(path))
@@ -1974,7 +1983,7 @@ fn real_winuxcmd_for_test() -> Option<PathBuf> {
 
 fn resolve_winuxcmd_test_path(path: PathBuf) -> Option<PathBuf> {
     if path.is_dir() {
-        let exe = path.join("winuxcmd.exe");
+        let exe = path.join("native-cmd.exe");
         return winuxcmd_test_path_has_command_links(&exe).then_some(exe);
     }
     winuxcmd_test_path_has_command_links(&path).then_some(path)
@@ -1985,7 +1994,7 @@ fn winuxcmd_test_path_has_command_links(path: &Path) -> bool {
         || !path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("winuxcmd.exe"))
+            .is_some_and(|name| name.eq_ignore_ascii_case("native-cmd.exe"))
     {
         return false;
     }
@@ -1999,7 +2008,7 @@ fn winuxcmd_test_path_has_command_links(path: &Path) -> bool {
 
 fn find_winuxcmd_on_path() -> Option<PathBuf> {
     let output = Command::new("where.exe")
-        .arg("winuxcmd.exe")
+        .arg("native-cmd.exe")
         .output()
         .ok()?;
     if !output.status.success() {
@@ -2027,14 +2036,14 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
     std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), nanos))
 }
 
-/// unixwin/niubash#377: a shell invoked as `bash`/`sh` behaves like one.
-/// Niubash's product verbs are not shell words - `bash setup` runs a file named
+/// JayWanX/native-shell#377: a shell invoked as `bash`/`sh` behaves like one.
+/// NativeShell's product verbs are not shell words - `bash setup` runs a file named
 /// `setup` (GNU shell.c), it does not open the setup wizard - and while
-/// `$BASH` follows the invoked face, the shell-path contract (`NIU_SHELL`)
+/// `$BASH` follows the invoked face, the shell-path contract (`NATIVE_SHELL_BIN`)
 /// still names the real binary of the installation.
 #[test]
 fn shell_faces_do_not_expose_product_verbs_and_name_the_real_shell() {
-    let temp = unique_temp_dir("niubash-host-face-product-verbs");
+    let temp = unique_temp_dir("native_shell-host-face-product-verbs");
     let home = temp.join("home");
     let bin = temp.join("bin");
     // A minimal installation: the shell next to a bundled winuxcmd tree, and
@@ -2042,10 +2051,14 @@ fn shell_faces_do_not_expose_product_verbs_and_name_the_real_shell() {
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::create_dir_all(temp.join("winuxcmd").join("usr").join("bin")).unwrap();
-    let niu = temp.join(if cfg!(windows) { "niu.exe" } else { "niu" });
-    std::fs::copy(niu_binary(), &niu).unwrap();
+    let native_shell_bin = temp.join(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
+    std::fs::copy(native_shell_binary(), &native_shell_bin).unwrap();
     let face = bin.join(if cfg!(windows) { "bash.exe" } else { "bash" });
-    std::fs::copy(&niu, &face).unwrap();
+    std::fs::copy(&native_shell_bin, &face).unwrap();
 
     let spawn = |target: &Path, args: &[&str]| {
         Command::new(target)
@@ -2053,7 +2066,7 @@ fn shell_faces_do_not_expose_product_verbs_and_name_the_real_shell() {
             .current_dir(&home)
             .env("HOME", &home)
             .env("USERPROFILE", &home)
-            .env_remove("NIU_INVOKED_AS")
+            .env_remove("NATIVE_SHELL_INVOKED_AS")
             .output()
             .unwrap_or_else(|err| panic!("spawn {} {args:?}: {err}", target.display()))
     };
@@ -2084,24 +2097,28 @@ fn shell_faces_do_not_expose_product_verbs_and_name_the_real_shell() {
     );
 
     // Environment contract: the shell path, and the face for $BASH.
-    let env_out = spawn(&face, &["-c", "echo $NIU_SHELL; echo $BASH"]);
+    let env_out = spawn(&face, &["-c", "echo $NATIVE_SHELL_BIN; echo $BASH"]);
     assert_success(&env_out, "bash face environment");
     let text = normalize_text(&env_out.stdout);
     let mut lines = text.lines();
     let shell = lines.next().unwrap_or_default().to_lowercase();
     let bash = lines.next().unwrap_or_default().to_lowercase();
     assert!(
-        shell.ends_with(if cfg!(windows) { "niu.exe" } else { "niu" }),
-        "NIU_SHELL must name the real shell, got {shell:?}"
+        shell.ends_with(if cfg!(windows) {
+            "native-shell.exe"
+        } else {
+            "native-shell"
+        }),
+        "NATIVE_SHELL_BIN must name the real shell, got {shell:?}"
     );
     assert!(
         bash.ends_with(if cfg!(windows) { "bash.exe" } else { "bash" }),
         "$BASH must follow the invoked face, got {bash:?}"
     );
 
-    // The product verbs are still there on the niu face.
-    let niu_help = spawn(&niu, &["setup", "-h"]);
-    assert_success(&niu_help, "niu setup -h");
+    // The product verbs are still there on the native-shell face.
+    let native_shell_help = spawn(&native_shell_bin, &["setup", "-h"]);
+    assert_success(&native_shell_help, "native_shell setup -h");
 
     let _ = std::fs::remove_dir_all(&temp);
 }

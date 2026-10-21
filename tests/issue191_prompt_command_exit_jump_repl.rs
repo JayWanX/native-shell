@@ -1,4 +1,4 @@
-//! niubash#191: the REPL must CONSUME the engine's re-armed PROMPT_COMMAND
+//! native-shell#191: the REPL must CONSUME the engine's re-armed PROMPT_COMMAND
 //! exit jump instead of re-arming the prompt. The engine half shipped in
 //! rubash#433 (wt99): `run_prompt_command_text` re-arms `exit_jump_pending`
 //! when the PC text raises a top-level unwind (`exit`, or the errexit break;
@@ -21,15 +21,19 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
@@ -42,25 +46,25 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
 }
 
 /// One piped-`-i` interactive session (the rubash#433 harness shape, at the
-/// niu level): `niu -i --norc` with the given lines on stdin, stdin closed
+/// native-shell level): `native-shell -i --norc` with the given lines on stdin, stdin closed
 /// after them. Piped `-i` drives the engine's interactive stdin reader
 /// (src/main.rs delegates there because reedline needs a terminal), so these
 /// pins guard the engine consumption contract the REPL fix leans on.
 fn run_interactive(lines: &str) -> std::process::Output {
     let home = unique_temp_dir("niu-issue191-home");
     std::fs::create_dir_all(&home).unwrap();
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .args(["-i", "--norc"])
         .env("HOME", &home)
         .env("USERPROFILE", &home)
-        .env_remove("NIU_ENV")
+        .env_remove("NATIVE_SHELL_ENV")
         .env_remove("BASH_ENV")
         .env_remove("PROMPT_COMMAND")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn niu -i");
+        .expect("spawn native-shell -i");
     child
         .stdin
         .as_mut()
@@ -70,14 +74,14 @@ fn run_interactive(lines: &str) -> std::process::Output {
     child.wait_with_output().unwrap()
 }
 
-/// One `niu --norc <args>` run with a hermetic HOME.
+/// One `native-shell --norc <args>` run with a hermetic HOME.
 fn run_niu(home_env: bool, args: &[&str]) -> std::process::Output {
     let home = unique_temp_dir("niu-issue191-home");
     std::fs::create_dir_all(&home).unwrap();
-    let mut command = Command::new(niu_binary());
+    let mut command = Command::new(native_shell_binary());
     command
         .args(args)
-        .env_remove("NIU_ENV")
+        .env_remove("NATIVE_SHELL_ENV")
         .env_remove("BASH_ENV")
         .env_remove("PROMPT_COMMAND")
         .stdin(Stdio::null());
@@ -86,7 +90,7 @@ fn run_niu(home_env: bool, args: &[&str]) -> std::process::Output {
     }
     command
         .output()
-        .unwrap_or_else(|err| panic!("spawn niu: {err}"))
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"))
 }
 
 fn stdout_of(output: &std::process::Output) -> String {
@@ -151,7 +155,7 @@ fn c_mode_never_executes_prompt_command() {
     assert_eq!(stdout_of(&output).trim(), "C-RAN");
 }
 
-/// Script form: same contract for `niu script` — the PC assignment is inert,
+/// Script form: same contract for `native-shell script` — the PC assignment is inert,
 /// and the script's own status is the session status.
 #[test]
 fn script_mode_never_executes_prompt_command() {

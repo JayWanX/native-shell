@@ -1,14 +1,14 @@
 ---
-tags: [niubash, setup, wizard, ux, nerd-font, presets]
+tags: [native-shell, setup, wizard, ux, nerd-font, presets]
 created: 2026-09-14
 status: proposed
 ---
 
 # Setup Wizard Redesign
 
-> Context: unixwin/niubash#85 reported that `niu setup` mishandles input on
+> Context: JayWanX/native-shell#85 reported that `native-shell setup` mishandles input on
 > Windows terminals. The input bugs are fixed in
-> `crates/niubash-runtime/src/interactive_menu.rs`; this document covers the
+> `crates/native-shell-runtime/src/interactive_menu.rs`; this document covers the
 > deeper redesign — the wizard asks too many questions, has no presets, and
 > does not handle Nerd Fonts, which several bundled themes require.
 
@@ -32,7 +32,7 @@ First-run question sequence (up to 12 prompts):
 ### Problems
 
 - **No preset escape hatch.** Every user answers every question. The rc the
-  wizard writes (`NIU_PLUGINS=(prompt-core git)`) is far below what a
+  wizard writes (`NATIVE_SHELL_PLUGINS=(prompt-core git)`) is far below what a
   configured shell looks like — a real setup uses a dozen packs plus aliases.
 - **Package install is mixed into shell config.** wpm installs run before any
   config question, mid-flow, and print `(wpm not available)` noise when wpm
@@ -52,7 +52,7 @@ First-run question sequence (up to 12 prompts):
   default with no message.
 - **Odd Esc semantics.** Esc means "silently use this question's default".
   Users expect cancel/quit, or at minimum "defaults for everything left".
-- **No summary/confirmation** before `~/.niubashrc` is written.
+- **No summary/confirmation** before `~/.native-shellrc` is written.
 - **Existing integrations unused.** `--install-wt-profile` already upserts a
   Windows Terminal profile, but the wizard never offers it.
 
@@ -71,7 +71,7 @@ First-run question sequence (up to 12 prompts):
 ### Flow
 
 ```text
-niu setup
+native-shell setup
 ├─ 0. Preflight (no questions)
 │     probe terminal (WT_SESSION / conhost / MinTTY), size, Nerd Font
 │     presence, winuxcmd command links, and tool availability
@@ -83,7 +83,7 @@ niu setup
 │        menu: JetBrainsMono NF (recommended) / MesloLGM NF /
 │              CaskaydiaCove NF / skip
 │        → download, per-user install, register, set font.face on the
-│          Niubash WT profile
+│          Native Shell WT profile
 │     c. Other terminal → p10k-style glyph test:
 │        print sample glyphs, ask "displayed correctly?" (arrow menu)
 │        result feeds `nf_capable` for theme filtering
@@ -92,11 +92,11 @@ niu setup
 │     (custom → the existing granular questions, all as arrow menus)
 ├─ 3. Companion tools (first run only, if wpm present)
 │     missing recommended tools (eza/fd/rg/fzf/bat/zoxide/dust/duf, plus
-│     starship when opted in) are written to `~/.niubash/setup-tools.txt`
+│     starship when opted in) are written to `~/.native-shell/setup-tools.txt`
 │     and installed in one shot via `wpm restore` — the manifest stays on
 │     disk so the setup is reproducible
 ├─ 4. Summary table of every choice → "Apply?" menu
-└─ 5. Write ~/.niubashrc (backup first), .setup-done marker, optional
+└─ 5. Write ~/.native-shellrc (backup first), .setup-done marker, optional
       `--install-wt-profile` offer, closing hints
 ```
 
@@ -116,10 +116,10 @@ menu is unavailable and defaults were used.
 
 ### Presets as data
 
-Presets are TOML files shipped in the oh-my-niu bundle under `presets/`
+Presets are TOML files shipped in the oh-my-native-shell bundle under `presets/`
 (bundle-owned, versioned with the bundle, extendable by third-party bundles).
-The wizard reads them; `niu setup --preset <name>` applies one without the
-wizard; `niu plugin presets` (name TBD) can list them.
+The wizard reads them; `native-shell setup --preset <name>` applies one without the
+wizard; `native-shell plugin presets` (name TBD) can list them.
 
 ```toml
 # presets/recommended.toml
@@ -150,7 +150,7 @@ kubectl = "kubectl"
 docker = "docker"
 npm = "npm"
 
-# Aliases written into ~/.niubashrc only when the tool exists.
+# Aliases written into ~/.native-shellrc only when the tool exists.
 [conditional_aliases.eza]
 ls  = "eza --icons --git --group-directories-first"
 ll  = "eza -lh --icons --git --group-directories-first"
@@ -164,7 +164,7 @@ cat = "bat -pp"
 Pack names resolve against the bundle's `index.toml` `available` list;
 missing packs are skipped with a note, never fatal.
 
-Preset catalog (first cut, distilled from a real configured `~/.niubashrc` —
+Preset catalog (first cut, distilled from a real configured `~/.native-shellrc` —
 theme `spaceship`, ~14 packs, eza/bat/dust/duf alias family):
 
 | Preset | Contents |
@@ -178,7 +178,7 @@ theme `spaceship`, ~14 packs, eza/bat/dust/duf alias family):
 
 Detection (in order, first hit wins):
 
-1. `WT_SESSION` set → read the Niubash WT profile's `font.face`; if it names a
+1. `WT_SESSION` set → read the Native Shell WT profile's `font.face`; if it names a
    `*Nerd Font*`/`*NF`/`MesloLGS` family, treat as capable.
 2. Registry enumeration of `HKCU` and `HKLM`
    `SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts` for entries whose name
@@ -201,7 +201,7 @@ Install (Windows 10 1809+, no admin):
    `windows-sys` feature `Win32_System_Registry`.
 4. `AddFontResourceW` + `SendNotifyMessageW(HWND_BROADCAST, WM_FONTCHANGE)` so
    the font is usable this session — needs `Win32_Graphics_Gdi`.
-5. If `WT_SESSION`: set `profiles.list[Niubash].font.face` via
+5. If `WT_SESSION`: set `profiles.list[Native Shell].font.face` via
    `windows_terminal.rs` (extend the existing profile JSON with a `font`
    object) and print "restart this tab".
 6. Non-WT: print the manual font-face instruction for that terminal
@@ -212,7 +212,7 @@ avoids shipping ~50 MB in the installer. Keep the download host pinned to
 `github.com/ryanoasis/nerd-fonts` releases and surface failures as a warning
 with the manual URL, never a hard error.
 
-A standalone `niu font` subcommand exposes the same install menu outside
+A standalone `native-shell font` subcommand exposes the same install menu outside
 the wizard.
 
 ## Phasing
@@ -226,16 +226,16 @@ the wizard.
 - MinTTY silent-fallback note; wpm step moved to the end and gated on wpm
   presence
 
-**Phase 2 — font pipeline** (implemented, `crates/niubash-runtime/src/fonts.rs`):
+**Phase 2 — font pipeline** (implemented, `crates/native-shell-runtime/src/fonts.rs`):
 
 - Detection: font-directory scan + `HKCU`/`HKLM` Fonts registry enumeration,
   glyph test as the universal fallback
-- `niu font` subcommand: menu → download the nerd-fonts release zip via the
+- `native-shell font` subcommand: menu → download the nerd-fonts release zip via the
   system `curl.exe` → extract the `*NerdFontMono-*` family TTFs into
   `%LOCALAPPDATA%\Microsoft\Windows\Fonts` → write `HKCU\...\Fonts` values →
   `AddFontResourceW` + `PostMessageW(HWND_BROADCAST, WM_FONTCHANGE)`
 - WT `font.face` written through `windows_terminal.rs` — immediately on the
-  existing Niubash profile, and folded into the profile when the wizard
+  existing Native Shell profile, and folded into the profile when the wizard
   registers one
 - `[Nerd Font]` theme gating on the capability result
 
@@ -246,18 +246,18 @@ lists `ripgrep` while detection and verification probe `rg`.
 
 ## Decisions
 
-- **Preset location: bundle `presets/` + built-in fallback.** oh-my-niu is
+- **Preset location: bundle `presets/` + built-in fallback.** oh-my-native-shell is
   preinstalled with the distribution, so the preset catalog lives in the
-  bundle where it can be versioned alongside the packs it references. Niubash
-  still compiles in the same three presets as a fallback so `niu setup` never
+  bundle where it can be versioned alongside the packs it references. Native Shell
+  still compiles in the same three presets as a fallback so `native-shell setup` never
   hard-fails when the bundle is missing; a bundle preset with the same name
   overrides the built-in.
 - **Starship has three modes, all opt-in and installable.** The wizard asks
   once: `Built-in` (native snapshot), `Starship segment` (exports
-  `NIU_PROMPT_GIT_BACKEND=starship` before the bundle loads so only the
-  `{git}` segment is delegated — niubash themes still apply), or
+  `NATIVE_SHELL_PROMPT_GIT_BACKEND=starship` before the bundle loads so only the
+  `{git}` segment is delegated — native-shell themes still apply), or
   `Full Starship` (the bundle `starship` plugin runs `starship init bash`
-  and owns the whole prompt; the generated rc skips the niubash prompt
+  and owns the whole prompt; the generated rc skips the native-shell prompt
   template entirely). `poweruser` defaults to the segment mode. A missing
   binary is fetched through wpm in the tools step.
 - **Companion tools install as cumulative bundles.** Instead of per-tool
@@ -265,7 +265,7 @@ lists `ripgrep` while detection and verification probe `rg`.
   `Modern CLI` (+ zoxide dust duf delta sd procs), and `Everything`
   (+ atuin bottom lazygit jq yq xh hyperfine tokei glow navi watchexec),
   filtered to what is actually missing. The selection is written to
-  `~/.niubash/setup-tools.txt` and installed in one shot via
+  `~/.native-shell/setup-tools.txt` and installed in one shot via
   `wpm restore`; wpm resolves through `wpm` on PATH or `winuxcmd.exe wpm`.
 - **Esc = defaults for remaining questions; Ctrl+C = abort.** Esc
   fast-forwards through the rest of the wizard taking every default, then

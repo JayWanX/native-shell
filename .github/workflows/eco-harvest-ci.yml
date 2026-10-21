@@ -86,7 +86,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4 # niubash：eco 脚本 + the shell under test
+      - uses: actions/checkout@v4 # native-shell：eco 脚本 + the shell under test
       # The sibling path matters: Cargo.toml patches rubash to ../rubash
       # (same step the main ci.yml windows job uses).
       - name: clone rubash as the ../rubash sibling dependency
@@ -155,11 +155,11 @@ jobs:
       - name: build engine
         run: cargo build --release --manifest-path "${{ github.workspace }}/../rubash/Cargo.toml"
       # The interactive lane needs the SHELL, not just the engine: rubash's
-      # bash.exe is a shim that resolves niu.exe and execs it, so a runner
-      # with no niu.exe exits 127 on every asset ("bash shim: cannot locate
-      # niu.exe"). Build the host from this checkout and drive niu.exe
-      # directly, exactly like the local lane's --niu target/debug/niu.exe.
-      - name: build niubash (the shell under test)
+      # bash.exe is a shim that resolves native-shell.exe and execs it, so a runner
+      # with no native-shell.exe exits 127 on every asset ("bash shim: cannot locate
+      # native-shell.exe"). Build the host from this checkout and drive native-shell.exe
+      # directly, exactly like the local lane's --native-shell target/debug/native-shell.exe.
+      - name: build native-shell (the shell under test)
         run: cargo build --release --locked
       - name: locate binaries
         id: bins
@@ -170,13 +170,16 @@ jobs:
           from pathlib import Path
           root = Path(os.environ["GITHUB_WORKSPACE"])
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              for name, checkout in (("niu", root), ("rubash", root.parent / "rubash")):
+              for name, checkout in (("native-shell", root), ("rubash", root.parent / "rubash")):
                   binary = checkout / "target" / "release" / (name + ".exe")
                   if not binary.is_file():
                       raise SystemExit(f"missing binary: {binary}")
                   revision = subprocess.check_output(
                       ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
-                  output.write(f"{name}={binary}\n{name}_revision={revision}\n")
+                  # Output keys are identifiers: GitHub expressions cannot read a
+                  # hyphenated key (steps.bins.outputs.native-shell is subtraction).
+                  key = name.replace("-", "_")
+                  output.write(f"{key}={binary}\n{key}_revision={revision}\n")
       - name: download manifest
         uses: actions/download-artifact@v4
         with: { name: eco-manifest, path: eco }
@@ -189,9 +192,9 @@ jobs:
           ECO_STALE_LIMIT: ${{ github.event.inputs.stale_limit || '80' }}
           ECO_TEST_SECONDS: ${{ github.event.inputs.test_seconds || '2400' }}
           ECO_REDO: ${{ github.event.inputs.redo || 'false' }}
-          ECO_NIU: ${{ steps.bins.outputs.niu }}
+          ECO_NATIVE_SHELL: ${{ steps.bins.outputs.native_shell }}
           ECO_RUBASH: ${{ steps.bins.outputs.rubash }}
-          ECO_NIU_REVISION: ${{ steps.bins.outputs.niu_revision }}
+          ECO_NATIVE_SHELL_REVISION: ${{ steps.bins.outputs.native_shell_revision }}
           ECO_RUBASH_REVISION: ${{ steps.bins.outputs.rubash_revision }}
           ECO_GNU_BASH: ${{ steps.gnu.outputs.bash }}
         run: |
@@ -203,8 +206,8 @@ jobs:
                      "--cache-dir", "eco/cache", "--tmp-root", "eco/tmp"]
           for flag, key in (("tiers", "ECO_TEST_TIERS"), ("limit", "ECO_TEST_LIMIT"),
                             ("stale-limit", "ECO_STALE_LIMIT"), ("max-seconds", "ECO_TEST_SECONDS"),
-                            ("niu", "ECO_NIU"), ("rubash", "ECO_RUBASH"),
-                            ("niu-revision", "ECO_NIU_REVISION"), ("rubash-revision", "ECO_RUBASH_REVISION")):
+                            ("native-shell", "ECO_NATIVE_SHELL"), ("rubash", "ECO_RUBASH"),
+                            ("native-shell-revision", "ECO_NATIVE_SHELL_REVISION"), ("rubash-revision", "ECO_RUBASH_REVISION")):
               command.extend(["--" + flag, os.environ[key]])
           if os.environ["ECO_REDO"] == "true":
               command.append("--redo")

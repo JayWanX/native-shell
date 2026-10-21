@@ -1,10 +1,10 @@
-# Niubash v2 Architecture
+# Native Shell v2 Architecture
 
 > A Windows-native, Bash-compatible terminal built on rubash + winuxcmd
 
 ## Positioning
 
-Niubash is a Windows-native, non-isolated, Bash-compatible terminal for both
+Native Shell is a Windows-native, non-isolated, Bash-compatible terminal for both
 humans and agents. It does **not implement the shell language itself** — it is
 the interactive front end to the **rubash lib** (the bash-compatible engine)
 plus the routing layer onto **winuxcmd** (coreutils). Its core value is the
@@ -12,7 +12,7 @@ Windows-native process/environment experience: a reedline REPL, the
 completion system, the prompt floor, Ctrl+C handling, terminal integration,
 and a stable non-interactive agent execution contract.
 
-Niubash is not an MSYS2, Git Bash, Cygwin, or WSL-style isolated
+Native Shell is not an MSYS2, Git Bash, Cygwin, or WSL-style isolated
 environment. `~` points at the normal Windows user home (`USERPROFILE` /
 `dirs::home_dir()`); `PATH`, cwd, env, stdout, stderr, and exit codes are
 ordinary Windows process state.
@@ -20,8 +20,8 @@ ordinary Windows process state.
 ## Three-layer architecture
 
 ```text
-niu.exe
-├── Niubash host layer (Rust)
+native-shell.exe
+├── Native Shell host layer (Rust)
 │   ├── rubash::Executor         ← shell language engine (lexer/parser/execution/builtins)
 │   ├── reedline REPL            ← line editing, history, completion
 │   ├── completion/              ← shell definitions + bash auto-import + 3-level cache
@@ -40,7 +40,7 @@ niu.exe
 
 ### 1. rubash as a lib dependency
 
-Niubash links rubash directly as a Rust crate dependency:
+Native Shell links rubash directly as a Rust crate dependency:
 
 ```toml
 [dependencies]
@@ -48,16 +48,16 @@ rubash = { git = "https://github.com/unixwin/rubash.git", branch = "master" }
 ```
 
 All shell semantics (parsing, execution, built-ins, variable expansion,
-redirection, pipelines, job control) are delegated to rubash. Niubash does
+redirection, pipelines, job control) are delegated to rubash. Native Shell does
 not re-implement lexer/parser/ast/builtins.
 
-### 2. WinuxCmd is selected by Niubash and integrated via PATH
+### 2. WinuxCmd is selected by Native Shell and integrated via PATH
 
 Not via FFI/DLL — the rubash Executor still finds external commands through
-`PATH`. Version selection is a Niubash session/config responsibility. At
+`PATH`. Version selection is a Native Shell session/config responsibility. At
 startup:
 
-1. Read the explicit `WINUXCMD_PATH`, then fall back to Niubash's own
+1. Read the explicit `WINUXCMD_PATH`, then fall back to Native Shell's own
    install/bundle/`PATH` discovery rules to locate a `winuxcmd.exe`.
 2. Prepend the directory of that **same** exe to the process `PATH` so that
    command links such as `ls`/`cat`/`grep` resolve.
@@ -70,9 +70,9 @@ never mix the dispatcher with the wrong links.
 
 ### 3. Windows real installation tree
 
-Niubash derives one shell root from the selected installed
+Native Shell derives one shell root from the selected installed
 `winuxcmd.exe`. For example, the executable
-`<install>/usr/bin/winuxcmd.exe` makes `<install>` the root. Niubash creates
+`<install>/usr/bin/winuxcmd.exe` makes `<install>` the root. Native Shell creates
 the ordinary directories below that root:
 
 ```text
@@ -88,8 +88,8 @@ the ordinary directories below that root:
 
 `usr/bin` is canonical for WinuxCmd, WPM, command links, and filename-only WPM
 targets. Explicit package targets keep their requested real directory.
-Niubash passes the selected installation root to Rubash through
-`NIU_ROOT`; there is no second `~/.niubash/root` tree and no provider
+Native Shell passes the selected installation root to Rubash through
+`NATIVE_SHELL_ROOT`; there is no second `~/.native-shell/root` tree and no provider
 union. Rubash maps `/`, `/bin`, `/usr/bin`, `/etc`, and `/tmp` directly below
 the real root. `/dev/null` maps to Windows `NUL`; other `/dev` entries remain
 unsupported capabilities.
@@ -98,68 +98,68 @@ unsupported capabilities.
 
 The completion system (shell definitions + bash script auto-import +
 `cmd -h` description scraping + a 3-level cache) is implemented on the
-Niubash side and does not depend on rubash. It is one of Niubash's core
+Native Shell side and does not depend on rubash. It is one of Native Shell's core
 differentiators.
 
 ### 5. Configuration and startup entry points
 
-- `~/.niubashrc` is the primary interactive entry point. Plain
-  niubash/bash syntax declares plugin lists, theme, prompt template,
+- `~/.native-shellrc` is the primary interactive entry point. Plain
+  native-shell/bash syntax declares plugin lists, theme, prompt template,
   `export`, `alias`, functions, and local startup logic.
 - `~/.winshrc` is the compatibility fallback; it is read as the legacy user
-  rc only when `~/.niubashrc` does not exist.
+  rc only when `~/.native-shellrc` does not exist.
 - Machine state — plugin CLI enable/disable records, permissions, source
   registry/trust state, legacy managed blocks, test isolation, completion
   directories — is maintained by the internal managed-state mechanism and is
   not a user configuration entry point.
-- When `~/.niubashrc` exists, it is the single entry point for sourcing
+- When `~/.native-shellrc` exists, it is the single entry point for sourcing
   plugins/frameworks; the host no longer silently sources the official
   source plugins a second time from managed-state defaults, avoiding double
   entry points and duplicate prompt/git-state refreshes.
-- Plain `niu -c`, script files, and stdin scripts stay quiet and
+- Plain `native-shell -c`, script files, and stdin scripts stay quiet and
   deterministic: no interactive rc, no source plugins.
 
 The design principle is to minimize user-visible entry points: users edit
-`~/.niubashrc` day to day; machine state is maintained by Niubash itself and
+`~/.native-shellrc` day to day; machine state is maintained by Native Shell itself and
 users never need to edit its storage format.
 
 ### 6. Plugin system
 
-The built-in plugin/theme stack (and the `oh-my-niu` bundle format) is
-retired (niubash#145): the plugin verbs hard-bail on bundles, and release
-packages stage no plugin content (niubash#161). The plugin system is the
+The built-in plugin/theme stack (and the `oh-my-native-shell` bundle format) is
+retired (native-shell#145): the plugin verbs hard-bail on bundles, and release
+packages stage no plugin content (native-shell#161). The plugin system is the
 **external bash ecosystem as first-class content**.
 
 - Sources are real upstream projects — oh-my-bash, bash-it,
   bash-completion, any wild plugin repo or single file — installed over
-  git clone on explicit user command (`niu plugin add`), never vendored
+  git clone on explicit user command (`native-shell plugin add`), never vendored
   into the product.
 - Sources land **untrusted** and activate only through the graded trust
-  protocol (`niu plugin trust`); framework assets enable through each
+  protocol (`native-shell plugin trust`); framework assets enable through each
   manager's own selection mechanism (rc arrays, `enabled/` entries), never
   through shims that re-implement upstream library functions.
-- The declarative spec `~/.niubash/plugins.toml` is the source of truth
+- The declarative spec `~/.native-shell/plugins.toml` is the source of truth
   for what is declared; the registry pins installed trees (commit +
-  checksum), and `niu plugin sync` reconciles the two without ever
+  checksum), and `native-shell plugin sync` reconciles the two without ever
   granting trust automatically.
 - Plugins cannot extend the rubash parser/executor, and cannot source
   arbitrary legacy `.winsh` files or rc fragments found in user
   directories beyond what the enabled sources themselves declare.
-- Editor capabilities come from reedline and Niubash-native keybinding
+- Editor capabilities come from reedline and Native Shell-native keybinding
   presets.
 
 ## Repository layout
 
 ```text
-niubash/
+native-shell/
 ├── Cargo.toml
 ├── LICENSE                   # GPL-3.0-or-later
 ├── README.md / README-zh.md
-├── .niubashrc                 # primary interactive user entry
+├── .native-shellrc                 # primary interactive user entry
 ├── .winshrc                   # legacy fallback rc
 ├── managed state              # internal machine-managed state
 ├── crates/
-│   └── niubash-runtime/
+│   └── native-shell-runtime/
 │       ├── Cargo.toml
 │       └── src/
 │           ├── lib.rs        # library entry
@@ -188,7 +188,7 @@ user types "ls -la | grep foo"
    reedline (line editing + completion)
          │
          ▼
-   shell.execute_line(line)      ← niubash-runtime
+   shell.execute_line(line)      ← native-shell-runtime
          │
          ├─ rubash::lexer::tokenize(line)
          ├─ rubash::parser::parse(tokens) → Ast
@@ -206,15 +206,15 @@ user types "ls -la | grep foo"
 
 ## Differences from the old architecture
 
-| Aspect | v1 (old niubash) | v2 (current niubash) |
+| Aspect | v1 (old native-shell) | v2 (current native-shell) |
 | --- | --- | --- |
 | Shell engine | in-house winsh lexer/parser/ast | rubash lib |
 | Coreutils | winuxcmd FFI (DLL, disabled) | winuxcmd.exe process (PATH injection) |
 | Command routing | command_router.rs classification table | rubash-internal find_user_command |
 | Built-ins | self-implemented builtins.rs | rubash::builtins |
 | Completion | src/completion/ | fully preserved, migrated |
-| Themes | theme.rs (8 themes) | built-in stack retired (niubash#145); themes come from external sources |
-| Plugins | Plugin trait + Oh-My-Niubash | external bash ecosystem as sources (add/trust/enable; no bundles) |
+| Themes | theme.rs (8 themes) | built-in stack retired (native-shell#145); themes come from external sources |
+| Plugins | Plugin trait + Oh-My-Native Shell | external bash ecosystem as sources (add/trust/enable; no bundles) |
 | License | MIT | GPL-3.0-or-later |
 
 ## Version planning
@@ -226,10 +226,10 @@ user types "ls -la | grep foo"
 - v2.4: interactive polish (right prompt, hints, completion menu, defaults)
 - v3: the external-ecosystem plugin system — first-party packs replaced by
   real upstream sources (oh-my-bash, bash-it, bash-completion, wild
-  plugins) under the trust protocol; the `oh-my-niu` bundle format was
-  retired along the way (niubash#145/#161)
+  plugins) under the trust protocol; the `oh-my-native-shell` bundle format was
+  retired along the way (native-shell#145/#161)
 - Non-goals: Linux/macOS native shell products; rubash itself is reusable
-  across platforms, but the niubash product targets Windows
+  across platforms, but the native-shell product targets Windows
 
 ---
 

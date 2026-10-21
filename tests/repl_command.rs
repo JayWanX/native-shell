@@ -4,28 +4,32 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
 #[test]
 fn repl_command_loads_primary_rc_aliases_after_long_path_setup() {
-    let temp = unique_temp_dir("niubash-repl-command-primary-aliases");
+    let temp = unique_temp_dir("native-shell-repl-command-primary-aliases");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(home.join("bin")).unwrap();
     std::fs::create_dir_all(&start).unwrap();
     std::fs::write(
-        home.join(".niubashrc"),
+        home.join(".native-shellrc"),
         r#"
 __test_path_prepend() {
   [ -n "$1" ] || return 0
@@ -44,11 +48,15 @@ export PATH
     )
     .unwrap();
 
+    // Each entry costs one full path in the child env block; 1,200 entries
+    // already land within ~10 KB of the Windows environment limit, so keep
+    // this literal short. A brand rename that lengthens it makes the child
+    // fail with STATUS_NO_MEMORY (0xC0000017) instead of asserting on output.
     let long_path = (0..1_200)
-        .map(|index| format!("C:/niubash-test/path{index:04}"))
+        .map(|index| format!("C:/nsh-test/path{index:04}"))
         .collect::<Vec<_>>()
         .join(";");
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .args(["-C", "l; ll; alias l; alias ll"])
         .current_dir(&start)
         .env("HOME", &home)
@@ -80,17 +88,21 @@ export PATH
 
 #[test]
 fn command_mode_keeps_script_semantics_without_repl_startup() {
-    let temp = unique_temp_dir("niubash-command-mode");
+    let temp = unique_temp_dir("native-shell-command-mode");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
-    std::fs::write(home.join(".winshrc"), "export NIU_REPL_COMMAND_RC=loaded\n").unwrap();
+    std::fs::write(
+        home.join(".winshrc"),
+        "export NATIVE_SHELL_REPL_COMMAND_RC=loaded\n",
+    )
+    .unwrap();
 
     let output = run_niu(
         &[
             "-c",
-            "echo rc:$NIU_REPL_COMMAND_RC precmd:$NIU_REPL_PRECMD_RAN preexec:$NIU_REPL_PREEXEC_RAN",
+            "echo rc:$NATIVE_SHELL_REPL_COMMAND_RC precmd:$NATIVE_SHELL_REPL_PRECMD_RAN preexec:$NATIVE_SHELL_REPL_PREEXEC_RAN",
         ],
         &start,
         &home,
@@ -107,19 +119,22 @@ fn command_mode_keeps_script_semantics_without_repl_startup() {
 
 #[test]
 fn command_mode_can_source_user_winshrc_explicitly() {
-    let temp = unique_temp_dir("niubash-command-mode-source-winshrc");
+    let temp = unique_temp_dir("native-shell-command-mode-source-winshrc");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
     std::fs::write(
         home.join(".winshrc"),
-        "export NIU_EXPLICIT_SOURCE_RC=loaded\n",
+        "export NATIVE_SHELL_EXPLICIT_SOURCE_RC=loaded\n",
     )
     .unwrap();
 
     let output = run_niu(
-        &["-c", "source ~/.winshrc; echo rc:$NIU_EXPLICIT_SOURCE_RC"],
+        &[
+            "-c",
+            "source ~/.winshrc; echo rc:$NATIVE_SHELL_EXPLICIT_SOURCE_RC",
+        ],
         &start,
         &home,
     );
@@ -131,19 +146,23 @@ fn command_mode_can_source_user_winshrc_explicitly() {
 
 #[test]
 fn repl_command_cat_expands_tilde_paths_through_normal_command_resolution() {
-    let temp = unique_temp_dir("niubash-repl-command-cat-tilde");
+    let temp = unique_temp_dir("native-shell-repl-command-cat-tilde");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
-    std::fs::write(home.join(".winshrc"), "export NIU_TILDE_CAT_RC=loaded\n").unwrap();
+    std::fs::write(
+        home.join(".winshrc"),
+        "export NATIVE_SHELL_TILDE_CAT_RC=loaded\n",
+    )
+    .unwrap();
 
     let output = run_niu(&["-C", "cat ~/.winshrc"], &start, &home);
 
     assert_success(&output, "repl command cat tilde expansion");
     assert_eq!(
         stdout_text(&output).trim(),
-        "export NIU_TILDE_CAT_RC=loaded"
+        "export NATIVE_SHELL_TILDE_CAT_RC=loaded"
     );
     let _ = std::fs::remove_dir_all(temp);
 }
@@ -152,14 +171,14 @@ fn repl_command_cat_expands_tilde_paths_through_normal_command_resolution() {
 /// (P0 rubash#537) ruling (2026-10-12, owner-adjudicated; full archaeology in
 /// the rubash PR): PWD form is shell semantics, so `$PWD` and `pwd` render the
 /// POSIX persona form (`/c/...`) unconditionally — the native-style hatch that
-/// starved nvm's find_up loop is retired engine-side AND host-side (niu's
+/// starved nvm's find_up loop is retired engine-side AND host-side (native-shell's
 /// host cwd sync stamps the same canonical renderer). Native drive spelling
 /// stays correct only at the Win32 spawn boundary (path contract): the
 /// tilde-expanded argv handed to the external `cat.cmd` must remain usable,
 /// and the shim fails the command (`exit /b 12`) if it ever sees a slash-drive
 /// first argument. The old `command_mode_compound_commands_keep_home_paths_
 /// native` pin asserted the pre-#556 native PWD rendering and was red on
-/// every niubash PR (#278 first) once `branch = master` pulled #556 in.
+/// every native-shell PR (#278 first) once `branch = master` pulled #556 in.
 /// The assertions pin the persona FORM (drive prefix + home basename) rather
 /// than full-path bytes: a first-cut full-string comparison was red on the
 /// CI merge-ref (PR #283's first run) while green locally — environment
@@ -170,14 +189,14 @@ fn command_mode_compound_commands_posix_pwd_and_native_spawn_argv() {
         return;
     }
 
-    let temp = unique_temp_dir("niubash-command-mode-native-home-paths");
+    let temp = unique_temp_dir("native-shell-command-mode-native-home-paths");
     let home = temp.join("home");
     let start = temp.join("start");
     let bin = temp.join("bin");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
-    std::fs::write(home.join(".niubashrc"), "# primary marker\n").unwrap();
+    std::fs::write(home.join(".native-shellrc"), "# primary marker\n").unwrap();
     std::fs::write(
         bin.join("cat.cmd"),
         "@echo off\r\nset \"arg=%~1\"\r\necho arg=%arg%\r\nif \"%arg:~0,3%\"==\"/c/\" exit /b 12\r\nset \"fsarg=%arg:/=\\%\"\r\ntype \"%fsarg%\"\r\n",
@@ -189,17 +208,19 @@ fn command_mode_compound_commands_posix_pwd_and_native_spawn_argv() {
     if let Some(old_path) = old_path {
         paths.extend(std::env::split_paths(&old_path));
     }
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .args([
             "-c",
-            "cd ~; echo PWD=$PWD; pwd; cat ~/.niubashrc >/dev/null && echo catrc:ok",
+            "cd ~; echo PWD=$PWD; pwd; cat ~/.native-shellrc >/dev/null && echo catrc:ok",
         ])
         .current_dir(&start)
         .env("HOME", "")
         .env("USERPROFILE", &home)
         .env("PATH", std::env::join_paths(paths).unwrap())
         .output()
-        .unwrap_or_else(|err| panic!("failed to run niubash command mode native home test: {err}"));
+        .unwrap_or_else(|err| {
+            panic!("failed to run native-shell command mode native home test: {err}")
+        });
 
     assert_success(&output, "command mode compound native home paths");
     let stdout = stdout_text(&output);
@@ -249,12 +270,12 @@ fn drive_letter(path: &Path) -> Option<char> {
 
 #[test]
 fn repl_command_file_commands_expand_tilde_paths_through_normal_command_resolution() {
-    let temp = unique_temp_dir("niubash-repl-command-file-builtins-tilde");
+    let temp = unique_temp_dir("native-shell-repl-command-file-builtins-tilde");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
-    std::fs::write(home.join(".niubashrc"), "").unwrap();
+    std::fs::write(home.join(".native-shellrc"), "").unwrap();
 
     let output = run_niu(
         &[
@@ -274,13 +295,13 @@ fn repl_command_file_commands_expand_tilde_paths_through_normal_command_resoluti
 
 #[test]
 fn command_mode_sets_shell_to_current_exe_when_missing() {
-    let temp = unique_temp_dir("niubash-command-mode-shell-env");
+    let temp = unique_temp_dir("native-shell-command-mode-shell-env");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
-    let bin = niu_binary();
+    let bin = native_shell_binary();
     let output = Command::new(&bin)
         .args(["-c", "printf '<%s>\\n' \"$SHELL\""])
         .current_dir(&start)
@@ -289,7 +310,7 @@ fn command_mode_sets_shell_to_current_exe_when_missing() {
         .env_remove("SHELL")
         .env_remove("BASH")
         .output()
-        .unwrap_or_else(|err| panic!("failed to run niubash shell env test: {err}"));
+        .unwrap_or_else(|err| panic!("failed to run native-shell shell env test: {err}"));
 
     assert_success(&output, "command mode default SHELL");
     assert_eq!(
@@ -300,25 +321,30 @@ fn command_mode_sets_shell_to_current_exe_when_missing() {
 }
 
 fn run_niu(args: &[&str], start: &Path, home: &Path) -> Output {
-    let mut command = Command::new(niu_binary());
+    let mut command = Command::new(native_shell_binary());
     command
         .args(args)
         .current_dir(start)
         .env("HOME", home)
         .env("USERPROFILE", home)
-        .env_remove("NIU_REPL_COMMAND_RC")
-        .env_remove("NIU_REPL_PRECMD_RAN")
-        .env_remove("NIU_REPL_PREEXEC_RAN");
+        .env_remove("NATIVE_SHELL_REPL_COMMAND_RC")
+        .env_remove("NATIVE_SHELL_REPL_PRECMD_RAN")
+        .env_remove("NATIVE_SHELL_REPL_PREEXEC_RAN");
 
     command
         .output()
-        .unwrap_or_else(|err| panic!("failed to run niubash {args:?}: {err}"))
+        .unwrap_or_else(|err| panic!("failed to run native-shell {args:?}: {err}"))
 }
 
-/// Run niu with piped stdin (the interactive `-i` driver reads commands from
+/// Run native-shell with piped stdin (the interactive `-i` driver reads commands from
 /// the pipe until EOF; prompts go to stderr, rc/command output to stdout).
-fn run_niu_with_stdin(args: &[&str], stdin_data: &str, start: &Path, home: &Path) -> Output {
-    let mut child = Command::new(niu_binary())
+fn run_native_shell_with_stdin(
+    args: &[&str],
+    stdin_data: &str,
+    start: &Path,
+    home: &Path,
+) -> Output {
+    let mut child = Command::new(native_shell_binary())
         .args(args)
         .current_dir(start)
         .env("HOME", home)
@@ -327,45 +353,45 @@ fn run_niu_with_stdin(args: &[&str], stdin_data: &str, start: &Path, home: &Path
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|err| panic!("failed to spawn niubash {args:?}: {err}"));
+        .unwrap_or_else(|err| panic!("failed to spawn native-shell {args:?}: {err}"));
     {
         let stdin = child.stdin.as_mut().expect("piped stdin");
         stdin
             .write_all(stdin_data.as_bytes())
             .and_then(|()| stdin.flush())
-            .expect("write niu stdin");
+            .expect("write native-shell stdin");
     }
     // Dropping stdin closes the pipe: the interactive stdin driver sees EOF
     // and the shell exits like GNU `bash -i < file`.
     drop(child.stdin.take());
     child
         .wait_with_output()
-        .unwrap_or_else(|err| panic!("failed to wait for niubash {args:?}: {err}"))
+        .unwrap_or_else(|err| panic!("failed to wait for native-shell {args:?}: {err}"))
 }
 
 // ---------------------------------------------------------------------------
-// niubash#146: GNU decides "interactive" from the -i flag, never from the
+// native-shell#146: GNU decides "interactive" from the -i flag, never from the
 // shape of stdin (shell.c option parsing sets forced_interactive before
-// run_startup_files sources ~/.bashrc). `printf 'cmd\n' | niu -i` must load
+// run_startup_files sources ~/.bashrc). `printf 'cmd\n' | native-shell -i` must load
 // the interactive rc exactly like a terminal session does.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn piped_dash_i_sources_startup_rc() {
-    let temp = unique_temp_dir("niubash-piped-i-rc");
+    let temp = unique_temp_dir("native-shell-piped-i-rc");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
-    std::fs::write(home.join(".niubashrc"), "echo RC_146_MARK\n").unwrap();
+    std::fs::write(home.join(".native-shellrc"), "echo RC_146_MARK\n").unwrap();
 
-    let output = run_niu_with_stdin(&["-i"], "echo RC_146_DONE\n", &start, &home);
+    let output = run_native_shell_with_stdin(&["-i"], "echo RC_146_DONE\n", &start, &home);
 
     assert_success(&output, "piped -i rc loading");
     let stdout = stdout_text(&output);
     assert!(
         stdout.contains("RC_146_MARK"),
-        "piped -i skipped ~/.niubashrc (niubash#146): {stdout:?}"
+        "piped -i skipped ~/.native-shellrc (native-shell#146): {stdout:?}"
     );
     assert!(
         stdout.contains("RC_146_DONE"),
@@ -376,18 +402,18 @@ fn piped_dash_i_sources_startup_rc() {
 
 #[test]
 fn piped_dash_i_norc_and_rcfile_options_apply() {
-    let temp = unique_temp_dir("niubash-piped-i-rcfile");
+    let temp = unique_temp_dir("native-shell-piped-i-rcfile");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
-    std::fs::write(home.join(".niubashrc"), "echo RC_146_DEFAULT\n").unwrap();
+    std::fs::write(home.join(".native-shellrc"), "echo RC_146_DEFAULT\n").unwrap();
     let rcfile = home.join("alt-rc");
     std::fs::write(&rcfile, "export RC_146_ALTFROM=altfile\n").unwrap();
     let rcfile = rcfile.to_string_lossy().replace('\\', "/").to_string();
 
     // --norc: neither the default rc nor anything else runs.
-    let output = run_niu_with_stdin(
+    let output = run_native_shell_with_stdin(
         &["--norc", "-i"],
         "echo n:${RC_146_DEFAULT-set}\n",
         &start,
@@ -397,11 +423,11 @@ fn piped_dash_i_norc_and_rcfile_options_apply() {
     let stdout = stdout_text(&output);
     assert!(
         !stdout.contains("RC_146_DEFAULT"),
-        "--norc -i still sourced ~/.niubashrc: {stdout:?}"
+        "--norc -i still sourced ~/.native-shellrc: {stdout:?}"
     );
 
     // --rcfile: the alternate file is sourced instead.
-    let output = run_niu_with_stdin(
+    let output = run_native_shell_with_stdin(
         &["--rcfile", &rcfile, "-i"],
         "echo alt:[$RC_146_ALTFROM]\n",
         &start,
@@ -411,7 +437,7 @@ fn piped_dash_i_norc_and_rcfile_options_apply() {
     let stdout = stdout_text(&output);
     assert!(
         stdout.contains("alt:[altfile]"),
-        "--rcfile -i did not source the alternate rc (niubash#146): {stdout:?}"
+        "--rcfile -i did not source the alternate rc (native-shell#146): {stdout:?}"
     );
     assert!(
         !stdout.contains("RC_146_DEFAULT"),
@@ -421,21 +447,21 @@ fn piped_dash_i_norc_and_rcfile_options_apply() {
 }
 
 // ---------------------------------------------------------------------------
-// niubash#148: launcher words keep their meaning wherever they stand among
+// native-shell#148: launcher words keep their meaning wherever they stand among
 // the leading option words (GNU parse_shell_options is one left-to-right
-// pass). `niu --norc -C 'cmd'` used to fall to the engine parser, which has
+// pass). `native-shell --norc -C 'cmd'` used to fall to the engine parser, which has
 // no -C REPL-command flag (GNU -C is noclobber), and then treated the
 // command string as a missing script file.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn repl_command_accepts_leading_options_in_any_order() {
-    let temp = unique_temp_dir("niubash-repl-command-leading-options");
+    let temp = unique_temp_dir("native-shell-repl-command-leading-options");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
-    std::fs::write(home.join(".niubashrc"), "echo RC_148_DEFAULT_RAN\n").unwrap();
+    std::fs::write(home.join(".native-shellrc"), "echo RC_148_DEFAULT_RAN\n").unwrap();
     let rcfile = home.join("alt148");
     std::fs::write(&rcfile, "export RC_148_ALTFROM=altfile\n").unwrap();
     let rcfile = rcfile.to_string_lossy().replace('\\', "/").to_string();
@@ -476,14 +502,14 @@ fn repl_command_accepts_leading_options_in_any_order() {
     assert_success(&output, "plain -C rc");
     assert!(
         stdout_text(&output).contains("RC_148_DEFAULT_RAN"),
-        "plain -C stopped sourcing ~/.niubashrc"
+        "plain -C stopped sourcing ~/.native-shellrc"
     );
     let _ = std::fs::remove_dir_all(temp);
 }
 
 #[test]
 fn invalid_leading_option_before_repl_command_keeps_gnu_usage_surface() {
-    let temp = unique_temp_dir("niubash-repl-command-invalid-option");
+    let temp = unique_temp_dir("native-shell-repl-command-invalid-option");
     let home = temp.join("home");
     let start = temp.join("start");
     std::fs::create_dir_all(&home).unwrap();

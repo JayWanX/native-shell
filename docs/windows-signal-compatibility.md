@@ -1,6 +1,6 @@
 # Windows Signal Compatibility
 
-Niubash implements a ZSH/FISH-compatible hook system with 20 hooks. On Windows,
+Native Shell implements a ZSH/FISH-compatible hook system with 20 hooks. On Windows,
 some signals have no direct equivalent. This document records the compatibility
 status of each signal.
 
@@ -75,32 +75,32 @@ Alias for traperr in bash/ZSH. Same behavior.
 
 ## Hook Registration (All 20 Hooks)
 
-All hooks are available for registration via hooks.niu:
+All hooks are available for registration via hooks.nsh:
 
 ```bash
 # Lifecycle hooks
-niubash_add_startup_hook my_func
-niubash_add_precmd_hook my_func
-niubash_add_preexec_hook my_func
-niubash_add_postcmd_hook my_func
-niubash_add_chpwd_hook my_func
-niubash_add_period_hook my_func
-niubash_add_zshaddhistory_hook my_func
-niubash_add_zshexit_hook my_func
-niubash_add_greeting_hook my_func
-niubash_add_title_hook my_func
+native_shell_add_startup_hook my_func
+native_shell_add_precmd_hook my_func
+native_shell_add_preexec_hook my_func
+native_shell_add_postcmd_hook my_func
+native_shell_add_chpwd_hook my_func
+native_shell_add_period_hook my_func
+native_shell_add_zshaddhistory_hook my_func
+native_shell_add_zshexit_hook my_func
+native_shell_add_greeting_hook my_func
+native_shell_add_title_hook my_func
 
 # Trap hooks (only trapint auto-triggers on Windows)
-niubash_add_trapdebug_hook my_func
-niubash_add_traperr_hook my_func
-niubash_add_trapint_hook my_func      # Ctrl+C
-niubash_add_trapwinch_hook my_func    # Not triggered on Windows
-niubash_add_trapusr1_hook my_func     # Not triggered on Windows
-niubash_add_trapusr2_hook my_func     # Not triggered on Windows
-niubash_add_trappipe_hook my_func
-niubash_add_trapterm_hook my_func
-niubash_add_trapchld_hook my_func
-niubash_add_trappzerr_hook my_func
+native_shell_add_trapdebug_hook my_func
+native_shell_add_traperr_hook my_func
+native_shell_add_trapint_hook my_func      # Ctrl+C
+native_shell_add_trapwinch_hook my_func    # Not triggered on Windows
+native_shell_add_trapusr1_hook my_func     # Not triggered on Windows
+native_shell_add_trapusr2_hook my_func     # Not triggered on Windows
+native_shell_add_trappipe_hook my_func
+native_shell_add_trapterm_hook my_func
+native_shell_add_trapchld_hook my_func
+native_shell_add_trappzerr_hook my_func
 ```
 
 ## Future Improvements

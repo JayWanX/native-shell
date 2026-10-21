@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
   diskfull-vhd.ps1 -- a disposable small VHD that simulates "disk full"
-  during niu installs/syncs (adversarial-matrix lane AM06).
+  during native-shell installs/syncs (adversarial-matrix lane AM06).
 
 .DESCRIPTION
   Creates a mountable NTFS volume of an exact small size (default 200 MB --
-  the E:200MB sandbox shape), so a lane probe can drive `niu plugin add` /
+  the E:200MB sandbox shape), so a lane probe can drive `native-shell plugin add` /
   collection apply / wizard apply with a HOME that genuinely runs out of
   space mid-write. Deterministic, repeatable, and disposable: Remove
   detaches and deletes the VHD file, leaving the host volume untouched.

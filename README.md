@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/niubash-banner.svg" alt="niubash — real Bash, native on Windows, Linux, and macOS." />
+  <img src="assets/native-shell-banner.svg" alt="native-shell — real Bash, native on Windows, Linux, and macOS." />
 </p>
 
 > **Real Bash, native on Windows, Linux, and macOS.** "Windows-only" is the
@@ -12,17 +12,17 @@
 
 [English](README.md) · [中文](README-zh.md)
 
-[![niubash CI](https://github.com/unixwin/niubash/actions/workflows/ci.yml/badge.svg)](https://github.com/unixwin/niubash/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/unixwin/niubash)](https://github.com/unixwin/niubash/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)](https://github.com/unixwin/niubash)
-[![Rust](https://img.shields.io/badge/rust-1.95%2B-orange)](https://github.com/unixwin/niubash)
+[![native-shell CI](https://github.com/JayWanX/native-shell/actions/workflows/ci.yml/badge.svg)](https://github.com/JayWanX/native-shell/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/JayWanX/native-shell)](https://github.com/JayWanX/native-shell/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)](https://github.com/JayWanX/native-shell)
+[![Rust](https://img.shields.io/badge/rust-1.95%2B-orange)](https://github.com/JayWanX/native-shell)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/unixwin/niubash)](https://github.com/unixwin/niubash/stargazers)
+[![Stars](https://img.shields.io/github/stars/JayWanX/native-shell)](https://github.com/JayWanX/native-shell/stargazers)
 
 </div>
 
-**niubash** is a Bash-compatible shell implemented natively in Rust. On
-Windows, the flagship platform, one `niu.exe` bundles everything: the
+**native-shell** is a Bash-compatible shell implemented natively in Rust. On
+Windows, the flagship platform, one `native-shell.exe` bundles everything: the
 [rubash](https://github.com/unixwin/rubash) language engine, real Unix
 commands from [winuxcmd](https://github.com/unixwin/winuxcmd), a git-aware
 prompt, and a permission-modeled plugin system. Git comes from
@@ -30,12 +30,12 @@ prompt, and a permission-modeled plugin system. Git comes from
 source built with MSVC, so the `git` on PATH *is* the git binary — no MSYS
 runtime, no launcher hop, no bundled perl. `git --version` starts in **~14
 ms** where Git Bash's `git` takes 45-103 ms, and the shell-script parts of
-git (hooks, `git bisect`, `git mergetool`) run on niubash's own `sh`. Agents
-launched from a niu session inherit it as their shell through `SHELL`; see
+git (hooks, `git bisect`, `git mergetool`) run on native-shell's own `sh`. Agents
+launched from a native-shell session inherit it as their shell through `SHELL`; see
 [Coding agents on Windows](docs/src/agents.md) for which shell each agent runs
-and how to point the rest at niu. The
+and how to point the rest at native-shell. The
 Linux and macOS builds
-are portable `niu` binaries that use your system's own tools. niu is not
+are portable `native-shell` binaries that use your system's own tools. native-shell is not
 MSYS2, Cygwin, Git Bash, or WSL — there is no POSIX emulation layer and no
 path-conversion heuristics. The full per-platform contract, including the
 honest status of every target, lives in
@@ -61,17 +61,17 @@ The per-platform contract and the full status matrix live in
 
 Quick answers:
 
-- **Does niu require WSL?** No. niu is a native build on every platform it
+- **Does native-shell require WSL?** No. native-shell is a native build on every platform it
   ships for: on Windows there is no Linux VM, no emulation layer, no
   `/mnt/c`.
-- **What platforms does niu run on?** Released builds cover Windows (x64,
+- **What platforms does native-shell run on?** Released builds cover Windows (x64,
   ARM64), Linux (x86_64, aarch64; glibc 2.35+), and macOS (aarch64,
   x86_64). Android (aarch64, armv7) and OpenHarmony (aarch64) build in CI
   and have no release yet.
-- **Does niu run real Bash scripts?** Yes. The rubash engine is gated on
+- **Does native-shell run real Bash scripts?** Yes. The rubash engine is gated on
   GNU Bash's own upstream test suites; the record lives in the
   [compatibility matrix](docs/src/rubash-bash-compat-matrix.md).
-- **Can I install niu on Android or HarmonyOS today?** Not yet. Both
+- **Can I install native-shell on Android or HarmonyOS today?** Not yet. Both
   targets compile in CI, neither has passed a runtime smoke test, so there
   is nothing to install.
 
@@ -82,7 +82,7 @@ baseline file, a CI gate.
 
 **6,336 real-world shell assets, harvested and replayed one by one.** The
 pipeline pulls shell scripts, frameworks, themes, and dotfiles from GitHub
-and sources each one under niu, recording a per-asset verdict: 4,891 OK,
+and sources each one under native-shell, recording a per-asset verdict: 4,891 OK,
 350 slow, 224 that GNU Bash also fails, 101 hangs, 698 that never fetched.
 The full log is committed
 ([eco-harvest.py](scripts/harvest/eco-harvest.py),
@@ -110,39 +110,39 @@ once the fix currently in flight lands.
 
 ## Quick start
 
-Windows: grab `niubash-v*-win-*-setup.exe` from
-[Releases](https://github.com/unixwin/niubash/releases) and run it — no
+Windows: grab `native-shell-v*-win-*-setup.exe` from
+[Releases](https://github.com/JayWanX/native-shell/releases) and run it — no
 admin rights; PATH and a Windows Terminal profile are set up for you.
 Prefer portable? Take the `.tar.gz` — it ships the bundled git/awk payload
 as real hardlinks, so it downloads and unpacks much smaller than the `.zip`
-(`tar -xf niubash-v*-win-x64.tar.gz`, built into Windows 10+). The `.zip`
+(`tar -xf native-shell-v*-win-x64.tar.gz`, built into Windows 10+). The `.zip`
 stays for tooling that only speaks zip.
 
 Linux (x86_64, aarch64; glibc 2.35+) and macOS (aarch64, x86_64): take the
 portable tarball, untar, run:
 
 ```sh
-tar -xzf niubash-v*-linux-x86_64.tar.gz && niubash-v*-linux-x86_64/niu
+tar -xzf native-shell-v*-linux-x86_64.tar.gz && native-shell-v*-linux-x86_64/native-shell
 ```
 
 From source (Rust 1.95+):
-`git clone https://github.com/unixwin/niubash.git && cd niubash && cargo build --release`
+`git clone https://github.com/JayWanX/native-shell.git && cd native-shell && cargo build --release`
 
-Configuration is one file, `~/.niubashrc`, in plain Bash syntax — start
+Configuration is one file, `~/.native-shellrc`, in plain Bash syntax — start
 with [Getting started](docs/src/getting-started.md).
 
 ## Documentation
 
-[Docs site](https://unixwin.github.io/niubash/) ·
-[Why niubash](docs/src/why-niubash.md) (the long version, with the agent
+[Docs site](https://unixwin.github.io/native-shell/) ·
+[Why native-shell](docs/src/why-native-shell.md) (the long version, with the agent
 casualties) · [Platform support](docs/src/platform-support.md) ·
 [Bash compatibility matrix](docs/src/rubash-bash-compat-matrix.md) ·
-[Roadmap](docs/src/niubash-roadmap.md)
+[Roadmap](docs/src/native-shell-roadmap.md)
 
 ---
 
-If niu saved you a Linux VM, a mangled quote, or an argument PowerShell
-ate, [star the repo](https://github.com/unixwin/niubash) and tell a
+If native-shell saved you a Linux VM, a mangled quote, or an argument PowerShell
+ate, [star the repo](https://github.com/JayWanX/native-shell) and tell a
 developer. ★
 
 ## License

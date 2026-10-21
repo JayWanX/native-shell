@@ -2,15 +2,15 @@
 """Control experiment: the ConPTY/pywinpty channel drops output written
 in the final moments before process exit.
 
-Why this exists (wt82-L02): `niu setup` (the setup verb) exits right
+Why this exists (wt82-L02): `native-shell setup` (the setup verb) exits right
 after its finish screen, and the finish-screen tail ("Undo this run:" /
 "Change things later:") never arrived through the ConPTY session — while
-first-contact runs (bare `niu`, which stay alive in the REPL) always
+first-contact runs (bare `native-shell`, which stay alive in the REPL) always
 print their full finish screen. Before blaming the product, this probe
 runs a trivial child that prints 12 flushed lines and exits immediately:
 
 - without a wrapper, the last lines are LOST (the exit-flush window),
-- the journal/backup files prove the niu wizard ran to completion and
+- the journal/backup files prove the native-shell wizard ran to completion and
   exited 0 — the bytes were written, the CHANNEL lost them.
 
 Consequence for the lane: any assertion on the tail of an exiting
@@ -43,7 +43,7 @@ def main() -> int:
     args.artifacts.mkdir(parents=True, exist_ok=True)
 
     root = Path(tempfile.mkdtemp(prefix="wt82-exit-flush-"))
-    exe = args.artifacts.parents[2] / "release" / "niu.exe"
+    exe = args.artifacts.parents[2] / "release" / "native-shell.exe"
     env = build_env(root, exe)
 
     child = root / "child.py"
@@ -74,7 +74,7 @@ def main() -> int:
         "INTERPRETATION: output written in the final moments before "
         "process exit is dropped by the ConPTY/pywinpty channel. A "
         "first-contact wizard run (REPL stays alive) loses nothing — "
-        "the truncation is a property of the probe channel, not of niu.",
+        "the truncation is a property of the probe channel, not of native-shell.",
     ]
     report = "\n".join(lines) + "\n"
     (args.artifacts / "control-exit-flush.txt").write_text(

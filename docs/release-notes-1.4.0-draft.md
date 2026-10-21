@@ -1,4 +1,4 @@
-# niubash 1.4.0 — Release Notes (DRAFT)
+# native-shell 1.4.0 — Release Notes (DRAFT)
 
 > **Status: draft.** Do not tag or trigger the release workflow from this
 > branch. Entries marked **[in flight]** depend on work the release
@@ -10,7 +10,7 @@
 
 ## English
 
-niubash 1.4.0 is a compatibility-and-comfort release: the engine tracks
+native-shell 1.4.0 is a compatibility-and-comfort release: the engine tracks
 GNU Bash 5.3.0 much more closely (83-suite diff −40%), login shells and
 real readline editing arrive, pasting a multiline script finally behaves
 like bash on both platforms, and the plugin/doctor/config surfaces get a
@@ -25,7 +25,7 @@ round of honesty fixes.
   `~/.bashrc`. `--noprofile`/`--norc` suppress the corresponding branch.
   (Windows accepts the flags with unchanged behavior.)
 - **Real readline REPL on the bare console** (engine): a console-attached
-  `rubash`/`niu` now has raw-mode line editing — history recall (arrows,
+  `rubash`/`native-shell` now has raw-mode line editing — history recall (arrows,
   C-p/C-n), in-line cursor motion, C-r reverse search — instead of
   conhost's cooked line buffer.
 - **GNU paste semantics on both platforms**: Unix terminals get real
@@ -37,20 +37,20 @@ round of honesty fixes.
   bionic-linked aarch64/armv7 Android zips (ELF-verified), OpenHarmony
   aarch64 check-only for now; both legs are continue-on-error and outside
   the release needs while they season.
-- **`niu doctor` timing advice** (#241): points timing-sensitive scripts
+- **`native-shell doctor` timing advice** (#241): points timing-sensitive scripts
   at the bash 5 builtin `$EPOCHREALTIME`/`$EPOCHSECONDS` instead of
   paying Windows process creation for every `$(date +%s%N)`.
-- **"Calling PowerShell from niu" documentation** (#253, #203), plus a
-  plain statement that niu's MSYS labels are a persona of a pure native
+- **"Calling PowerShell from native-shell" documentation** (#253, #203), plus a
+  plain statement that native-shell's MSYS labels are a persona of a pure native
   Windows build — no msys-2.0.dll, no cygwin1.dll (#248).
 - **Vi editing mode** (#184): `set -o vi` / `set -o emacs` switch the
   live line editor mid-session, with a floor vi-mode indicator.
-- **Agent skill bundle** (#188): `niu skill install` / `niu skill status`
-  ship the generated niubash skill (SKILL.md + quickref) into agent skill
-  dirs; releases attach `niubash-skill-v*.zip`.
+- **Agent skill bundle** (#188): `native-shell skill install` / `native-shell skill status`
+  ship the generated native-shell skill (SKILL.md + quickref) into agent skill
+  dirs; releases attach `native-shell-skill-v*.zip`.
 - **Batteries pre-installed by the release pipeline** (#189, #230): the
   Windows release zip and installer carry gawk (GNU Awk 5.4.1, with an
-  `awk` shim), niugit 2.55.0.3, ripgrep 15.2.0 and fd 10.4.2 installed
+  `awk` shim), native-git 2.55.0.3, ripgrep 15.2.0 and fd 10.4.2 installed
   from the wpm index at packaging time — plugin distros and search work
   on a fresh machine with no network fetch.
 - **WinuxCmd applet completions compiled in** (#172): all 180 bundled
@@ -63,7 +63,7 @@ round of honesty fixes.
   carapace-bin completion source that #243 merged into the shell core is
   removed before release (no tag ever carried it, so there is nothing to
   migrate); providers integrate through the standard bash completion
-  protocol from `~/.niubashrc` instead, and `niu setup` offers an opt-in
+  protocol from `~/.native-shellrc` instead, and `native-shell setup` offers an opt-in
   carapace-bin snippet (default off). The native completion layers —
   embedded WinuxCmd applet TOMLs, definition files, `complete` compspecs,
   compdef functions — are unchanged. See the new "External Completion
@@ -80,17 +80,17 @@ round of honesty fixes.
   pinned by a 12-prompt-cycle ConPTY regression (#250).
 - **A corrupt plugin source registry is never silently rewritten**
   (#178): unparsable registry.toml bytes are preserved to
-  `registry.toml.corrupt`, writes are refused, and `niu doctor` names the
+  `registry.toml.corrupt`, writes are refused, and `native-shell doctor` names the
   parse error — pin commits, checksums and trust state survive (#246).
 - **Command-not-found no longer advertises package managers** (#249):
   the unsolicited winget/scoop/choco hint block is gone; a wpm-only hint
-  is available opt-in via `niu config set command-not-found-hint wpm`
+  is available opt-in via `native-shell config set command-not-found-hint wpm`
   (#251).
 - **Setup wizard audit P2 batch** (#179): the undo receipt covers the
-  generated rc, Ctrl-C prints the cancelled note, `niu plugin discover`
+  generated rc, Ctrl-C prints the cancelled note, `native-shell plugin discover`
   enumerates themes, zh strings realign with the runtime, gutted sources
   name the repair verb (#239).
-- **`niu doctor` on Linux/macOS** (#194): Windows-only checks report n/a
+- **`native-shell doctor` on Linux/macOS** (#194): Windows-only checks report n/a
   instead of failing the critical tally (#242).
 - **Raw ESC bytes survive** (#200): a word-initial ESC inside quotes in a
   script file is no longer dropped by the lexer (#235, engine fix
@@ -126,7 +126,7 @@ round of honesty fixes.
 
 ## 中文
 
-niubash 1.4.0 是一个兼容性与手感版本：引擎进一步对齐 GNU Bash 5.3.0
+native-shell 1.4.0 是一个兼容性与手感版本：引擎进一步对齐 GNU Bash 5.3.0
 （83 套件差量 −40%），登录 shell 与真 readline 行编辑落地，多行粘贴在
 两个平台都恢复 bash 语义，插件/doctor/config 面完成一轮诚实性修复。
 
@@ -137,7 +137,7 @@ niubash 1.4.0 是一个兼容性与手感版本：引擎进一步对齐 GNU Bash
   `~/.bash_profile` | `~/.bash_login` | `~/.profile`；非登录交互 shell
   读 `/etc/bash.bashrc` + `~/.bashrc`；`--noprofile`/`--norc` 分别抑制。
   （Windows 接受这些标志，行为不变。）
-- **裸控制台真 readline REPL**（引擎）：控制台直连的 `rubash`/`niu`
+- **裸控制台真 readline REPL**（引擎）：控制台直连的 `rubash`/`native-shell`
   获得原始模式行编辑 —— 历史召回（方向键、C-p/C-n）、行内光标移动、
   C-r 反向搜索，不再受限于 conhost 的 cooked 行缓冲。
 - **两平台 GNU 粘贴语义**：Unix 终端启用真括号粘贴（粘贴的换行不再
@@ -146,19 +146,19 @@ niubash 1.4.0 是一个兼容性与手感版本：引擎进一步对齐 GNU Bash
 - **Android / OpenHarmony 目标进入发版 CI 孵化**（#247）：bionic 链接
   的 aarch64/armv7 Android zip（ELF 校验）；OpenHarmony aarch64 暂为
   check-only；两条腿 continue-on-error，不进 release needs。
-- **`niu doctor` 计时建议**（#241）：把计时敏感脚本指向 bash 5 内建
+- **`native-shell doctor` 计时建议**（#241）：把计时敏感脚本指向 bash 5 内建
   `$EPOCHREALTIME`/`$EPOCHSECONDS`，不再为每次 `$(date +%s%N)` 支付
   Windows 进程创建开销。
-- **"从 niu 调用 PowerShell"文档**（#253、#203），并明确 niu 的 MSYS
+- **"从 native-shell 调用 PowerShell"文档**（#253、#203），并明确 native-shell 的 MSYS
   标签只是纯原生 Windows 构建的兼容 persona —— 无 msys-2.0.dll、无
   cygwin1.dll（#248）。
 - **Vi 编辑模式**（#184）：`set -o vi` / `set -o emacs` 会话内即时切换
   行编辑器，底部提示带 vi 模式指示符。
-- **Agent skill 包**（#188）：`niu skill install` / `niu skill status`
-  把生成式 niubash skill（SKILL.md + quickref）装进 agent skill 目录；
-  发版附件新增 `niubash-skill-v*.zip`。
+- **Agent skill 包**（#188）：`native-shell skill install` / `native-shell skill status`
+  把生成式 native-shell skill（SKILL.md + quickref）装进 agent skill 目录；
+  发版附件新增 `native-shell-skill-v*.zip`。
 - **发版管线预装常用件**（#189、#230）：Windows release zip 与安装包
-  携带 gawk（GNU Awk 5.4.1，含 `awk` shim）、niugit 2.55.0.3、
+  携带 gawk（GNU Awk 5.4.1，含 `awk` shim）、native-git 2.55.0.3、
   ripgrep 15.2.0、fd 10.4.2（打包时经 wpm 索引安装）—— 全新机器无需
   联网即可用插件发行版与搜索。
 - **WinuxCmd applet 补全内置**（#172）：180 个内置 applet 全部零配置
@@ -168,8 +168,8 @@ niubash 1.4.0 是一个兼容性与手感版本：引擎进一步对齐 GNU Bash
 
 - **补全 provider 回归 rc 数据层**（#243）：#243 内嵌进 shell 核心的
   carapace-bin 补全源在发版前移除（没有任何 tag 携带过它，无迁移负担）；
-  provider 改为从 `~/.niubashrc` 按标准 bash completion 协议接入，
-  `niu setup` 提供可选项（默认关）写入标准 carapace-bin 片段。原生补全层
+  provider 改为从 `~/.native-shellrc` 按标准 bash completion 协议接入，
+  `native-shell setup` 提供可选项（默认关）写入标准 carapace-bin 片段。原生补全层
   —— 内置 WinuxCmd applet TOML、补全定义文件、`complete` compspec、
   compdef 函数 —— 全部不变。见新文档页「External Completion Providers」。
 
@@ -183,16 +183,16 @@ niubash 1.4.0 是一个兼容性与手感版本：引擎进一步对齐 GNU Bash
   回归钉死（#250）。
 - **损坏的插件源 registry 不再被静默重写**（#178）：解析失败的
   registry.toml 原字节快照到 `registry.toml.corrupt`，拒绝一切写入，
-  `niu doctor` 指明解析错误 —— pin commit、校验和与信任状态得以存活
+  `native-shell doctor` 指明解析错误 —— pin commit、校验和与信任状态得以存活
   （#246）。
 - **command-not-found 不再打包管理器广告**（#249）：无请自来的
   winget/scoop/choco 提示块移除；可用
-  `niu config set command-not-found-hint wpm` 选择性开启仅 wpm 的提示
+  `native-shell config set command-not-found-hint wpm` 选择性开启仅 wpm 的提示
   （#251）。
 - **安装向导审计 P2 批次**（#179）：撤销回执覆盖生成的 rc、Ctrl-C
-  输出取消提示、`niu plugin discover` 枚举主题层、zh 文案与运行时
+  输出取消提示、`native-shell plugin discover` 枚举主题层、zh 文案与运行时
   字符串对齐、被掏空的源给出修复动词（#239）。
-- **Linux/macOS 上的 `niu doctor`**（#194）：Windows 专属检查项报 n/a，
+- **Linux/macOS 上的 `native-shell doctor`**（#194）：Windows 专属检查项报 n/a，
   不再拖垮 critical 计数（#242）。
 - **原始 ESC 字节存活**（#200）：脚本文件内引号中行首 ESC 不再被词法
   器吞掉（#235，引擎修复 rubash#474）。
@@ -228,34 +228,34 @@ x64 MSVC; the release runner repeats all of this per target):
 
 - `cargo build --release --workspace`: **PASS** (3m 45s full build,
   1m 52s incremental re-verify with the final manifests). Artifacts:
-  `target/release/niu.exe` — 10,618,368 bytes. Two pre-existing
-  warnings in `niubash-runtime` (unused `adapter` binding in
+  `target/release/native-shell.exe` — 10,618,368 bytes. Two pre-existing
+  warnings in `native-shell-runtime` (unused `adapter` binding in
   `plugins/assets.rs`, never-constructed `ShellChannel::Stdout`) — both
   on master, not introduced by this branch. Built `--offline --locked`
   against the `[patch]`-ed local `../rubash` worktree; CI keeps its
   normal resolution.
 - MSIX (draft, **unsigned**): `python scripts/make_msix.py` produced
-  `target/msix/Niubash_1.4.0.0_x64.msix` — 5,149,660 bytes, packed with
+  `target/msix/Native Shell_1.4.0.0_x64.msix` — 5,149,660 bytes, packed with
   makeappx (Windows SDK 10.0.26100). Version read from Cargo.toml as
   `1.4.0.0` (Store reserves the fourth segment). Identity fields are
-  clearly-labeled placeholders (`unixwin-niubash-draft` /
+  clearly-labeled placeholders (`unixwin-native-shell-draft` /
   `CN=00000000-…`); no real Partner Center identity exists in the repo,
   so the Store submission run must re-invoke with the real ones. The
   script ships unsigned by design — no signing step was run.
 - wpm index cross-check (unixwin/wpm-source `main`, `index.json`): all
   four `scripts/release/preinstall.json` entries resolvable — gawk
-  5.4.1 (windows-x64), niugit 2.55.0.3 (windows-x64), ripgrep 15.2.0
+  5.4.1 (windows-x64), native-git 2.55.0.3 (windows-x64), ripgrep 15.2.0
   (windows-x64 + windows-arm64), fd 10.4.2 (windows-x64 +
   windows-arm64). Matches the manifest's claims, including the arm64
   availability notes.
 - `cargo publish --dry-run` (owner-configured crates.io credentials;
   formal publish stays post-tag): **blocked upstream, by design of the
   chain** —
-  - `niubash-runtime 1.4.0`: fails selecting `rubash "^1.3.4"` from
+  - `native-shell-runtime 1.4.0`: fails selecting `rubash "^1.3.4"` from
     crates.io (index carries only ≤1.2.0). Unblocks when the engine
     publishes rubash ≥1.3.4 (ideally 1.4.0 in lockstep).
-  - `niubash 1.4.0`: fails selecting `niubash-runtime "^1.4.0"`
-    (index carries 1.2.0 / 0.0.1). Unblocks after niubash-runtime 1.4.0
-    is published — publish order: rubash → niubash-runtime → niubash.
-  - Lint note: `niubash-runtime`'s manifest has no
+  - `native-shell 1.4.0`: fails selecting `native-shell-runtime "^1.4.0"`
+    (index carries 1.2.0 / 0.0.1). Unblocks after native-shell-runtime 1.4.0
+    is published — publish order: rubash → native-shell-runtime → native-shell.
+  - Lint note: `native-shell-runtime`'s manifest has no
     `homepage`/`repository` (warning only).

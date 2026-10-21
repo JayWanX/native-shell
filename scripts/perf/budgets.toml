@@ -1,4 +1,4 @@
-# niubash per-asset timing budgets — the release-gate teeth.
+# native-shell per-asset timing budgets — the release-gate teeth.
 #
 # Owner iron directive (2026-10-04): every plugin asset down to every theme
 # FILE gets a measured time (scripts/perf/asset-timing.py), enforced at
@@ -20,7 +20,7 @@
 #   theme source <= 250ms, first prompt <= 400ms, re-render <= 120ms,
 #   hard fail at 5x budget, per-phase hard cap 5s.
 # The 2026-10-02 baseline (scripts/perf/baselines/
-# asset-timing-baseline.json, 437 assets, niu 1.3.3 / rubash 646237e93532,
+# asset-timing-baseline.json, 437 assets, native-shell 1.3.3 / rubash 646237e93532,
 # Win10 19044, 4 workers) shows the class defaults BELOW had to be ratified
 # above those targets: the oh-my-bash / bash-it loaders themselves cost
 # ~350-1000ms of source wall on Windows (per-file sourcing + real-time
@@ -30,7 +30,7 @@
 # the mandated targets remain the fix-lane goal. Deleting a ratified default
 # restores the mandate for that class immediately.
 
-schema = "niubash:perf-asset-budgets@1.0.0"
+schema = "native-shell:perf-asset-budgets@1.0.0"
 updated = "2026-10-13"
 # 12s: the runner's ConPTY first-prompt window clusters at 4.1-4.8s (run
 # 38404767765: omb.theme fp med 4500ms, p90 4781ms) — under the old 5s cap
@@ -89,7 +89,7 @@ hard_fail_multiplier = 5
 
 # Per-asset overrides — table key = "<class>:<name>". Every entry carries a
 # justification referencing the committed baseline. The baseline run of
-# 2026-10-02 (niu 1.3.3, rubash git 646237e93532, Win10 19044, workers=4)
+# 2026-10-02 (native-shell 1.3.3, rubash git 646237e93532, Win10 19044, workers=4)
 # is scripts/perf/baselines/asset-timing-baseline.json.
 [assets]
 # ── Ratified single-asset stragglers over their class p90 (baseline ±15%).
@@ -108,7 +108,7 @@ hard_fail_multiplier = 5
 # runs the substitution through the prompt-string EXPANSION path — which
 # the engine executes ~100x slower than the same call made from
 # PROMPT_COMMAND. Ablation on the dev box (rubash ade520de-generation
-# niu.exe, oh-my-bash@abf8461, N=3 medians): pristine axin rerender
+# native-shell.exe, oh-my-bash@abf8461, N=3 medians): pristine axin rerender
 # 1566ms; with ONLY the PS1-embedded scm call removed 110ms (-93%),
 # while removing the theme's clock (`$(date)`) or the python-venv probe
 # changed nothing (1575/1587ms). Same ordering on every machine measured:
@@ -159,11 +159,11 @@ hard_fail_multiplier = 5
 #   omb.theme:iterate       src 4883ms
 #   bashit.theme:iterate    src 4882ms
 #
-# Dead under niu (rc aborts, no prompt, no sentinels) — niu compat gaps,
+# Dead under native-shell (rc aborts, no prompt, no sentinels) — native-shell compat gaps,
 # themes source fine under GNU bash:
-#   bashit.theme:emperor    "niu: prompt_color: parameter not set"
-#   bashit.theme:gallifrey  "niu: bold: parameter not set"
-#   bashit.theme:modern     "niu: python_venv: parameter not set"
+#   bashit.theme:emperor    "native-shell: prompt_color: parameter not set"
+#   bashit.theme:gallifrey  "native-shell: bold: parameter not set"
+#   bashit.theme:modern     "native-shell: python_venv: parameter not set"
 #
 # Re-render over the mandated 120ms (user pays this on every ENTER):
 #   omb.theme:axin 544ms · omb.theme:clean 541ms · omb.theme:simple 464ms
@@ -180,7 +180,7 @@ hard_fail_multiplier = 5
 # SAME-CLASS — the pathological five measure 5983-6170ms (git siblings
 # 5983/6170 vs 6090/6498 documented; the 6s STARTUP fetch fix does not
 # apply to these: their wall is the plugin's own sourcing behavior, not a
-# niu git transport) and the dead three still abort. Drift OUT of this
+# native-shell git transport) and the dead three still abort. Drift OUT of this
 # list (measured under the 120ms mandate now): bashit.theme:elixr 101ms,
 # omb.theme:rana 103ms, omb.theme:tonka 106ms, omb.theme:edsonarios 117ms
 # (baseline 171/174/172/123). Two label corrections against the baseline

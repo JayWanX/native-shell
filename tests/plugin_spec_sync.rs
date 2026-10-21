@@ -1,6 +1,6 @@
 //! Declarative-spec pinning tests (design §14.6.3, wt46/anyplug):
 //!
-//! * `niu plugin sync` materializes the rc managed block from the spec
+//! * `native-shell plugin sync` materializes the rc managed block from the spec
 //!   **idempotently** — an unchanged spec yields a byte-identical rc and a
 //!   clean report; `--bootstrap` is always a silent compatibility no-op;
 //! * merge semantics: entries the spec dropped leave the block, hand-added
@@ -8,34 +8,38 @@
 //!   declares none;
 //! * cleanup honesty: installed-but-undeclared sources get a suggestion,
 //!   never an auto-delete; `--prune` is the explicit confirm;
-//! * CLI = sugar: `niu plugin add` + `niu plugin enable` produce the same
+//! * CLI = sugar: `native-shell plugin add` + `native-shell plugin enable` produce the same
 //!   spec file and the same rc block as hand-writing the spec and syncing.
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
-fn run_niu_with_env(args: &[&str], envs: &[(&str, String)]) -> Output {
-    let mut command = Command::new(niu_binary());
+fn run_native_shell_with_env(args: &[&str], envs: &[(&str, String)]) -> Output {
+    let mut command = Command::new(native_shell_binary());
     command.args(args);
     for (key, value) in envs {
         command.env(key, value);
     }
     command
         .output()
-        .unwrap_or_else(|err| panic!("failed to run niu {args:?}: {err}"))
+        .unwrap_or_else(|err| panic!("failed to run native-shell {args:?}: {err}"))
 }
 
 fn assert_success(output: &Output, context: &str) {
@@ -61,7 +65,10 @@ fn temp_dir(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("niubash-{name}-{}-{nanos}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "native-shell-{name}-{}-{nanos}",
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -87,17 +94,17 @@ impl Sandbox {
         let home = temp.join("home");
         let sources_root = temp.join("sources");
         fs::create_dir_all(&home).unwrap();
-        fs::create_dir_all(home.join(".niubash")).unwrap();
+        fs::create_dir_all(home.join(".native-shell")).unwrap();
         let envs = vec![
             ("HOME", home.to_string_lossy().into_owned()),
             ("USERPROFILE", home.to_string_lossy().into_owned()),
             (
-                "NIU_PLUGIN_SOURCES_ROOT",
+                "NATIVE_SHELL_PLUGIN_SOURCES_ROOT",
                 sources_root.to_string_lossy().into_owned(),
             ),
             (
-                "NIU_PLUGIN_SPEC",
-                home.join(".niubash")
+                "NATIVE_SHELL_PLUGIN_SPEC",
+                home.join(".native-shell")
                     .join("plugins.toml")
                     .to_string_lossy()
                     .into_owned(),
@@ -111,30 +118,30 @@ impl Sandbox {
     }
 
     fn rc(&self) -> String {
-        fs::read_to_string(self.home.join(".niubashrc")).unwrap_or_default()
+        fs::read_to_string(self.home.join(".native-shellrc")).unwrap_or_default()
     }
 
-    /// The generated loader's text (niubash#359: the activation plane the
+    /// The generated loader's text (native-shell#359: the activation plane the
     /// verbs publish; the user rc is never written).
     fn loader(&self) -> String {
         fs::read_to_string(
             self.home
-                .join(".niubash")
+                .join(".native-shell")
                 .join("generated")
-                .join("plugins.niu"),
+                .join("plugins.nsh"),
         )
         .unwrap_or_default()
     }
 
     fn loader_path(&self) -> PathBuf {
         self.home
-            .join(".niubash")
+            .join(".native-shell")
             .join("generated")
-            .join("plugins.niu")
+            .join("plugins.nsh")
     }
 
     fn spec_path(&self) -> PathBuf {
-        self.home.join(".niubash").join("plugins.toml")
+        self.home.join(".native-shell").join("plugins.toml")
     }
 
     fn spec(&self) -> String {
@@ -155,7 +162,7 @@ fn sync_is_idempotent_bootstrap_quiet_and_merges_honestly() {
     fs::write(
         sandbox.spec_path(),
         format!(
-            "schema = \"niubash:plugin-spec@0.1.0\"\n\
+            "schema = \"native-shell:plugin-spec@0.1.0\"\n\
              \n\
              [[sources]]\n\
              target = '{origin}'\n\
@@ -168,22 +175,23 @@ fn sync_is_idempotent_bootstrap_quiet_and_merges_honestly() {
 
     // Sync 1: install (fetch gate only) — lands untrusted, nothing
     // activated, and the exact trust command is printed.
-    let first = run_niu_with_env(&["plugin", "sync"], &sandbox.envs);
+    let first = run_native_shell_with_env(&["plugin", "sync"], &sandbox.envs);
     assert_success(&first, "sync 1");
     let first_out = stdout_text(&first);
     assert!(
-        first_out.contains("awaiting-trust") && first_out.contains("niu plugin trust oh-my-bash"),
+        first_out.contains("awaiting-trust")
+            && first_out.contains("native-shell plugin trust oh-my-bash"),
         "{first_out}"
     );
     assert!(sandbox.rc().is_empty(), "untrusted activates nothing");
     assert_success(
-        &run_niu_with_env(&["plugin", "trust", "oh-my-bash"], &sandbox.envs),
+        &run_native_shell_with_env(&["plugin", "trust", "oh-my-bash"], &sandbox.envs),
         "trust",
     );
 
     // Sync 2: materialize from the spec into the generated loader (the rc
-    // is never written -- niubash#359).
-    let second = run_niu_with_env(&["plugin", "sync"], &sandbox.envs);
+    // is never written -- native-shell#359).
+    let second = run_native_shell_with_env(&["plugin", "sync"], &sandbox.envs);
     assert_success(&second, "sync 2");
     let loader_after = sandbox.loader();
     assert!(
@@ -196,7 +204,7 @@ fn sync_is_idempotent_bootstrap_quiet_and_merges_honestly() {
 
     // Sync 3 (the idempotency pin): byte-identical loader, all rows
     // unchanged, report says in sync.
-    let third = run_niu_with_env(&["plugin", "sync"], &sandbox.envs);
+    let third = run_native_shell_with_env(&["plugin", "sync"], &sandbox.envs);
     assert_success(&third, "sync 3");
     assert_eq!(
         sandbox.loader(),
@@ -211,7 +219,7 @@ fn sync_is_idempotent_bootstrap_quiet_and_merges_honestly() {
     );
 
     // Bootstrap is a silent no-op (stdout AND stderr).
-    let boot = run_niu_with_env(&["plugin", "sync", "--bootstrap"], &sandbox.envs);
+    let boot = run_native_shell_with_env(&["plugin", "sync", "--bootstrap"], &sandbox.envs);
     assert_success(&boot, "bootstrap clean");
     assert!(
         stdout_text(&boot).is_empty() && stderr_text(&boot).is_empty(),
@@ -233,7 +241,7 @@ fn sync_is_idempotent_bootstrap_quiet_and_merges_honestly() {
     fs::write(
         sandbox.spec_path(),
         format!(
-            "schema = \"niubash:plugin-spec@0.1.0\"\n\
+            "schema = \"native-shell:plugin-spec@0.1.0\"\n\
              \n\
              [[sources]]\n\
              target = '{origin}'\n\
@@ -242,7 +250,7 @@ fn sync_is_idempotent_bootstrap_quiet_and_merges_honestly() {
         ),
     )
     .unwrap();
-    let merged = run_niu_with_env(&["plugin", "sync"], &sandbox.envs);
+    let merged = run_native_shell_with_env(&["plugin", "sync"], &sandbox.envs);
     assert_success(&merged, "merge sync");
     let loader = sandbox.loader();
     assert!(
@@ -263,7 +271,7 @@ fn sync_is_idempotent_bootstrap_quiet_and_merges_honestly() {
     // survive not just the sync that first sees them but every later sync
     // of an unchanged spec (they must never be absorbed into the spec's
     // own recorded selection and then dropped by a subsequent change).
-    let settled = run_niu_with_env(&["plugin", "sync"], &sandbox.envs);
+    let settled = run_native_shell_with_env(&["plugin", "sync"], &sandbox.envs);
     assert_success(&settled, "settling sync");
     let loader = sandbox.loader();
     assert!(
@@ -279,7 +287,7 @@ fn sync_is_idempotent_bootstrap_quiet_and_merges_honestly() {
     let _ = fs::remove_dir_all(sandbox.home.parent().unwrap());
 }
 
-/// The CLI is sugar over the spec: `niu plugin add` + `niu plugin enable`
+/// The CLI is sugar over the spec: `native-shell plugin add` + `native-shell plugin enable`
 /// reach the exact spec file and rc block that hand-writing the spec and
 /// syncing produces (CLI-spec consistency pin).
 #[test]
@@ -288,18 +296,18 @@ fn cli_sugar_matches_the_handwritten_spec_byte_for_byte() {
 
     // Lane A: pure CLI.
     let cli = Sandbox::new("spec-cli");
-    let add = run_niu_with_env(
+    let add = run_native_shell_with_env(
         &["plugin", "add", "oh-my-bash", "--path", &origin],
         &cli.envs,
     );
     assert_success(&add, "cli add");
     assert_success(
-        &run_niu_with_env(&["plugin", "trust", "oh-my-bash"], &cli.envs),
+        &run_native_shell_with_env(&["plugin", "trust", "oh-my-bash"], &cli.envs),
         "cli trust",
     );
     for target in ["git", "agnoster"] {
         assert_success(
-            &run_niu_with_env(&["plugin", "enable", target], &cli.envs),
+            &run_native_shell_with_env(&["plugin", "enable", target], &cli.envs),
             &format!("cli enable {target}"),
         );
     }
@@ -309,7 +317,7 @@ fn cli_sugar_matches_the_handwritten_spec_byte_for_byte() {
     fs::write(
         hand.spec_path(),
         format!(
-            "schema = \"niubash:plugin-spec@0.1.0\"\n\
+            "schema = \"native-shell:plugin-spec@0.1.0\"\n\
              \n\
              [[sources]]\n\
              target = '{origin}'\n\
@@ -319,13 +327,13 @@ fn cli_sugar_matches_the_handwritten_spec_byte_for_byte() {
         ),
     )
     .unwrap();
-    let sync1 = run_niu_with_env(&["plugin", "sync"], &hand.envs);
+    let sync1 = run_native_shell_with_env(&["plugin", "sync"], &hand.envs);
     assert_success(&sync1, "hand sync 1");
     assert_success(
-        &run_niu_with_env(&["plugin", "trust", "oh-my-bash"], &hand.envs),
+        &run_native_shell_with_env(&["plugin", "trust", "oh-my-bash"], &hand.envs),
         "hand trust",
     );
-    let sync2 = run_niu_with_env(&["plugin", "sync"], &hand.envs);
+    let sync2 = run_native_shell_with_env(&["plugin", "sync"], &hand.envs);
     assert_success(&sync2, "hand sync 2");
 
     // The spec files match (the CLI path wrote the same declaration), and
@@ -339,7 +347,7 @@ fn cli_sugar_matches_the_handwritten_spec_byte_for_byte() {
 
     // Re-declaring the same source through the CLI is refused with the
     // spec location (idempotence of the front door).
-    let dup = run_niu_with_env(
+    let dup = run_native_shell_with_env(
         &["plugin", "add", "oh-my-bash", "--path", &origin],
         &cli.envs,
     );
@@ -358,7 +366,7 @@ fn cli_sugar_matches_the_handwritten_spec_byte_for_byte() {
 }
 
 /// Cleanup honesty: a source installed imperatively (no spec) is suggested
-/// for cleanup, never auto-deleted; `niu plugin sync --prune` is the
+/// for cleanup, never auto-deleted; `native-shell plugin sync --prune` is the
 /// explicit confirm and removes tree + registry entry.
 #[test]
 fn undeclared_sources_are_suggested_then_pruned() {
@@ -366,7 +374,7 @@ fn undeclared_sources_are_suggested_then_pruned() {
     let origin = fixture("oh-my-bash");
 
     // Imperative install through the full source protocol: no spec file.
-    let add = run_niu_with_env(
+    let add = run_native_shell_with_env(
         &[
             "plugin",
             "source",
@@ -384,7 +392,7 @@ fn undeclared_sources_are_suggested_then_pruned() {
     );
 
     // Sync without a spec: legacy mode, honest report, no deletion.
-    let legacy = run_niu_with_env(&["plugin", "sync"], &sandbox.envs);
+    let legacy = run_native_shell_with_env(&["plugin", "sync"], &sandbox.envs);
     assert_success(&legacy, "legacy sync");
     let legacy_out = stdout_text(&legacy);
     assert!(
@@ -401,7 +409,7 @@ fn undeclared_sources_are_suggested_then_pruned() {
 
     // An empty spec exists: same suggestion shape.
     fs::write(sandbox.spec_path(), "").unwrap();
-    let hint = run_niu_with_env(&["plugin", "sync"], &sandbox.envs);
+    let hint = run_native_shell_with_env(&["plugin", "sync"], &sandbox.envs);
     assert_success(&hint, "hint sync");
     let hint_out = stdout_text(&hint);
     assert!(
@@ -414,7 +422,7 @@ fn undeclared_sources_are_suggested_then_pruned() {
     );
 
     // --prune removes tree and registry entry.
-    let prune = run_niu_with_env(&["plugin", "sync", "--prune"], &sandbox.envs);
+    let prune = run_native_shell_with_env(&["plugin", "sync", "--prune"], &sandbox.envs);
     assert_success(&prune, "prune sync");
     assert!(
         stdout_text(&prune).contains("removed"),
@@ -439,12 +447,12 @@ fn undeclared_sources_are_suggested_then_pruned() {
 /// startup form printed "installed but not declared" on EVERY terminal —
 /// contradicting imperative mode's "nothing to reconcile". Startup must be
 /// silent, and the interactive form must be actionable: it names the exact
-/// migration verb (`niu plugin sync --adopt`) and the hand-write starter.
+/// migration verb (`native-shell plugin sync --adopt`) and the hand-write starter.
 #[test]
 fn no_spec_startup_is_silent_and_sync_suggests_adopt() {
     let sandbox = Sandbox::new("spec-nag");
     let origin = fixture("oh-my-bash");
-    let add = run_niu_with_env(
+    let add = run_native_shell_with_env(
         &["plugin", "source", "add", &origin.to_string_lossy()],
         &sandbox.envs,
     );
@@ -455,7 +463,7 @@ fn no_spec_startup_is_silent_and_sync_suggests_adopt() {
     );
 
     // Startup: silent (nothing to reconcile in imperative mode).
-    let boot = run_niu_with_env(&["plugin", "sync", "--bootstrap"], &sandbox.envs);
+    let boot = run_native_shell_with_env(&["plugin", "sync", "--bootstrap"], &sandbox.envs);
     assert_success(&boot, "bootstrap sync");
     assert!(
         stdout_text(&boot).trim().is_empty(),
@@ -470,22 +478,22 @@ fn no_spec_startup_is_silent_and_sync_suggests_adopt() {
 
     // Interactive: imperative-mode notice, the installed source, the
     // migration one-liner, and the hand-write starter block.
-    let sync = run_niu_with_env(&["plugin", "sync"], &sandbox.envs);
+    let sync = run_native_shell_with_env(&["plugin", "sync"], &sandbox.envs);
     assert_success(&sync, "no-spec sync");
     let out = stdout_text(&sync);
     assert!(out.contains("imperative mode"), "{out}");
     assert!(out.contains("oh-my-bash"), "{out}");
-    assert!(out.contains("niu plugin sync --adopt"), "{out}");
+    assert!(out.contains("native-shell plugin sync --adopt"), "{out}");
     assert!(out.contains("[[sources]]"), "starter block shown: {out}");
     assert!(
-        out.contains("niu plugin add <target>"),
+        out.contains("native-shell plugin add <target>"),
         "single-source advice still named: {out}"
     );
 
     let _ = fs::remove_dir_all(sandbox.home.parent().unwrap());
 }
 
-/// F2, the adoption contract: `niu plugin sync --adopt` declares installed
+/// F2, the adoption contract: `native-shell plugin sync --adopt` declares installed
 /// sources by snapshotting the live selection (theme + enabled assets), and
 /// the adopted spec ROUND-TRIPS — a plain sync is a no-op (byte-stable rc
 /// and spec) and the startup form is silent again.
@@ -497,16 +505,16 @@ fn adopt_snapshots_the_live_state_and_round_trips() {
     // The owner-shaped state: imperative install, explicit trust, live
     // theme + plugin — then the spec (written by the enable sugar) is gone,
     // as on every 1.3.0 wizard machine.
-    let add = run_niu_with_env(
+    let add = run_native_shell_with_env(
         &["plugin", "source", "add", &origin.to_string_lossy()],
         &sandbox.envs,
     );
     assert_success(&add, "imperative install");
-    let trust = run_niu_with_env(&["plugin", "trust", "oh-my-bash"], &sandbox.envs);
+    let trust = run_native_shell_with_env(&["plugin", "trust", "oh-my-bash"], &sandbox.envs);
     assert_success(&trust, "trust");
-    let enable = run_niu_with_env(&["plugin", "enable", "oh-my-bash/git"], &sandbox.envs);
+    let enable = run_native_shell_with_env(&["plugin", "enable", "oh-my-bash/git"], &sandbox.envs);
     assert_success(&enable, "enable plugin");
-    let theme = run_niu_with_env(&["plugin", "enable", "agnoster"], &sandbox.envs);
+    let theme = run_native_shell_with_env(&["plugin", "enable", "agnoster"], &sandbox.envs);
     assert_success(&theme, "enable theme");
     let live_loader = sandbox.loader();
     assert!(
@@ -517,7 +525,7 @@ fn adopt_snapshots_the_live_state_and_round_trips() {
     fs::remove_file(sandbox.spec_path()).unwrap();
 
     // --adopt declares it with the live snapshot.
-    let adopt = run_niu_with_env(&["plugin", "sync", "--adopt"], &sandbox.envs);
+    let adopt = run_native_shell_with_env(&["plugin", "sync", "--adopt"], &sandbox.envs);
     assert_success(&adopt, "adopt sync");
     let out = stdout_text(&adopt);
     assert!(out.contains("declared oh-my-bash"), "{out}");
@@ -531,7 +539,7 @@ fn adopt_snapshots_the_live_state_and_round_trips() {
     // Round-trip: plain sync is a no-op — loader, rc and spec byte-stable.
     let spec_once = sandbox.spec();
     let loader_once = sandbox.loader();
-    let plain = run_niu_with_env(&["plugin", "sync"], &sandbox.envs);
+    let plain = run_native_shell_with_env(&["plugin", "sync"], &sandbox.envs);
     assert_success(&plain, "plain sync after adopt");
     assert!(
         stdout_text(&plain).contains("in sync"),
@@ -543,7 +551,7 @@ fn adopt_snapshots_the_live_state_and_round_trips() {
     assert_eq!(sandbox.spec(), spec_once, "spec byte-identical");
 
     // And the startup form is silent again — the nag is gone for good.
-    let boot = run_niu_with_env(&["plugin", "sync", "--bootstrap"], &sandbox.envs);
+    let boot = run_native_shell_with_env(&["plugin", "sync", "--bootstrap"], &sandbox.envs);
     assert_success(&boot, "bootstrap after adopt");
     assert!(
         stdout_text(&boot).trim().is_empty() && stderr_text(&boot).trim().is_empty(),
@@ -555,21 +563,21 @@ fn adopt_snapshots_the_live_state_and_round_trips() {
     let _ = fs::remove_dir_all(sandbox.home.parent().unwrap());
 }
 
-/// F4: `niu plugin add <target>` on an already-installed source DECLARES it
+/// F4: `native-shell plugin add <target>` on an already-installed source DECLARES it
 /// (printed as such) instead of dead-ending on the imperative refusal
 /// ("source '...' is already registered; remove it first").
 #[test]
 fn plugin_add_on_an_installed_source_declares_it() {
     let sandbox = Sandbox::new("spec-add-adopt");
     let origin = fixture("oh-my-bash");
-    let add = run_niu_with_env(
+    let add = run_native_shell_with_env(
         &["plugin", "source", "add", &origin.to_string_lossy()],
         &sandbox.envs,
     );
     assert_success(&add, "imperative install");
     assert!(!sandbox.spec_path().exists());
 
-    let declare = run_niu_with_env(&["plugin", "add", "oh-my-bash"], &sandbox.envs);
+    let declare = run_native_shell_with_env(&["plugin", "add", "oh-my-bash"], &sandbox.envs);
     assert_success(&declare, "add on an installed source must not fail");
     let out = stdout_text(&declare);
     assert!(out.contains("Declared"), "declared, not installed: {out}");
@@ -586,10 +594,10 @@ fn plugin_add_on_an_installed_source_declares_it() {
     let _ = fs::remove_dir_all(sandbox.home.parent().unwrap());
 }
 
-/// The `niu plugin add --checksum` pin is honored, not just echoed (wt83
+/// The `native-shell plugin add --checksum` pin is honored, not just echoed (wt83
 /// #173): a mismatched tree is refused with nothing registered and no spec
 /// entry left behind, and the tree's real checksum installs — the same
-/// honesty `niu plugin source add --checksum` always had.
+/// honesty `native-shell plugin source add --checksum` always had.
 #[test]
 fn plugin_add_honors_the_checksum_pin_and_rolls_back_on_failure() {
     let sandbox = Sandbox::new("add-checksum-pin");
@@ -598,7 +606,7 @@ fn plugin_add_honors_the_checksum_pin_and_rolls_back_on_failure() {
 
     // A wrong checksum is refused: rc != 0, the reason names the mismatch,
     // the rolled-back declaration is admitted, and nothing is registered.
-    let wrong = run_niu_with_env(
+    let wrong = run_native_shell_with_env(
         &[
             "plugin",
             "add",
@@ -622,7 +630,7 @@ fn plugin_add_honors_the_checksum_pin_and_rolls_back_on_failure() {
         "no stranded spec entry: {}",
         sandbox.spec()
     );
-    let listed = run_niu_with_env(&["plugin", "source", "list"], &sandbox.envs);
+    let listed = run_native_shell_with_env(&["plugin", "source", "list"], &sandbox.envs);
     assert!(
         stdout_text(&listed).contains("no sources installed"),
         "{}",
@@ -631,7 +639,7 @@ fn plugin_add_honors_the_checksum_pin_and_rolls_back_on_failure() {
 
     // Learn the fixture's real checksum from an unpinned install, remove
     // it, then re-add pinned: the correct checksum installs.
-    let plain = run_niu_with_env(
+    let plain = run_native_shell_with_env(
         &["plugin", "add", "oh-my-bash", "--path", &origin_s],
         &sandbox.envs,
     );
@@ -644,10 +652,11 @@ fn plugin_add_honors_the_checksum_pin_and_rolls_back_on_failure() {
         .unwrap_or_default();
     assert_eq!(sha.len(), 64, "expected a sha256 in the receipt: {out}");
 
-    let remove = run_niu_with_env(&["plugin", "source", "remove", "oh-my-bash"], &sandbox.envs);
+    let remove =
+        run_native_shell_with_env(&["plugin", "source", "remove", "oh-my-bash"], &sandbox.envs);
     assert_success(&remove, "remove the unpinned install");
 
-    let pinned = run_niu_with_env(
+    let pinned = run_native_shell_with_env(
         &[
             "plugin",
             "add",
@@ -669,10 +678,10 @@ fn plugin_add_honors_the_checksum_pin_and_rolls_back_on_failure() {
     let _ = fs::remove_dir_all(sandbox.home.parent().unwrap());
 }
 
-/// A failed `niu plugin add` leaves NOTHING behind (wt83 #174): the spec
+/// A failed `native-shell plugin add` leaves NOTHING behind (wt83 #174): the spec
 /// declaration is rolled back, bootstrap remains a silent no-op, and
 /// a legacy stranded entry (declared, never installed) is
-/// removed by `niu plugin sync --prune` with a printed line.
+/// removed by `native-shell plugin sync --prune` with a printed line.
 #[test]
 fn failed_add_rolls_back_and_prune_removes_legacy_strands() {
     fn plugin_state_snapshot(directory: &std::path::Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
@@ -694,7 +703,7 @@ fn failed_add_rolls_back_and_prune_removes_legacy_strands() {
     // fetch fails honestly (the audit's a14 shape, offline).
     let empty = fixture("no-sourceable");
 
-    let bad = run_niu_with_env(
+    let bad = run_native_shell_with_env(
         &[
             "plugin",
             "add",
@@ -724,7 +733,7 @@ fn failed_add_rolls_back_and_prune_removes_legacy_strands() {
     assert!(!sandbox.sources_root.join("oh-my-bash").exists());
 
     // The startup form has nothing to defer or nag about.
-    let boot = run_niu_with_env(&["plugin", "sync", "--bootstrap"], &sandbox.envs);
+    let boot = run_native_shell_with_env(&["plugin", "sync", "--bootstrap"], &sandbox.envs);
     assert_success(&boot, "bootstrap after rolled-back add");
     assert!(
         stdout_text(&boot).is_empty() && stderr_text(&boot).is_empty(),
@@ -738,7 +747,7 @@ fn failed_add_rolls_back_and_prune_removes_legacy_strands() {
     fs::write(
         sandbox.spec_path(),
         format!(
-            "schema = \"niubash:plugin-spec@0.1.0\"\n\n[[sources]]\ntarget = '{}'\nid = 'stranded'\n",
+            "schema = \"native-shell:plugin-spec@0.1.0\"\n\n[[sources]]\ntarget = '{}'\nid = 'stranded'\n",
             missing.to_string_lossy().replace('\\', "/")
         ),
     )
@@ -746,7 +755,7 @@ fn failed_add_rolls_back_and_prune_removes_legacy_strands() {
 
     let state_before = plugin_state_snapshot(sandbox.home.parent().unwrap());
     for _ in 0..2 {
-        let boot = run_niu_with_env(&["plugin", "sync", "--bootstrap"], &sandbox.envs);
+        let boot = run_native_shell_with_env(&["plugin", "sync", "--bootstrap"], &sandbox.envs);
         assert_success(&boot, "bootstrap with stranded declaration");
         assert!(stdout_text(&boot).is_empty() && stderr_text(&boot).is_empty());
         assert_eq!(
@@ -755,7 +764,7 @@ fn failed_add_rolls_back_and_prune_removes_legacy_strands() {
         );
     }
 
-    let prune = run_niu_with_env(&["plugin", "sync", "--prune"], &sandbox.envs);
+    let prune = run_native_shell_with_env(&["plugin", "sync", "--prune"], &sandbox.envs);
     assert_success(&prune, "prune runs");
     assert!(
         stdout_text(&prune).contains("stranded declaration pruned"),
@@ -767,7 +776,7 @@ fn failed_add_rolls_back_and_prune_removes_legacy_strands() {
         "the strand is gone: {}",
         sandbox.spec()
     );
-    let boot3 = run_niu_with_env(&["plugin", "sync", "--bootstrap"], &sandbox.envs);
+    let boot3 = run_native_shell_with_env(&["plugin", "sync", "--bootstrap"], &sandbox.envs);
     assert_success(&boot3, "bootstrap after prune");
     assert!(
         stdout_text(&boot3).is_empty() && stderr_text(&boot3).is_empty(),
@@ -778,7 +787,7 @@ fn failed_add_rolls_back_and_prune_removes_legacy_strands() {
     let _ = fs::remove_dir_all(sandbox.home.parent().unwrap());
 }
 
-/// niubash#293 + niubash#295: `niu plugin add` of a dead origin fails
+/// native-shell#293 + native-shell#295: `native-shell plugin add` of a dead origin fails
 /// BOUNDED at the fetch budget, the error names the origin, and the spec
 /// declaration is rolled back — the strand that used to deadlock every
 /// later add ("already declared") never lands, and the same target can be
@@ -790,9 +799,9 @@ fn plugin_add_of_a_dead_origin_times_out_rolls_back_and_retries() {
     // connect phase, the budget kills the clone's whole process tree.
     sandbox
         .envs
-        .push(("NIU_PLUGIN_FETCH_TIMEOUT_MS", "800".to_string()));
+        .push(("NATIVE_SHELL_PLUGIN_FETCH_TIMEOUT_MS", "800".to_string()));
 
-    let first = run_niu_with_env(
+    let first = run_native_shell_with_env(
         &["plugin", "add", "https://203.0.113.1/stalled-plugin.git"],
         &sandbox.envs,
     );
@@ -829,7 +838,7 @@ fn plugin_add_of_a_dead_origin_times_out_rolls_back_and_retries() {
 
     // The deadlock is broken: the same target adds again and fails with
     // the SAME honest fetch error, never "already declared".
-    let second = run_niu_with_env(
+    let second = run_native_shell_with_env(
         &["plugin", "add", "https://203.0.113.1/stalled-plugin.git"],
         &sandbox.envs,
     );
@@ -850,14 +859,14 @@ fn plugin_add_of_a_dead_origin_times_out_rolls_back_and_retries() {
     let _ = fs::remove_dir_all(sandbox.home.parent().unwrap());
 }
 
-/// niubash#293: `niu plugin sync --timeout <seconds>` parses, and a bogus
+/// native-shell#293: `native-shell plugin sync --timeout <seconds>` parses, and a bogus
 /// value is refused with a clear message (the flag is the verb-level knob
 /// for peculiar networks).
 #[test]
 fn plugin_sync_timeout_flag_parses_and_validates() {
     let sandbox = Sandbox::new("sync-timeout-flag");
 
-    let bad = run_niu_with_env(&["plugin", "sync", "--timeout", "0"], &sandbox.envs);
+    let bad = run_native_shell_with_env(&["plugin", "sync", "--timeout", "0"], &sandbox.envs);
     assert!(!bad.status.success(), "zero seconds must be refused");
     assert!(
         stderr_text(&bad).contains("--timeout"),
@@ -865,7 +874,7 @@ fn plugin_sync_timeout_flag_parses_and_validates() {
         stderr_text(&bad)
     );
 
-    let bad = run_niu_with_env(&["plugin", "sync", "--timeout=abc"], &sandbox.envs);
+    let bad = run_native_shell_with_env(&["plugin", "sync", "--timeout=abc"], &sandbox.envs);
     assert!(!bad.status.success(), "non-numeric must be refused");
     assert!(
         stderr_text(&bad).contains("--timeout"),
@@ -875,7 +884,7 @@ fn plugin_sync_timeout_flag_parses_and_validates() {
 
     // A healthy value passes parsing and reaches the reconciler (empty
     // spec: legacy-mode report, exit 0).
-    let good = run_niu_with_env(&["plugin", "sync", "--timeout", "120"], &sandbox.envs);
+    let good = run_native_shell_with_env(&["plugin", "sync", "--timeout", "120"], &sandbox.envs);
     assert_success(&good, "valid --timeout");
 
     let _ = fs::remove_dir_all(sandbox.home.parent().unwrap());
@@ -896,24 +905,25 @@ fn add_completion_line_names_the_added_source_not_a_bystander() {
 
     // A trusted bystander: installed, trusted, its loader section
     // materialized — the shape that publishes an `unchanged` row late.
-    let wild = run_niu_with_env(&["plugin", "add", &wild_s], &sandbox.envs);
+    let wild = run_native_shell_with_env(&["plugin", "add", &wild_s], &sandbox.envs);
     assert_success(&wild, "add the wild bystander");
-    let trust_wild = run_niu_with_env(&["plugin", "trust", "bash-preexec"], &sandbox.envs);
+    let trust_wild = run_native_shell_with_env(&["plugin", "trust", "bash-preexec"], &sandbox.envs);
     assert_success(&trust_wild, "trust the wild bystander");
 
     // The source under test: installed + trusted, then removed entirely
     // (the P8-S4 remove), so the re-add is a fresh install.
-    let omb = run_niu_with_env(
+    let omb = run_native_shell_with_env(
         &["plugin", "add", "oh-my-bash", "--path", &omb_s],
         &sandbox.envs,
     );
     assert_success(&omb, "add the framework source");
-    let trust_omb = run_niu_with_env(&["plugin", "trust", "oh-my-bash"], &sandbox.envs);
+    let trust_omb = run_native_shell_with_env(&["plugin", "trust", "oh-my-bash"], &sandbox.envs);
     assert_success(&trust_omb, "trust the framework source");
-    let remove = run_niu_with_env(&["plugin", "source", "remove", "oh-my-bash"], &sandbox.envs);
+    let remove =
+        run_native_shell_with_env(&["plugin", "source", "remove", "oh-my-bash"], &sandbox.envs);
     assert_success(&remove, "remove the framework source");
 
-    let readd = run_niu_with_env(
+    let readd = run_native_shell_with_env(
         &["plugin", "add", "oh-my-bash", "--path", &omb_s],
         &sandbox.envs,
     );

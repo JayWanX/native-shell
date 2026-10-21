@@ -1,5 +1,5 @@
 ---
-tags: [niubash, architecture, plugins, download, package-manager, layering]
+tags: [native-shell, architecture, plugins, download, package-manager, layering]
 created: 2026-10-03
 status: proposed (wt49/dlarch 设计评估，待 owner 裁决)
 ---
@@ -16,7 +16,7 @@ status: proposed (wt49/dlarch 设计评估，待 owner 裁决)
 
 1. Owner 的直觉**对引擎成立，对产品层不成立**：业界没有任何 shell *引擎* 自带 HTTP 下载；
    但**以"发行版/平台"形态交付的产品**（rustup/cargo、Node/npm、VS Code）普遍内置或捆绑下载能力。
-   我们的真实结构恰好是后者：rubash 引擎已零网络依赖，全部下载在 niubash 产品层。
+   我们的真实结构恰好是后者：rubash 引擎已零网络依赖，全部下载在 native-shell 产品层。
 2. 引导问题（"管理器自己怎么装"）**对我们不存在**：lazy.nvim 的 bootstrap 片段是"没有安装器"
    时的补偿机制；我们有 Inno Setup 安装器，管理器随产品分发，离线也可用。
 3. 全部 6 个下载/网络调用面都已在**冷路径**（CLI 子命令 / 一次性向导），从不在 REPL 热路径；
@@ -50,30 +50,30 @@ status: proposed (wt49/dlarch 设计评估，待 owner 裁决)
 | VS Code | 扩展市场下载在产品内（不是扩展）；产品自更新也在产品内 |
 | Windows Terminal | 字体/主题获取在设置 UI 内 |
 
-结论：**"shell 引擎不下载"是行业定律；"shell 发行版捆绑一个包管理器"是平台常态。** niubash 的
+结论：**"shell 引擎不下载"是行业定律；"shell 发行版捆绑一个包管理器"是平台常态。** native-shell 的
 定位是后者（README："AI-native bash-compatible shell **for Windows**, built on rubash + winuxcmd"——
 它是一个发行版/套件，不只是一个解释器）。
 
 ## 2. 我们的调用面清单与当前分层
 
-盘点方法：对 `D:/repo/niubash` 全仓 grep `ureq|WinHttp|curl|wget|TcpStream|ToSocketAddrs|socket|`
+盘点方法：对 `D:/repo/native-shell` 全仓 grep `ureq|WinHttp|curl|wget|TcpStream|ToSocketAddrs|socket|`
 及 `git clone|http_get|download`（排除测试与注释），逐个打开源文件核对。**全部调用面共 6 个**，
 无遗漏（rubash 仓库同样 grep 过：引擎零网络）。
 
 | # | 调用面 | 位置 | 传输 | 触发路径 | 语义域判定 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `http_get_bytes()` / `install_executable()` | `crates/niubash-runtime/src/plugins/download.rs:167,236` | **ureq+rustls**（进程内，纯 Rust） | `niu plugin add/tool` 中 `driver = "download"` 的 recipe —— 目前仅 **2 行**（fzf v0.74.4、starship v1.26.0） | **管理器** |
-| 2 | `git_clone_to()` / `git_fetch_commit_to()` | `crates/niubash-runtime/src/plugins/sources.rs:530,558` | **外部 `git.exe` 子进程**（要求 PATH 上有 git） | 全部 git 树来源：4 个 git-driver recipe + manager 来源（oh-my-bash 等）+ collections | **管理器** |
-| 3 | 字体下载 `download()` | `crates/niubash-runtime/src/fonts.rs:189`（源 `:15`） | **外部 `curl.exe` 子进程**（System32，Win10 1803+） | `niu font` + setup 向导字体题 | **产品工具**（非管理器；font 是终端配置不是插件） |
-| 4 | self-update 检查+安装器下载 `http_get()` | `src/self_update.rs:370`（WinHTTP）；后台检查 `maybe_print_update_hint()`（`src/main.rs:998` 调用，24h 节流，`NIU_UPDATE_CHECK`/CI 可关） | **WinHTTP**（OS 栈，零第三方依赖，仅 Windows） | `niu --self-update`、REPL `self-update` 命令、启动后台线程 | **产品自维护**（不能放管理器层：管理器坏了谁来修管理器） |
-| 5 | 向导装 niu-git | `setup_wizard.rs:1193 install_niu_git`（命令串 `:163`） | **wpm 子进程**（`wpm install niugit`，仅在用户显式选 Install 时） | setup 向导 Q3 | **委托既有包管理器**（wpm 自己下载） |
+| 1 | `http_get_bytes()` / `install_executable()` | `crates/native-shell-runtime/src/plugins/download.rs:167,236` | **ureq+rustls**（进程内，纯 Rust） | `native-shell plugin add/tool` 中 `driver = "download"` 的 recipe —— 目前仅 **2 行**（fzf v0.74.4、starship v1.26.0） | **管理器** |
+| 2 | `git_clone_to()` / `git_fetch_commit_to()` | `crates/native-shell-runtime/src/plugins/sources.rs:530,558` | **外部 `git.exe` 子进程**（要求 PATH 上有 git） | 全部 git 树来源：4 个 git-driver recipe + manager 来源（oh-my-bash 等）+ collections | **管理器** |
+| 3 | 字体下载 `download()` | `crates/native-shell-runtime/src/fonts.rs:189`（源 `:15`） | **外部 `curl.exe` 子进程**（System32，Win10 1803+） | `native-shell font` + setup 向导字体题 | **产品工具**（非管理器；font 是终端配置不是插件） |
+| 4 | self-update 检查+安装器下载 `http_get()` | `src/self_update.rs:370`（WinHTTP）；后台检查 `maybe_print_update_hint()`（`src/main.rs:998` 调用，24h 节流，`NATIVE_SHELL_UPDATE_CHECK`/CI 可关） | **WinHTTP**（OS 栈，零第三方依赖，仅 Windows） | `native-shell --self-update`、REPL `self-update` 命令、启动后台线程 | **产品自维护**（不能放管理器层：管理器坏了谁来修管理器） |
+| 5 | 向导装 niu-git | `setup_wizard.rs:1193 install_native_shell_git`（命令串 `:163`） | **wpm 子进程**（`wpm install native-git`，仅在用户显式选 Install 时） | setup 向导 Q3 | **委托既有包管理器**（wpm 自己下载） |
 | 6 | 向导 collections apply | `setup_wizard.rs`（`apply_plugin_collection` → `plugins::distros::apply`） | 继承 #1/#2 | setup 向导末段 | **管理器** |
 
 关键结构事实（对分层判断很重要）：
 
-- **调用面 1/2/5/6 全部经由 `niu plugin …` CLI 子命令或一次性向导**（`src/main.rs:1340-1362`
+- **调用面 1/2/5/6 全部经由 `native-shell plugin …` CLI 子命令或一次性向导**（`src/main.rs:1340-1362`
   分发），**REPL 热路径（shell.rs/repl.rs 的解释/补全/高亮循环）零调用**。进程行为上，
-  "工具态的 niu"与"shell 态的 niu"已经分离；共享的只是同一个 exe 和同一个 crate。
+  "工具态的 native-shell"与"shell 态的 native-shell"已经分离；共享的只是同一个 exe 和同一个 crate。
 - **REPL 内唯一可达的网络路径是 #4 的 self-update**（WinHTTP、自维护域）——这与 oh-my-zsh
   的后台更新检查同构（脚本层做后台检查在 shell 生态是被接受的）。
 - recipe 索引 498 行中：489 行 `manager =`（骑在 manager 源上，走 #2 的 git）、4 行 git-driver、
@@ -81,11 +81,11 @@ status: proposed (wt49/dlarch 设计评估，待 owner 裁决)
   本来就依赖外部 git.exe —— "无外部依赖的纯 Rust 传输"只覆盖最窄的一条道。
 - `sha2`/`zip` 不独属下载：`sources.rs:30`（信任树校验）用 sha2，`fonts.rs:211` 用 zip 解包。
   真正只属于 HTTP 通道的依赖是 ureq/rustls/ring/webpki-roots/url + tar/flate2。
-- 依赖声明：`crates/niubash-runtime/Cargo.toml:37-39`（ureq "2" tls / flate2 rust_backend / tar）。
+- 依赖声明：`crates/native-shell-runtime/Cargo.toml:37-39`（ureq "2" tls / flate2 rust_backend / tar）。
 
 ## 3. 体积问题（实测，不动产品码）
 
-在 `%TEMP%/dlsize` 建独立最小工程（两个 bin 共享依赖，profile 对齐 niu 的
+在 `%TEMP%/dlsize` 建独立最小工程（两个 bin 共享依赖，profile 对齐 native-shell 的
 release：thin LTO + codegen-units=1 + panic=abort），每个 API 面都被真实引用防 LTO 消除：
 
 | 构建 | 大小 | 增量 |
@@ -94,7 +94,7 @@ release：thin LTO + codegen-units=1 + panic=abort），每个 API 面都被真�
 | + ureq/rustls/ring/webpki-roots/url（TLS 栈） | 1,739,264 B | **+1.62 MB** |
 | + flate2 + tar + zip + sha2（完整下载栈） | 1,885,696 B | **+1.76 MB 合计**（非 TLS 部分 +146 KB） |
 
-对照：`target/release/niu.exe` = 9,261,056 B（8.83 MiB）。**下载栈 ≈ niu.exe 的 19%**，
+对照：`target/release/native-shell.exe` = 9,261,056 B（8.83 MiB）。**下载栈 ≈ native-shell.exe 的 19%**，
 其中 TLS 传输占 1.62 MB（ring 汇编 + rustls + 根证书表）。注意 sha2/zip 因 #2/#3 共享，
 即便把 HTTP 通道整体搬走，它们仍会留在树里 —— 可搬走净额 ≈ 1.6 MB。
 
@@ -118,14 +118,14 @@ release：thin LTO + codegen-units=1 + panic=abort），每个 API 面都被真�
 ### 4.2 耦合问题：引擎应该零网络吗？
 
 **已经是。** rubash（`D:/repo/rubash`）`Cargo.toml` 无 ureq/reqwest/tokio/rustls，`src/` 无
-WinHttp/TcpStream —— 引擎干净，无需动作。真正的耦合债务在 niubash 层：
+WinHttp/TcpStream —— 引擎干净，无需动作。真正的耦合债务在 native-shell 层：
 
 1. **三个传输栈并存**：ureq（插件下载）、curl.exe（字体）、WinHTTP（self-update）。
    三套超时/重试/代理/UA 策略，doctor 排障要查三处。2026-10-03 ruling 选 ureq 是对
    "不驱动 wpm/apt"的裁决，不是对"多栈并存"的裁决。
 2. **网络代码与 REPL 同 crate 同二进制**：交互 shell 进程常驻 TLS 栈（攻击面/沙箱标注），
    尽管热路径从不触网。
-3. **历史上第三次换位**：lazy-family-source-study §9 原文先否决过"niubash 内置下载"
+3. **历史上第三次换位**：lazy-family-source-study §9 原文先否决过"native-shell 内置下载"
    （理由：wpm index 已带 per-platform sha256，`driver = "wpm"`），后被 2026-10-03 ruling
    推翻为纯 Rust 内置。owner 今天的疑问是对这次换位的自然回望 —— 值得一次性把边界
    **定成结构**而不是再换一次主意。
@@ -141,7 +141,7 @@ WinHttp/TcpStream —— 引擎干净，无需动作。真正的耦合债务在 
 - **C — 独立可执行 `niu-pkg`（随产品安装，shell 子进程调用）**：进程级隔离；
   shell exe 减 ~1.6 MB；管理器可独立更新。代价：安装器/自更新要维护两个 exe 的版本
   同步；信任状态（registry/签名/staging）跨进程共享的协调成本；向导 apply 与
-  `niu plugin` 的进度输出要走子进程管道；发行矩阵翻倍。
+  `native-shell plugin` 的进度输出要走子进程管道；发行矩阵翻倍。
 - **D — 插件层 bootstrap（lazy.nvim 模式）**：见 §4.1，被否定。
 
 ### 4.4 利弊矩阵
@@ -152,7 +152,7 @@ WinHttp/TcpStream —— 引擎干净，无需动作。真正的耦合债务在 
 | 体积 | +1.76 MB | +1.76 MB（feature 可关 → 0） | shell -1.6 MB，产品总量不变 | shell -1.76 MB，管理器本体在别处 |
 | 耦合 | 网络码与 REPL 同 crate；三传输栈并存 | 编译期禁止 REPL 触网；传输策略归一门 | 进程隔离（最强） | 引擎/产品全脱钩（理论最强） |
 | 跨平台 | 好（ureq 纯 Rust） | 同 A | 好，但每个平台多一个产物 | 差：自举脚本要覆盖三平台 shell 差异 |
-| 用户体验 | 单命令 `niu plugin add`，向导内联 | 同 A（零可见变化） | 同表面（子进程对用户透明），但失败模式多一层 | 首启体验最差 |
+| 用户体验 | 单命令 `native-shell plugin add`，向导内联 | 同 A（零可见变化） | 同表面（子进程对用户透明），但失败模式多一层 | 首启体验最差 |
 | 信任协议 | Rust 侧完整 | 同 A | 完整但跨进程共享状态 | **弱化**（脚本层重写 ed25519/staging） |
 | 改造成本 | 0 | 低（提 crate + feature，一次机械移动） | 中高（分发/版本/IPC/向导改造） | 高（推倒重来） |
 | 长期演进 | 边界会继续被绕过 | **C 的前置**：CLI 形 API 原样暴露成 main() 即可 | 终态之一 | 生态未成熟前不可行 |
@@ -163,11 +163,11 @@ WinHttp/TcpStream —— 引擎干净，无需动作。真正的耦合债务在 
 
 具体形态：
 
-1. 新 crate `niu-pkg`（或 `niubash-pkg`）：迁入 `plugins/{download,recipes,sources,trust,
+1. 新 crate `niu-pkg`（或 `native-shell-pkg`）：迁入 `plugins/{download,recipes,sources,trust,
    catalog,distros,spec,sync,assets 的安装侧,descriptors}`。依赖只允许：anyhow/serde/toml/
    sha2/ed25519-dalek/ureq/flate2/tar/zip + path_utils。**禁止**依赖 reedline/crossterm/
    repl/shell —— 编译期保证"管理器不认识 shell"。
-2. cargo feature：`network = ["ureq", "flate2", "tar"]`。`niu build --no-default-features`
+2. cargo feature：`network = ["ureq", "flate2", "tar"]`。`native-shell build --no-default-features`
    产出**可验证的零网络 shell 二进制**（git 树来源仍走外部 git 子进程——那是用户机器上的
    git，不是我们进程里的 TLS 栈）。这一步把 owner 的直觉落成可测试的构建形态。
 3. 传输统一收口进 `niu-pkg`：#3 字体从 curl.exe 迁到 ureq（owner 已在迁），#1/#3/#6 共用
@@ -181,7 +181,7 @@ WinHttp/TcpStream —— 引擎干净，无需动作。真正的耦合债务在 
 **理由（按 owner 的三个潜在关切排）：**
 
 - *"没见过 shell 承担这么多下载"* —— 业界定律约束的是**引擎**，我们的引擎（rubash）已经零网络。
-  niubash 是 shell 发行版（对照 rustup/npm/VS Code），捆绑包管理器是常态而非异类。需要修正的
+  native-shell 是 shell 发行版（对照 rustup/npm/VS Code），捆绑包管理器是常态而非异类。需要修正的
   不是"有没有"，而是"边界是否显式"：当前它是 runtime crate 里一个没有门控的模块，配着三个
   传输栈 —— 这才是让人（正确地）觉得"shell 在下载"的原因。B 把"产品=shell+包管理器"变成
   显式结构，管理器有名字、有边界、可单独演进。
@@ -212,7 +212,7 @@ WinHttp/TcpStream —— 引擎干净，无需动作。真正的耦合债务在 
 
 ## 终局裁定（2026-10-04，owner 最终裁决；本节取代上文所有"待裁定"选项）
 
-Owner 裁定：**收缩，不是搬家。** niu 是纯 bash 生态插件管理器，
+Owner 裁定：**收缩，不是搬家。** native-shell 是纯 bash 生态插件管理器，
 shell 本体承担零网络/HTTP 下载职责——本报告评估的选项 A/B/C（内置
 驱动 / 独立 crate + feature / 独立 exe）全部作废，HTTP 依赖整体移除：
 
@@ -223,7 +223,7 @@ shell 本体承担零网络/HTTP 下载职责——本报告评估的选项 A/B/
 - **归属**：可执行工具归真实包管理器——Windows 上 wpm 第一顺位
   （owner 更正 2026-10-03），winget/scoop 为 wpm 不携带物（GUI、字体）
   的补充；其他平台 apt/dnf/yum/brew，非 Windows 构建零 wpm 字符串。
-- **插件驱动**：`niu plugin add <git-url>`（git clone）是唯一扩展安装
+- **插件驱动**：`native-shell plugin add <git-url>`（git clone）是唯一扩展安装
   入口；recipe 索引降为目录元数据，download 行的 `add` 打印包管理器
   推荐而非 fetch。
 - **字体**：检测+推荐（winget/scoop/brew/nerdfonts.com），无下载无解压。

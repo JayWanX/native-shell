@@ -45,25 +45,25 @@ case "$script_path" in
 esac
 script_dir="${script_path%/*}"
 
-if [ -f "$script_dir/winuxcmd.exe" ] && [ "$(basename "$script_dir")" = "bin" ]; then
+if [ -f "$script_dir/native-cmd.exe" ] && [ "$(basename "$script_dir")" = "bin" ]; then
   winuxcmd_bin_dir="$script_dir"
   winuxcmd_root="$script_dir/../.."
-elif [ -f "$script_dir/winuxcmd.exe" ]; then
+elif [ -f "$script_dir/native-cmd.exe" ]; then
   winuxcmd_bin_dir="$script_dir"
   winuxcmd_root="$script_dir"
-elif [ -f "./winuxcmd/usr/bin/winuxcmd.exe" ]; then
+elif [ -f "./winuxcmd/usr/bin/native-cmd.exe" ]; then
   winuxcmd_bin_dir="./winuxcmd/usr/bin"
   winuxcmd_root="./winuxcmd"
-elif [ -f "./winuxcmd/winuxcmd.exe" ]; then
+elif [ -f "./winuxcmd/native-cmd.exe" ]; then
   winuxcmd_bin_dir="./winuxcmd"
   winuxcmd_root="./winuxcmd"
 else
-  echo "activate-winuxcmd: winuxcmd.exe not found"
+  echo "activate-winuxcmd: native-cmd.exe not found"
   echo "Run this script from the WinuxCmd usr/bin directory or release root."
   exit 1
 fi
 
-winuxcmd_exe="$winuxcmd_bin_dir/winuxcmd.exe"
+winuxcmd_exe="$winuxcmd_bin_dir/native-cmd.exe"
 mode="create"
 link_flag=""
 
@@ -78,7 +78,7 @@ case "$1" in
     echo "Usage: activate-winuxcmd.sh [--remove] [--symbolic]"
     echo
     echo "Creates command links in usr/bin so ls/cat/grep/etc"
-    echo "resolve through PATH when niubash starts."
+    echo "resolve through PATH when native-shell starts."
     echo "Modern WinuxCmd builds use WPM for link discovery; older builds"
     echo "fall back to this script's bundled command list."
     echo

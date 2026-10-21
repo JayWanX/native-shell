@@ -1,4 +1,4 @@
-//! niubash#182 — bash-it themes (codeword/gitline) hang the interactive
+//! native-shell#182 — bash-it themes (codeword/gitline) hang the interactive
 //! session after `source`.
 //!
 //! Both themes run `_save-and-reload-history 1` from PROMPT_COMMAND on every
@@ -20,7 +20,7 @@
 #[path = "interactive/driver.rs"]
 mod driver;
 
-use driver::{require_pty_or_skip, NiuSession, DEFAULT_TIMEOUT};
+use driver::{require_pty_or_skip, NativeShellSession, DEFAULT_TIMEOUT};
 
 /// The bash-it codeword/gitline pattern, self-contained: every prompt runs
 /// `history -a && history -c && history -r` (HISTCONTROL is set by the
@@ -28,8 +28,8 @@ use driver::{require_pty_or_skip, NiuSession, DEFAULT_TIMEOUT};
 const THEME_RC: &str = "\
 PS1='P1> '
 PS2='P2> '
-HISTFILE=$HOME/.niubash_history
-NIU_DISABLE_DEFAULT_PLUGINS=1
+HISTFILE=$HOME/.native-shell_history
+NATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1
 HISTCONTROL=ignoredups
 _save-and-reload-history() {
   history -a && history -c && history -r
@@ -58,7 +58,7 @@ fn bashit_theme_history_interlock_survives_prompt_cycles() {
     if !require_pty_or_skip("bashit_theme_history_interlock_survives_prompt_cycles") {
         return;
     }
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "issue182-interlock",
         THEME_RC,
         &[],
@@ -84,7 +84,7 @@ fn bashit_theme_history_interlock_survives_prompt_cycles() {
 
     // The history file must hold each command exactly once — the pre-fix
     // loop duplicated entries every prompt cycle.
-    let history_path = s.home().to_path_buf().join(".niubash_history");
+    let history_path = s.home().to_path_buf().join(".native-shell_history");
     let contents = std::fs::read_to_string(&history_path).unwrap_or_default();
     let lines: Vec<&str> = contents.lines().filter(|l| !l.trim().is_empty()).collect();
     for cycle in 0..PROMPT_CYCLES {

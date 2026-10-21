@@ -19,19 +19,19 @@ journey a real user walked on 2026-10-03/04 — not a synthetic shape — over
 a real ConPTY (pywinpty + pyte, the `scripts/smoke-wizard-journey.py`
 pattern), in a sandboxed HOME (`USERPROFILE` and `HOME` both overridden;
 `USERPROFILE` wins in this product, a known pitfall, so both point at the
-sandbox and the real `~/.niubash` is never touched).
+sandbox and the real `~/.native-shell` is never touched).
 
 ## The journey (J1–J7)
 
 | Step | The user's move | The gate asserts |
 | --- | --- | --- |
-| J1 fresh-install first contact | install, run `niu`, no `~/.niubash` anything | the `Niubash <version>` welcome line + the dim first-run hint naming the explicit `niu setup` verb; first contact lands at the REPL prompt — the wizard never auto-starts (#359 stage 1: startup zero-write) |
-| J2 wizard full run, entered through the explicit `niu setup` verb | at the J1 prompt: `niu setup` → the wizard welcome block (v-banner, environment panel, "No external themes installed yet") → collection **full** → Apply → watch the clones → **Trust now (现在信任)** → gallery → pick `powerline-multiline` | clone progress lines appear; the trust question appears; gallery lists >60 themes; `~/.niubashrc` written with the pick's ownership note (the #359 generated loader carries the activation), `~/.niubash/plugins.toml` written, undo receipts listed on the finish screen; the REPL prompt is alive afterwards |
-| J3 activation | `source ~/.niubashrc` in the live session | ZERO syntax errors anywhere |
-| J4 new terminal ×3 | open three fresh `niu` sessions | no `Cloning into` (no re-downloads), no "not declared" nags, at most the documented per-source `awaiting-trust` notices, prompt renders |
+| J1 fresh-install first contact | install, run `native-shell`, no `~/.native-shell` anything | the `Native Shell <version>` welcome line + the dim first-run hint naming the explicit `native-shell setup` verb; first contact lands at the REPL prompt — the wizard never auto-starts (#359 stage 1: startup zero-write) |
+| J2 wizard full run, entered through the explicit `native-shell setup` verb | at the J1 prompt: `native-shell setup` → the wizard welcome block (v-banner, environment panel, "No external themes installed yet") → collection **full** → Apply → watch the clones → **Trust now (现在信任)** → gallery → pick `powerline-multiline` | clone progress lines appear; the trust question appears; gallery lists >60 themes; `~/.native-shellrc` written with the pick's ownership note (the #359 generated loader carries the activation), `~/.native-shell/plugins.toml` written, undo receipts listed on the finish screen; the REPL prompt is alive afterwards |
+| J3 activation | `source ~/.native-shellrc` in the live session | ZERO syntax errors anywhere |
+| J4 new terminal ×3 | open three fresh `native-shell` sessions | no `Cloning into` (no re-downloads), no "not declared" nags, at most the documented per-source `awaiting-trust` notices, prompt renders |
 | J5 daily battery | `ls \| wc -l`, `echo hi \| cat -n`, `cd ~ && pwd`, `[[ a != b ]] && echo ok` | each produces output, not errors; prompt still alive after each |
-| J6 trust + activate bash-completion | `niu plugin trust bash-completion` → `source ~/.niubashrc` → new terminal | trust reports success; ZERO syntax errors — bash_completion included |
-| J7 gallery live preview (niubash#170) | re-run `niu setup`, walk the theme gallery | the pane below the highlight renders that theme's real PS1 (header follows the highlight; the old static sentence is gone; Esc fast-forwards, Cancel writes nothing) |
+| J6 trust + activate bash-completion | `native-shell plugin trust bash-completion` → `source ~/.native-shellrc` → new terminal | trust reports success; ZERO syntax errors — bash_completion included |
+| J7 gallery live preview (native-shell#170) | re-run `native-shell setup`, walk the theme gallery | the pane below the highlight renders that theme's real PS1 (header follows the highlight; the old static sentence is gone; Esc fast-forwards, Cancel writes nothing) |
 
 ### The wave-1 persistence group (P3-S1…S4 + P8-S4, lane wt79/jw1-persistence)
 
@@ -46,10 +46,10 @@ what it removes). The wt79 vocabulary survives as `--phases` aliases:
 | Step | The user's move | The gate asserts |
 | --- | --- | --- |
 | P3-S1 reopen sandbox session | fresh terminal after J5; write a marker file through the shell | prompt renders; the wizard's theme line still in the rc; spec still declares oh-my-bash + the theme; the marker round-trips through the shell (previous-session state detection) |
-| P3-S2 theme-block byte-stability + theme identity (niu#168) | `source ~/.niubashrc` in a live session; two fresh terminals; byte snapshots after every open | (a) the THEME block bytes (the oh-my-bash managed guard region) identical after every source/terminal, present exactly once, no activated/deactivated flip of the theme source — the whole-rc comparison stays informational (a spec-declared block may legally materialize once trusted, see the wt87 calibration below); (b) the picked theme's variable unchanged, same framework; (c) `selection materialized` never printed during an unchanged-spec source/startup; (d) terminal 2's prompt block equals terminal 1's modulo clock digits |
-| P3-S3 first-key integrity (niu#167 anti-masking) | idle the themed prompt ≥1.2 s (≥1 clock repaint), then `echo NIU167KEY` with the Ctrl-U wake DISABLED, no retry | the full word executes (bare marker output); never `cho: command not found`. On a pass the run FLIPS `WAKE_ENABLED` off — every later send goes wake-free (the gate stops masking) |
-| P3-S4 aged state (F5) | seed between sessions: rename `oh-my-bash.sh` inside the trusted tree, hand-declare a missing origin + seed its `bootstrap-failures.toml` memo | prompt ≤10 s; exactly one `deferred` row + the documented awaiting-trust lines — one per still-untrusted source, the bound derived from the sandbox registry (wt87 calibration; a literal cap went stale when wt78 expanded `full`); guarded loader no-ops (no error storm); explicit `niu plugin sync` retries the missing origin readably; `niu plugin restore` rebuilds the tree; after healing the spec, the next terminal is silent |
-| P8-S4 remove the source with the ACTIVE theme (F4) | `niu plugin source remove oh-my-bash` while its theme is applied, then re-add + trust + re-enable | spec declaration, registry record and tree drop; no resurrection at the fresh terminal (no re-clone); floor prompt, zero syntax-error storm; re-add restores the theme; exactly one oh-my-bash managed block at steady state (no orphan blocks) |
+| P3-S2 theme-block byte-stability + theme identity (native-shell#168) | `source ~/.native-shellrc` in a live session; two fresh terminals; byte snapshots after every open | (a) the THEME block bytes (the oh-my-bash managed guard region) identical after every source/terminal, present exactly once, no activated/deactivated flip of the theme source — the whole-rc comparison stays informational (a spec-declared block may legally materialize once trusted, see the wt87 calibration below); (b) the picked theme's variable unchanged, same framework; (c) `selection materialized` never printed during an unchanged-spec source/startup; (d) terminal 2's prompt block equals terminal 1's modulo clock digits |
+| P3-S3 first-key integrity (native-shell#167 anti-masking) | idle the themed prompt ≥1.2 s (≥1 clock repaint), then `echo NIU167KEY` with the Ctrl-U wake DISABLED, no retry | the full word executes (bare marker output); never `cho: command not found`. On a pass the run FLIPS `WAKE_ENABLED` off — every later send goes wake-free (the gate stops masking) |
+| P3-S4 aged state (F5) | seed between sessions: rename `oh-my-bash.sh` inside the trusted tree, hand-declare a missing origin + seed its `bootstrap-failures.toml` memo | prompt ≤10 s; exactly one `deferred` row + the documented awaiting-trust lines — one per still-untrusted source, the bound derived from the sandbox registry (wt87 calibration; a literal cap went stale when wt78 expanded `full`); guarded loader no-ops (no error storm); explicit `native-shell plugin sync` retries the missing origin readably; `native-shell plugin restore` rebuilds the tree; after healing the spec, the next terminal is silent |
+| P8-S4 remove the source with the ACTIVE theme (F4) | `native-shell plugin source remove oh-my-bash` while its theme is applied, then re-add + trust + re-enable | spec declaration, registry record and tree drop; no resurrection at the fresh terminal (no re-clone); floor prompt, zero syntax-error storm; re-add restores the theme; exactly one oh-my-bash managed block at steady state (no orphan blocks) |
 
 Driver capabilities this lane landed (journey-steps.json `driver_capabilities`,
 owner W1): **wake-flag** — `send_line(..., wake=False)` (no sacrificial
@@ -63,7 +63,7 @@ Observed verdicts (first landing runs, 2026-10-04, release 1.3.3):
 P3-S2 went **green** — the #168 rebound does not fire for the
 oh-my-bash/`powerline-multiline` wizard shape. P3-S3 passed and the run
 continued wake-free. One product observation recorded, not yet a ticket:
-after `niu plugin source remove` + a fresh terminal the removed source's
+after `native-shell plugin source remove` + a fresh terminal the removed source's
 managed rc block REMAINS (inert — its guarded loader no-ops on the
 missing tree; `remove_source` also will not delete a tree whose layout
 no longer fingerprints); the block is only replaced once the source is
@@ -79,7 +79,7 @@ legitimate product behavior the old form mislabeled.
 
 **F1 — P3-S2 whole-rc byte equality → theme-block byte equality.**
 The old (a) asserted the WHOLE rc byte-identical across sessions. The
-diff the run shows is the `# >>> niu source bash-completion …` managed
+diff the run shows is the `# >>> native-shell source bash-completion …` managed
 block materializing legally: J6 trusts bash-completion, the spec
 declares it, and a later session's sync materializes its source block —
 that is the spec being truth and materialization being sync's job, not
@@ -134,19 +134,19 @@ product bugs):**
   syntax errors. The red is a fingerprint artifact:
   `await_first_prompt_row` compares the last 4 non-empty viewport rows,
   and with wt78's nine-entry collection the awaiting-trust notices wrap
-  (`… then `niu plugin trust git-flow-` / `completion``), so a wrapped
+  (`… then `native-shell plugin trust git-flow-` / `completion``), so a wrapped
   fragment lands inside the compared block and the fingerprints differ.
   A follow-up should compare the prompt-shaped rows only.
 
 **P4-S3's reds stay KNOWN-FAIL `wt80-undo-receipt-ambiguous-theme`:**
 that is a real, still-open product issue (the wizard's undo receipt
-`niu plugin disable <theme>` fails when the theme name exists in more
+`native-shell plugin disable <theme>` fails when the theme name exists in more
 than one installed source) owned by lane wt80/jw2-wizardspec — labeled,
 never waived.
 
 Local validation (wt87, fresh `cargo build --release` + full-journey
 runs): P3-S2 went **PASS** — the whole-rc notes recorded exactly the
-release run's diff (`# >>> niu source bash-completion …` materializing)
+release run's diff (`# >>> native-shell source bash-completion …` materializing)
 as informational while all theme-block/identity/tell/prompt assertions
 held; P3-S4's recalibrated assertions read `5 source(s) vs 5 untrusted
 in the registry` — the same five sources that red'd the release run,
@@ -202,7 +202,7 @@ not the one we happened to run):
   is empty; only HISTFILE appears, in a comment). Recorded instead of
   faked.
 - `{1 vs 3 post-remove terminals}` axis: implemented as the
-  `NIU_JOURNEY_P8S4_FLOOR_TERMINALS` knob (default 1; matrix cell 3):
+  `NATIVE_SHELL_JOURNEY_P8S4_FLOOR_TERMINALS` knob (default 1; matrix cell 3):
   resurrection can first appear on a LATER startup (the memoized-defer
   path differs from the first one), so the floor contract asserts on
   every consecutive fresh terminal.
@@ -234,10 +234,10 @@ pins could never fetch. The checkout step now:
 
 ### Ship evidence: the 6s source fix is in the 1.3.4 binary
 
-- Source-level: `STARTUP_FETCH_BUDGET` (3s, `NIU_STARTUP_FETCH_BUDGET_MS`
+- Source-level: `STARTUP_FETCH_BUDGET` (3s, `NATIVE_SHELL_STARTUP_FETCH_BUDGET_MS`
   overridable) + `run_git_bounded` (kill-on-close job over the whole git
   process tree; credential guards) bound the startup bootstrap fetch —
-  `crates/niubash-runtime/src/plugins/sources.rs:67,669`; the product's
+  `crates/native-shell-runtime/src/plugins/sources.rs:67,669`; the product's
   own unit test `run_git_bounded_kills_a_hung_child_at_the_deadline`
   covers the hung-child kill.
 - E2E: a SYN-drop origin (`https://10.255.255.1/...`, the dropped-SYN
@@ -270,14 +270,14 @@ Currently registered:
 - `wt56-bash-completion-syntax` (lane wt56, alias family) — the
   `bash_completion: line 1376: syntax error in conditional expression`
   the owner hit on 2026-10-03; the gate observed it again on its first
-  full run at J6 (fresh terminal after `niu plugin trust
+  full run at J6 (fresh terminal after `native-shell plugin trust
   bash-completion`).
 - `bash-preexec-recipe-entry` (recipe seed) — the `full` collection's
   bash-preexec recipe names entry `bash-preexec`, but upstream
   rcaloras/bash-preexec ships `bash-preexec.sh`, so the apply reports
   `1 entries failed`.
 - `wt80-undo-receipt-ambiguous-theme` (lane wt80/jw2-wizardspec) — the
-  wizard's undo receipt `niu plugin disable <theme>` fails when the
+  wizard's undo receipt `native-shell plugin disable <theme>` fails when the
   theme name exists in more than one installed source (observed at
   P4-S3 in the 1.3.4 release run; `full` creates exactly that
   dual-framework state). Still open; labeled, never waived.
@@ -299,7 +299,7 @@ a fixture source carrying every representative theme class (single-line,
 two-line, colored, right-aligned, powerline glyph, loads-but-no-PS1,
 hung-forever). It snapshots the preview block per theme into the journey
 manifest format (`verdict.json` / `verdict.txt` / `transcripts/`), runs
-as leg `d3` of `scripts/smoke-test-1.3.0.sh`, and pins the niubash#170
+as leg `d3` of `scripts/smoke-test-1.3.0.sh`, and pins the native-shell#170
 degradation contract: a theme whose render fails or hangs shows
 "(preview unavailable: …)" within the 1.5s bound — the gallery never
 freezes, and the browse leaves no OSH_THEME anywhere.
@@ -314,14 +314,14 @@ when the network recovers, exactly like a user would.
 
 ### Input delivery is verified, not assumed
 
-Slow runners widen every window where niu is still drawing and the
+Slow runners widen every window where native-shell is still drawing and the
 ConPTY bridge eats keystrokes (release run 37149660449, J6: the typed
-`niu plugin trust bash-completion` never echoed and the 90s wait timed
+`native-shell plugin trust bash-completion` never echoed and the 90s wait timed
 out on a screen still showing the startup banner; same family as wt61's
 "menus drain input queued while they draw"). Local diagnosis of the
 same gate added a second, sharper mode: **the themed prompt's
 per-second clock repaint eats the FIRST input byte typed after idle**
-(`echo` executes as `cho`, `niu` as `iu` — `niu: cho: command not
+(`echo` executes as `cho`, `native-shell` as `iu` — `native-shell: cho: command not
 found` in the transcripts). So the driver hardens INPUT DELIVERY only —
 four layers, all bounded — plus one sequencing rule (the output anchor
 below, which owns the space *between* two sends):
@@ -368,7 +368,7 @@ now returns only when the command it typed has **completed** — an
 input line nor any row carrying the command text (the command-text
 guard also survives the theme clock's repaints). Bounded at 30s by
 default; the known-long journey commands carry their own bound (90s for
-`niu plugin trust bash-completion`, 60s for `source ~/.niubashrc`,
+`native-shell plugin trust bash-completion`, 60s for `source ~/.native-shellrc`,
 matching each step's expected-output wait). Every anchor outcome lands
 in the `delivery` ledger as kind `anchor-wait` — one line per REPL
 send, with its elapsed time: the sequencing trace a future CI flake
@@ -398,7 +398,7 @@ does not fix it.)
 
 ```sh
 cargo build --release
-python scripts/journey/golden-journey.py target/release/niu.exe
+python scripts/journey/golden-journey.py target/release/native-shell.exe
 ```
 
 Requirements: Windows (ConPTY), `python -m pip install pywinpty pyte`,
@@ -414,14 +414,14 @@ green), `--phases IDS` (comma-separated: the base J1–J7 gate always runs
 first, then the named registered phases; `all` = every registered phase —
 the DEFAULT, the gate exercises everything; `base` = the bare release
 gate; legacy `--phase` words accepted: `full`, `gate`, `persist`),
-`--cleanup-sandbox DIR` (standalone verb, no `niu.exe` needed: delete a
+`--cleanup-sandbox DIR` (standalone verb, no `native-shell.exe` needed: delete a
 kept sandbox directory in the journey's own context — DACLs and the
 read-only attribute are restored to host-clearable first — and exit `0`
 when the path is gone or already absent, `1` if the tree survived the
 full rescue chain, `2` if the request is refused as unsafe or not a
 sandbox tree).
 
-### Sandbox landing + host-clearable teardown (niubash#428 / #449)
+### Sandbox landing + host-clearable teardown (native-shell#428 / #449)
 
 A bare Python script has no git-bash-style path translation, so the
 repo's conventional `/d/tmp/x` is read as DRIVE-RELATIVE: with the cwd
@@ -450,7 +450,7 @@ through takeown and `rd /s /q` while the tree survives).
 - **Exit `2` (refused):** refuses relative paths, drive roots (`D:\`),
   the current user home / cwd or any of their ancestors, non-directory
   files, and any existing readable directory that does not match a
-  journey sandbox shape (`journey-*` directory name, `home/.niubash`
+  journey sandbox shape (`journey-*` directory name, `home/.native-shell`
   tree, or a `--keep-sandbox` parent directory whose children are all
   `journey-*` directories; a directory whose DACL denies enumeration is
   allowed through as the #428 restricted-token signature).
@@ -490,7 +490,7 @@ and never pass silently.
 `.github/workflows/release.yml` has a `journey` job that runs on
 `windows-2025`: it resolves the release tag, **preserves the current
 `scripts/journey/` from master, checks out the tag's own source, builds
-`niu.exe` fresh inside the job** (stale-binary discipline — the artifact
+`native-shell.exe` fresh inside the job** (stale-binary discipline — the artifact
 is never reused), installs `pywinpty`/`pyte`, and runs the journey. The
 `release` job declares `needs: [build-windows, journey]`, so no GitHub
 Release is published while the journey is red. The verdict and the full
@@ -516,7 +516,7 @@ A step is a **real user transcript, never a synthetic shape**:
    `verdict.step(...)`, `step.check(...)` for every user-visible fact,
    `verdict.capture(...)` at the moments a human would look at.
 3. Assert what the USER sees (screen text, files under the sandbox
-   `~/.niubash`), never internals. If the honest expectation is red
+   `~/.native-shell`), never internals. If the honest expectation is red
    today, register a KNOWN-FAIL with the owning ticket instead of
    weakening the assertion.
 4. Re-run the journey end-to-end and paste the verdict into the PR.

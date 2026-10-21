@@ -1,4 +1,4 @@
-# Shell capability gap matrix: niubash/rubash vs fish, zsh, nushell
+# Shell capability gap matrix: native-shell/rubash vs fish, zsh, nushell
 
 Lane wt93/abbr (scope-rewritten 2026-10-05: full-capability gap analysis).
 Branch `wt93/abbr`, base `b4b87f1`. Companion machine-readable file:
@@ -7,8 +7,8 @@ Branch `wt93/abbr`, base `b4b87f1`. Companion machine-readable file:
 ## Method and provenance
 
 - **Ours** = the actual trees: rubash engine `D:/repo/rubash/src/` (HEAD
-  `804d680f`, niubash 1.3.4 chain) and niubash product
-  `crates/niubash-runtime/src/` at this branch (base `b4b87f1`). Every "ours"
+  `804d680f`, native-shell 1.3.4 chain) and native-shell product
+  `crates/native-shell-runtime/src/` at this branch (base `b4b87f1`). Every "ours"
   cell cites `file:line` I read in those trees.
 - **fish** = snapshot `D:/repo/_rtstudy_refs/fish-shell-master` (master
   tarball, Rust fish, `Cargo.toml` package version 4.9.3, changelog unfilled
@@ -23,8 +23,8 @@ Branch `wt93/abbr`, base `b4b87f1`. Companion machine-readable file:
   representative of master, not a release. Cited as `zsh: Src/...`.
 - **nushell** = release tarball 0.108.0, extracted read-only at
   `D:/repo/_rtstudy_refs/nushell-0.108.0`. Cited as `nu: crates/...`.
-- **reedline** = snapshot 0.52.0 (`reedline-main`); niubash vendors **0.50**
-  (`crates/niubash-runtime/Cargo.toml:11`). Where the engine capability is
+- **reedline** = snapshot 0.52.0 (`reedline-main`); native-shell vendors **0.50**
+  (`crates/native-shell-runtime/Cargo.toml:11`). Where the engine capability is
   reedline's, the row says so explicitly — "reedline supports X" is not the
   same as "we wire X".
 - Every row: dimension, capability, per-shell evidence (`file:line`), our
@@ -38,7 +38,7 @@ Status vocabulary: **equivalent** = we ship the same capability with
 comparable depth; **partial** = present but materially narrower; **missing**
 = absent; **ahead** = we have something the references lack; **deliberate** =
 gap accepted by an owner decision (cited, e.g. the v3 "no second shell
-language runtime" non-goal in `docs/planning/niubash-zsh-gap-analysis.md`).
+language runtime" non-goal in `docs/planning/native-shell-zsh-gap-analysis.md`).
 
 ## Executive top-20 by user impact
 
@@ -60,7 +60,7 @@ language runtime" non-goal in `docs/planning/niubash-zsh-gap-analysis.md`).
 5. **Async prompt execution** — fish renders prompts from background threads
    (`src/threads.rs`, `src/reader/iothreads.rs`); ours computes segments
    synchronously per draw.
-6. **Completion authoring depth** — `NIU_COMPDEFS` exists
+6. **Completion authoring depth** — `NATIVE_SHELL_COMPDEFS` exists
    (`shell.rs:116-118`) but the contract is narrower than zsh `compdef`
    (`Completion/compinit`) / fish `complete -c` / nu custom completers
    (`nu-cli/src/completions/custom_completions.rs`).
@@ -110,14 +110,14 @@ language runtime" non-goal in `docs/planning/niubash-zsh-gap-analysis.md`).
     across sessions except user rc.
 
 Where we are ahead (recorded in-line as `(ahead)` rows): Windows-native
-ConPTY without WSL; setup wizard + `niu doctor` onboarding (none of the three
+ConPTY without WSL; setup wizard + `native-shell doctor` onboarding (none of the three
 has an equivalent); bash-61 builtin floor plus zsh-name aliases
 (`setopt`/`typeset`/`unsetopt`, `rubash src/executor/builtin_names.rs:56-97`);
 programmable-completion builtins (`compgen`/`complete`/`compopt` port) plus a
 bash-completion importer (`completion/bash_import.rs`); p10k-style segment
 presets; a broader lifecycle hook list than fish/zsh cores
 (precmd/preexec/chpwd/postcmd/zshaddhistory/zshexit/greeting/title,
-`config.rs:32-39`); startup tracing; winuxcmd GNU toolchain; `NIU_ENV`
+`config.rs:32-39`); startup tracing; winuxcmd GNU toolchain; `NATIVE_SHELL_ENV`
 agent-env sourcing; PTY-driven interactive regression harness + GNU upstream
 test corpus.
 
@@ -134,8 +134,8 @@ test corpus.
 | D01-07 | multi-line editing + submit validation | reader validates completeness before accept | zle accept-line + parse check | Validator trait (nu-cli/src/validation.rs) | equivalent (ReplValidator repl.rs:601-603 over rubash continuation) | — | keep |
 | D01-08 | bracketed paste mode | src/input/decode.rs | ZLE bracketed-paste widget | reedline supports | equivalent (reedline 0.50; shallow — not hand-verified this pass) | — | keep |
 | D01-09 | suffix widgets (auto-suffix-remove/retain) | — | iwidgets.list:16-17 auto-suffix-* | — | missing | low | niche; only after widget DSL |
-| D01-10 | key-code reader tool | fish_key_reader builtin (src/builtins/fish_key_reader.rs) | zkbd helper (Completion + Functions) | — | missing | low-med | ship `niu key-reader` on the product layer using crossterm |
-| D01-11 | system clipboard keybindings | fish_clipboard_copy/paste functions | — | reedline system_clipboard feature | ahead (feature enabled, crates/niubash-runtime/Cargo.toml:11; add_system_clipboard_keybindings repl.rs:353) | — | (ahead) keep |
+| D01-10 | key-code reader tool | fish_key_reader builtin (src/builtins/fish_key_reader.rs) | zkbd helper (Completion + Functions) | — | missing | low-med | ship `native-shell key-reader` on the product layer using crossterm |
+| D01-11 | system clipboard keybindings | fish_clipboard_copy/paste functions | — | reedline system_clipboard feature | ahead (feature enabled, crates/native-shell-runtime/Cargo.toml:11; add_system_clipboard_keybindings repl.rs:353) | — | (ahead) keep |
 | D01-12 | transient prompt (slim prompt for past lines) | reader.rs:478 field, :833 fish_transient_prompt var, :1127 toggle | — (p10k plugin territory) | reedline engine.rs:161,775 with_transient_prompt; nu wires TRANSIENT_PROMPT (nu-cli/src/reedline_config.rs) | missing (reedline 0.50 ships the hook; repl.rs never calls with_transient_prompt — grep shows no transient use) | med-high | wrap current prompt in a compact one-line transient Prompt and pass to with_transient_prompt in repl.rs:135 builder |
 
 ## Dimension D02 — Abbreviations (fish-only reference; our #187 fold-in)
@@ -146,8 +146,8 @@ test corpus.
 | D02-02 | expand at separators (space/enter) before execution | src/reader/reader.rs:4338 expand_abbreviation_at_cursor(1) on separator; :4572-4593 expand before execute (even when incomplete) | — | — | missing | high | hook expansion into the REPL submit path (repl.rs Signal::Submit) + separator key handling |
 | D02-03 | cursor placement inside expansion (set-cursor marker) | src/builtins/abbr.rs:38 set_cursor_marker | — | — | missing | med | part of abbr builtin surface |
 | D02-04 | function expanders (replacement is a function run at expansion time) | src/abbrs.rs:47-48 replacement_is_function; reader.rs:6018-6030 expand replacer | — | — | missing | med | call widget-function machinery (shell.rs run_widget_function) for function abbrs |
-| D02-05 | management builtin: add/rename/show/list/erase/query | src/builtins/abbr.rs:29-64 cmds + flags | — (zsh-abbr is a third-party plugin) | — | missing | med | implement `abbr` builtin in niubash-runtime over the config table |
-| D02-06 | persistence across sessions | universal var fish_user_abbreviations (src/env_universal_common.rs:644 UVARS_VERSION_3_0 file format) | — | — | missing | med | persist in niu config (FullConfig config.rs:384) instead of a universal-var file |
+| D02-05 | management builtin: add/rename/show/list/erase/query | src/builtins/abbr.rs:29-64 cmds + flags | — (zsh-abbr is a third-party plugin) | — | missing | med | implement `abbr` builtin in native-shell-runtime over the config table |
+| D02-06 | persistence across sessions | universal var fish_user_abbreviations (src/env_universal_common.rs:644 UVARS_VERSION_3_0 file format) | — | — | missing | med | persist in native-shell config (FullConfig config.rs:384) instead of a universal-var file |
 | D02-07 | history records the EXPANDED command line | expansion replaces the buffer before execution (reader.rs:4572-4593), history receives expanded form | — | — | n/a (follows once D02-02 lands) | med | expansion must mutate the submitted line, not just the display |
 | D02-08 | design decision recorded | — | — | — | missing — **recommendation: native editor-layer abbr.** Sketch: store abbrs in FullConfig + runtime table; in repl.rs, on SPACE/ENTER key events, if the token left of the cursor matches, run the expansion as a ReedlineEvent sequence (send EditCommands replacing the token) so undo collapses it (reedline enums.rs:588), then let execute see the expanded line (acceptance: fish D02-01/02/07 semantics). Engine `bind` (#185) is NOT required for this; the product-layer REPL owns the keys. | high | separate lane wt??/abbr-native |
 
@@ -202,10 +202,10 @@ test corpus.
 | id | capability | fish | zsh | nushell | ours | impact | fix path |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | D07-01 | candidate descriptions | src/complete.rs:49-66 description strings | _describe + zstyle descriptions | Signature/extra descriptions | equivalent (descriptions flow completer.rs:450-455, 516-529) | — | keep |
-| D07-02 | user-authorable per-command completions in shell code | complete -c X -a '...' (src/builtins/complete.rs) + completion functions | compdef functions + compinit autoload (Completion/compinit:72+) | custom completer closures + external_completer (nu-cli/src/completions/custom_completions.rs) | partial (NIU_COMPDEFS cmd->function bridge shell.rs:116-118, load_user_compdefs repl.rs:1189; contract narrower: no per-word-position dispatch options) | med-high | document + extend compdef contract (word/previous-word/leading options) over the existing bridge |
+| D07-02 | user-authorable per-command completions in shell code | complete -c X -a '...' (src/builtins/complete.rs) + completion functions | compdef functions + compinit autoload (Completion/compinit:72+) | custom completer closures + external_completer (nu-cli/src/completions/custom_completions.rs) | partial (NATIVE_SHELL_COMPDEFS cmd->function bridge shell.rs:116-118, load_user_compdefs repl.rs:1189; contract narrower: no per-word-position dispatch options) | med-high | document + extend compdef contract (word/previous-word/leading options) over the existing bridge |
 | D07-03 | curated ecosystem corpus | 1095 completion files (share/completions/) | 391 command files (Completion/Unix/Command/) + 53 self (Completion/Zsh/Command/) | signatures built into commands | ahead-ish (winuxcmd_assets.rs + external.rs asset-driven completion data; scale unmeasured — shallow) | low | grow asset corpus with completion data per tool |
 | D07-04 | import foreign completion scripts | — | — (native ecosystem) | — | ahead (completion/bash_import.rs imports bash-completion scripts) | — | (ahead) keep investing; it is a moat vs fish/nu |
-| D07-05 | --help scraping / dynamic option completion | — (static files) | — | — | ahead-ish (cmd -h scrape + 3-level cache, per docs/planning/niubash-zsh-gap-analysis.md pillar table) | — | (ahead) verify cache invalidation |
+| D07-05 | --help scraping / dynamic option completion | — (static files) | — | — | ahead-ish (cmd -h scrape + 3-level cache, per docs/planning/native-shell-zsh-gap-analysis.md pillar table) | — | (ahead) verify cache invalidation |
 | D07-06 | self-completion of the shell's own commands/options | share/completions includes fish's own | 53 files Completion/Zsh/Command | signature-derived automatic | partial (host completion reads builtin_names(), rubash src/executor/builtin_names.rs:101; option-level self-completion shallow) | low-med | generate option tables from builtin help_texts.rs |
 | D07-07 | path completions with escaping correctness | src/complete.rs file completion | _files | directory completions (nu-cli/src/completions/directory_completions.rs) | equivalent (CwdPathCandidate completer.rs:304-340; escaped-word test completer.rs:647) | — | keep |
 | D07-08 | fuzzy candidate matching | src/complete.rs:33 StringFuzzyMatch | matcher zstyle (compmatch.c) | completion_options fuzzy flag | missing (prefix filter only, completer.rs:481) | med | add subsequence matcher with score, config-gated |
@@ -217,22 +217,22 @@ test corpus.
 
 | id | capability | fish | zsh | nushell | ours | impact | fix path |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| D08-01 | bind/bindkey builtin to set keyseq->function at runtime | src/builtins/bind.rs (bind, -K presets, fish_user_key_bindings) | Src/Zle/zle_keymap.c:212+ keymap management | keybindings config table + `keybindings` commands (nu-cli/src/commands/keybindings*.rs) | partial (engine bind is a stub: validates options, prints defaults on -p, rubash src/builtins/bind.rs:24-93; product NIU_BINDKEYS env parse repl.rs:56-69) | high (#185) | implement NIU_BINDKEYS as first-class config + real bind dispatch in product layer; keep engine bind bash-compatible in output only |
-| D08-02 | keymap switching / named keymaps | fish_default_key_bindings / fish_vi_key_bindings switch functions | keymaps emacs/vicmd/main aliasing (zle_keymap.c:74-76) | EditMode switch config | partial (EditorMode Emacs/Vi config.rs:44; no runtime switch command) | low-med | `niu mode vi/emacs` verb or Ctrl-bound toggle |
+| D08-01 | bind/bindkey builtin to set keyseq->function at runtime | src/builtins/bind.rs (bind, -K presets, fish_user_key_bindings) | Src/Zle/zle_keymap.c:212+ keymap management | keybindings config table + `keybindings` commands (nu-cli/src/commands/keybindings*.rs) | partial (engine bind is a stub: validates options, prints defaults on -p, rubash src/builtins/bind.rs:24-93; product NATIVE_SHELL_BINDKEYS env parse repl.rs:56-69) | high (#185) | implement NATIVE_SHELL_BINDKEYS as first-class config + real bind dispatch in product layer; keep engine bind bash-compatible in output only |
+| D08-02 | keymap switching / named keymaps | fish_default_key_bindings / fish_vi_key_bindings switch functions | keymaps emacs/vicmd/main aliasing (zle_keymap.c:74-76) | EditMode switch config | partial (EditorMode Emacs/Vi config.rs:44; no runtime switch command) | low-med | `native-shell mode vi/emacs` verb or Ctrl-bound toggle |
 | D08-03 | list/introspect bindings | bind -L/-K/-P | bindkey -l/-L/-D | keybindings_list.rs | partial (bind -p prints the 10 default arrows only, bind.rs:11-22,33-38; no real listing) | low-med | list actual effective keybindings from reedline Keybindings |
 | D08-04 | bind arbitrary keyseq strings ("\e[1;5C" style) | yes (key syntax in bind builtin) | yes | yes (reedline KeyEvent tables) | partial (parse_user_bindkeys accepts `keyspec:widget` fixed syntax repl.rs:51-69; no raw keyseq grammar) | med | adopt reedline KeyEvent parser for arbitrary specs |
 
 ## Dimension D09 — Scripting language core
 
 Context: the v3 non-goal "no second shell language runtime"
-(`docs/planning/niubash-zsh-gap-analysis.md` verdict) means fish-language and
+(`docs/planning/native-shell-zsh-gap-analysis.md` verdict) means fish-language and
 nu-language parity are deliberate non-goals. Rows below record where a
 bash-compatible user still loses versus the zsh superset, or where the
 references' language models differ structurally.
 
 | id | capability | fish | zsh | nushell | ours | impact | fix path |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| D09-01 | POSIX/bash core semantics (functions, loops, case, test, [[ ]], arithmetic, arrays, traps) | different language entirely (no POSIX; functions/args/`set` model) | superset, mostly bash-compatible | different language (structured pipeline) | equivalent (rubash parser/executor suites; 86/86 GNU upstream tests claim per docs/planning/niubash-zsh-gap-analysis.md) | — | keep at parity; this is the product |
+| D09-01 | POSIX/bash core semantics (functions, loops, case, test, [[ ]], arithmetic, arrays, traps) | different language entirely (no POSIX; functions/args/`set` model) | superset, mostly bash-compatible | different language (structured pipeline) | equivalent (rubash parser/executor suites; 86/86 GNU upstream tests claim per docs/planning/native-shell-zsh-gap-analysis.md) | — | keep at parity; this is the product |
 | D09-02 | parameter expansion flags (P/j/f/z/S/D/A) | — | Src/subst.c:2163-2440 case arms | — | missing (deliberate; bash ${var...} forms covered instead) | low | none (non-goal) |
 | D09-03 | glob qualifiers (*(.) for dirs, e.g. m-7) | — | Src/glob.c:1390+ qualflags dispatch | — | missing (deliberate) | low | none (non-goal); consider `find`/fd wrappers |
 | D09-04 | history modifiers :h/:t/:r/:e on params and events | — | Src/subst.c modifiers | — | missing (bash ${var%…}/#… cover most; event-designator modifiers partial) | low | maybe :t/:h as product-layer helper only |
@@ -267,7 +267,7 @@ category dirs (`crates/nu-command/src/`).
 | D10-08 | argparse (option parser for functions) | src/builtins/argparse.rs | zparseopts (Modules/zutil) | signatures + rest params | missing (getopts only, bash parity) | med | needed once function-based completions/widgets grow (D07-02, D01-03) |
 | D10-09 | commandline (query/mutate editor buffer from shell code) | src/builtins/commandline.rs | ZLE params zle_params.c:142-173 | — | missing (WidgetOutcome partial, D01-04) | high | same fix as D01-03/04 |
 | D10-10 | emit / custom events | src/builtins/emit.rs + event.rs fire | zsh/zselect + zshaddhistory hacks | hooks | missing | low-med | pair with D17-07 |
-| D10-11 | status (job summary, features, login, variables) | src/builtins/status.rs:175 print_features | — | version/commands verbs | partial (`niu doctor` + `niu --version` cover setup health, not shell state query) | low | `niu status` verb |
+| D10-11 | status (job summary, features, login, variables) | src/builtins/status.rs:175 print_features | — | version/commands verbs | partial (`native-shell doctor` + `native-shell --version` cover setup health, not shell state query) | low | `native-shell status` verb |
 | D10-12 | zpty / job-in-pty control | — | Modules/zpty.mdd | — | missing | low | Windows ConPTY could actually do this well |
 | D10-13 | networking builtins (zftp, ztcp/socket, http) | — | Modules/zftp.mdd, tcp.mdd, socket.mdd | http get/post etc. (nu-command/src/network) | missing (WinHttp used internally by self_update only, Cargo.toml windows-sys features) | med | `http` builtin via WinHttp — zero new deps |
 | D10-14 | TUI builtins (zcurses, zle, complist) | — | Modules/curses.mdd; Zle modules | nu-explore TUI | partial (interactive_menu.rs crossterm menus, plugins/ui.rs — product verbs, not user-scriptable TUI) | low-med | expose menu toolkit to widgets post-D01-03 |
@@ -279,7 +279,7 @@ category dirs (`crates/nu-command/src/`).
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | D11-01 | typed values through the pipeline (tables/records/lists) | — | — | Value enum: Bool/Int/Float/Filesize/Duration/Date/Range/Record/List/Closure/Binary (nu-protocol/src/value/mod.rs:52+, value/duration.rs, filesize.rs) | missing (deliberate: bash text streams) | low (paradigm) | none in core; consider `table`-style pretty-printer wrapper over winuxcmd output |
 | D11-02 | cell-path access into structured data | — | — | cell_path_completions.rs + Value record access | missing (deliberate) | low | none |
-| D11-03 | interactive data explorer | — | — | crates/nu-explore (src/pager, views) | missing | low-med | `niu explore` over json/csv via asset data |
+| D11-03 | interactive data explorer | — | — | crates/nu-explore (src/pager, views) | missing | low-med | `native-shell explore` over json/csv via asset data |
 | D11-04 | dataframe engine | — | — | nu_plugin_polars | missing (deliberate) | low | none |
 | D11-05 | database access | — | — | nu-command/src/database | missing | low | none |
 
@@ -298,7 +298,7 @@ category dirs (`crates/nu-command/src/`).
 
 | id | capability | fish | zsh | nushell | ours | impact | fix path |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| D13-01 | prompt as user code | fish_prompt function (share/functions/fish_prompt.fish) | PROMPT + PROMPT_SUBST (promptexpand Src/prompt.c:182, % sequences :809) | PROMPT_COMMAND closure (nu-cli/src/prompt.rs) | partial (template + segment catalog config.rs:12-29; Custom(String) segment is static text, prompt_segments.rs:24-35) | med-high | let a segment be a niu function name evaluated per draw (needs cheap function-call path) |
+| D13-01 | prompt as user code | fish_prompt function (share/functions/fish_prompt.fish) | PROMPT + PROMPT_SUBST (promptexpand Src/prompt.c:182, % sequences :809) | PROMPT_COMMAND closure (nu-cli/src/prompt.rs) | partial (template + segment catalog config.rs:12-29; Custom(String) segment is static text, prompt_segments.rs:24-35) | med-high | let a segment be a native-shell function name evaluated per draw (needs cheap function-call path) |
 | D13-02 | right prompt | fish_right_prompt function | RPROMPT/RPS1 | PROMPT_COMMAND_RIGHT (reedline_config.rs) | partial (right_prompt_format template + right_prompt_elements, config.rs:18,26; static) | med | same function-segment mechanism as D13-01 |
 | D13-03 | async prompt execution | prompt runs on background threads (src/threads.rs, src/reader/iothreads.rs) | — (sync; themes hack via precmd caching) | — (sync) | missing (segments computed synchronously in the draw path) | med-high | thread pool + timeout + cached segment values; prerequisite for a git segment |
 | D13-04 | vi-mode prompt indicator | fish_mode_prompt function | — | render_prompt_indicator(PromptEditMode) | partial (repl.rs:674 ignores the mode parameter — `_prompt_mode`; one static indicator) | med | render per-mode chars for Insert/Normal/Replace |
@@ -315,7 +315,7 @@ category dirs (`crates/nu-command/src/`).
 | D14-01 | built-in manager + catalog | — (fisher/omf are third-party) | — (oh-my-zsh/zinit third-party) | plugin add/use + registry file (nu-cmd-plugin/src/util.rs:43-63) | ahead (catalog.rs + recipes.rs + ui.rs + trust.rs + sync.rs + mirrors.rs — curated manager with TUI) | — | (ahead) keep |
 | D14-02 | third-party binary plugin protocol | — | — | nu-plugin-protocol/nu-plugin-engine crates; plugin signatures feed completions/docs | missing (only the command-not-found provider ABI draft, docs/planning/plugin-command-not-found-provider-abi.md:1-10) | med-high | generalize the provider ABI to {command, completions, prompt, hooks} contracts over JSON frames |
 | D14-03 | run foreign ecosystem plugins | n/a | n/a | n/a | partial (bash compat means most bash plugins source OK; `bind` calls tolerated by the stub — bind.rs:40-47 comment says exactly this) | med | fix the missing 20% (D01-03/D08-01) and the oh-my-* compat story mostly closes itself |
-| D14-04 | plugin provides completions/prompt/hooks | functions+events | any sourced script | signatures + plugin commands | partial (NIU_COMPDEFS + HookConfig + widget functions are separate surfaces, not unified under one pack format) | med | unify into a pack manifest (plugins/spec.rs exists — extend) |
+| D14-04 | plugin provides completions/prompt/hooks | functions+events | any sourced script | signatures + plugin commands | partial (NATIVE_SHELL_COMPDEFS + HookConfig + widget functions are separate surfaces, not unified under one pack format) | med | unify into a pack manifest (plugins/spec.rs exists — extend) |
 | D14-05 | trust/verification model | — | — | — (unsigned registry) | ahead-ish (plugins/trust.rs + registry-derived trust bound per wt87/gatecal) | — | (ahead) keep |
 
 ## Dimension D15 — Variables, scopes, types
@@ -323,7 +323,7 @@ category dirs (`crates/nu-command/src/`).
 | id | capability | fish | zsh | nushell | ours | impact | fix path |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | D15-01 | arrays/lists with element semantics | real lists (no word splitting) | arrays + associative + tied | typed lists | equivalent-bash (executor/arrays/storage.rs, dynamic_arrays.rs; shell/arrays/) | — | keep |
-| D15-02 | persistent cross-session variables (universal vars) | env_universal_common.rs:301-318 binary v3.0 format, :644 SETUVAR records | — | — (config only) | missing | med-low | niu config env table applied at startup (simpler than uvar file) |
+| D15-02 | persistent cross-session variables (universal vars) | env_universal_common.rs:301-318 binary v3.0 format, :644 SETUVAR records | — | — (config only) | missing | med-low | native-shell config env table applied at startup (simpler than uvar file) |
 | D15-03 | typed variable attributes | — (all strings) | typeset -E/-F/-L/-R/-Z/-U/-T/-H (Src/builtin.c:5380+ case arms) | typed Values | partial (bash declare -i/-x/-r/-a/-A/-n; declare.rs) | low | non-goal beyond bash |
 | D15-04 | PATH as a list (auto split/join) | PATH is a list | typeset -T path PATH tie | PATH is a list | missing (colon-string, bash semantics) | low-med | product helper (`path add`) before any engine change |
 | D15-05 | pipestatus arrays | $pipestatus | pipestatus | exit codes in sqlite history | equivalent ($PIPESTATUS bash parity, executor) | — | keep |
@@ -349,14 +349,14 @@ category dirs (`crates/nu-command/src/`).
 
 | id | capability | fish | zsh | nushell | ours | impact | fix path |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| D17-01 | rc file chain | config.fish + conf.d/*.fish | zshenv/zprofile/zshrc/zlogin (global + user) | env.nu + config.nu | partial (NIU_ENV file with BASH_ENV fallback, shell.rs:904-917 + tests :3370-3434; single file by design) | low-med | optional conf.d-style drop-in dir alongside niu.env |
-| D17-02 | per-feature feature flags | status features + fish_features (src/builtins/status.rs:175) | 219 setopt names (Src/options.c optns :79) | experimental flags | partial (bash set/shopt + setopt alias, zsh_options.rs; no niu-specific feature flags) | low | niu feature flags only when a behavioral fork needs one |
+| D17-01 | rc file chain | config.fish + conf.d/*.fish | zshenv/zprofile/zshrc/zlogin (global + user) | env.nu + config.nu | partial (NATIVE_SHELL_ENV file with BASH_ENV fallback, shell.rs:904-917 + tests :3370-3434; single file by design) | low-med | optional conf.d-style drop-in dir alongside native-shell.env |
+| D17-02 | per-feature feature flags | status features + fish_features (src/builtins/status.rs:175) | 219 setopt names (Src/options.c optns :79) | experimental flags | partial (bash set/shopt + setopt alias, zsh_options.rs; no niu-specific feature flags) | low | native-shell feature flags only when a behavioral fork needs one |
 | D17-03 | compiled/cached startup artifacts | — | zcompile wordcode (Src/builtin.c:136) | plugin cache msgpackz + const-eval of config | missing (the 1.3.4 "6s source" fix addresses a symptom; no cache) | med | cache parsed config + completion assets with mtime validation |
 | D17-04 | lazy autoload of functions | src/autoload.rs (functions load on first call) | zmodload on demand; autoload -Xz | — | partial (source-time function defs; no lazy index) | low | lazy function index if startup regressions demand |
 | D17-05 | startup timing visibility | --profile (fish) | zprof module | nu --log-level timing | ahead (startup_trace.rs dedicated module) | — | (ahead) keep |
 | D17-06 | instant prompt | — | p10k instant prompt (plugin) | — | missing | low | far-term; needs D13-03 first |
 | D17-07 | first-run onboarding + health check | — | — | — | ahead (setup_wizard.rs 3209 lines + doctor.rs probes with fix hints) | — | (ahead) keep; nothing in fish/zsh/nu has an equivalent |
-| D17-08 | agent/AI env file contract | — | — | — | ahead (NIU_ENV sourcing incl. agent-init file, shell.rs:3352-3461 tests) | — | (ahead) unique AI-native surface |
+| D17-08 | agent/AI env file contract | — | — | — | ahead (NATIVE_SHELL_ENV sourcing incl. agent-init file, shell.rs:3352-3461 tests) | — | (ahead) unique AI-native surface |
 
 ## Dimension D18 — Errors and diagnostics
 
@@ -377,7 +377,7 @@ category dirs (`crates/nu-command/src/`).
 | D19-02 | incremental lexer/parse reuse | fish AST reparse + caching (src/ast.rs) | ZLE in C, no reparse of history | IR compile of blocks (nu-engine) | partial (lexer brace_scan_cache.rs caches brace scans; no whole-line incremental parse) | low | extend cache family only on profiler evidence |
 | D19-03 | persistent helper processes | — | — | plugins are persistent processes with GC (nu-protocol/src/config/plugin_gc.rs) | missing | low-med | not until D14-02 protocol exists |
 | D19-04 | precompiled wordcode/bytecode | — | zcompile | nu-engine IR | missing | low | non-goal while cold start is fast |
-| D19-05 | cold-start time on Windows | n/a (no Windows build) | n/a (MSYS layer) | native | ahead (170 ms cold start claim, docs/planning/niubash-zsh-gap-analysis.md pillar table; rubash docs/PERF-BASELINE.md tracks engine perf) | — | (ahead) keep measuring per release |
+| D19-05 | cold-start time on Windows | n/a (no Windows build) | n/a (MSYS layer) | native | ahead (170 ms cold start claim, docs/planning/native-shell-zsh-gap-analysis.md pillar table; rubash docs/PERF-BASELINE.md tracks engine perf) | — | (ahead) keep measuring per release |
 | D19-06 | history search performance structures | history cache nodes + timestamp merge (src/history/history.rs:144-149) | in-memory HISTSIZE list | sqlite indexes | partial (prefix search over loaded entries; perf unmeasured — shallow) | low | measure before optimizing |
 
 ## Dimension D20 — Platform and OS integration
@@ -385,7 +385,7 @@ category dirs (`crates/nu-command/src/`).
 | id | capability | fish | zsh | nushell | ours | impact | fix path |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | D20-01 | native Windows without WSL | missing (Unix targets) | missing (MSYS2/Cygwin layer) | equivalent (native) | ahead (ConPTY-native, ConPTY test harness per rubash Cargo.toml:16-19 comment) | — | (ahead) this is the moat |
-| D20-02 | terminal profile installation | — | — | — | ahead (windows_terminal.rs:6 NIU_PROFILE_GUID profile install) | — | (ahead) keep |
+| D20-02 | terminal profile installation | — | — | — | ahead (windows_terminal.rs:6 NATIVE_SHELL_PROFILE_GUID profile install) | — | (ahead) keep |
 | D20-03 | font management (nerd fonts) | — | — | — | ahead (fonts.rs) | — | (ahead) keep |
 | D20-04 | self-update channel | — | — | nupm/nu — not shell-update | ahead (src/self_update.rs; WinHttp dependency in Cargo.toml) | — | (ahead) keep |
 | D20-05 | elevation builtin | — | — | — | ahead (Windows sudo builtin, builtin_names.rs windows-conditional + winuxcmd sudo) | — | (ahead) keep |
@@ -409,7 +409,7 @@ audit-plan lane discipline (discovery/fix lanes are separate):
 
 - **L1 (editor primitives, P0):** D01-03/04 + D08-01/03/04 + D10-09 — the
   widget contract + real bind surface. Unlocks L2/L3. Files:
-  `crates/niubash-runtime/src/{repl.rs,shell.rs,config.rs}`.
+  `crates/native-shell-runtime/src/{repl.rs,shell.rs,config.rs}`.
 - **L2 (abbr):** D02 — depends on L1 only for the function-abbr variant; the
   literal-table MVP can start immediately in repl.rs. Files: repl.rs,
   config.rs, new builtins/abbr surface in product layer.
@@ -447,7 +447,7 @@ audit-plan lane discipline (discovery/fix lanes are separate):
 - **fish snapshot** is a between-releases master (4.9.3 dev); abbr semantics
   cited from src are stable across 3.x/4.x but line numbers will drift.
 - **reedline version skew:** the matrix records reedline 0.52 snapshot
-  capabilities; niubash builds against 0.50. Rows that say "reedline ships
+  capabilities; native-shell builds against 0.50. Rows that say "reedline ships
   it" still require wiring work on our side (e.g. D01-12 transient prompt
   exists in 0.50 already and is simply unwired).
 - **No live differential probing was used for this matrix** (the original

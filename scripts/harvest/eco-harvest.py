@@ -332,7 +332,7 @@ class Github:
                 "Authorization": f"Bearer {self.token}",
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "niubash-eco-harvest/wt92",
+                "User-Agent": "native-shell-eco-harvest/wt92",
             })
             try:
                 with urllib.request.urlopen(req, timeout=60) as resp:

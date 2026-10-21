@@ -1,6 +1,6 @@
-//! Startup-file coverage matrix (rc / BASH_ENV / NIU_ENV / ENV / --rcfile /
+//! Startup-file coverage matrix (rc / BASH_ENV / NATIVE_SHELL_ENV / ENV / --rcfile /
 //! --norc / --posix / ssh `-c`), exercised end-to-end against the built
-//! `niu` binary.
+//! `native-shell` binary.
 //!
 //! GNU reference — bash 5.3 `shell.c:1147 run_startup_files()`:
 //! - shell.c:1156-1180: top-level non-interactive `-c` started by sshd
@@ -28,15 +28,19 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
@@ -64,7 +68,7 @@ impl Fixture {
 
     fn write_rc(&self, marker: &str) {
         std::fs::write(
-            self.home.join(".niubashrc"),
+            self.home.join(".native-shellrc"),
             format!("export STARTUP_MARKER={marker}\n"),
         )
         .unwrap();
@@ -87,21 +91,21 @@ impl Drop for Fixture {
     }
 }
 
-/// Run `niu` with a clean startup-relevant environment: HOME/USERPROFILE
+/// Run `native-shell` with a clean startup-relevant environment: HOME/USERPROFILE
 /// point at the fixture home, and every startup-file variable the matrix
 /// exercises starts from a known state.
 fn run_niu(args: &[&str], home: &Path, cwd: &Path, envs: &[(&str, String)]) -> Output {
-    run_niu_with_input(args, home, cwd, envs, None)
+    run_native_shell_with_input(args, home, cwd, envs, None)
 }
 
-fn run_niu_with_input(
+fn run_native_shell_with_input(
     args: &[&str],
     home: &Path,
     cwd: &Path,
     envs: &[(&str, String)],
     input: Option<&str>,
 ) -> Output {
-    let mut command = Command::new(niu_binary());
+    let mut command = Command::new(native_shell_binary());
     command
         .args(args)
         .current_dir(cwd)
@@ -110,7 +114,7 @@ fn run_niu_with_input(
         .env_remove("SSH_CLIENT")
         .env_remove("SSH2_CLIENT")
         .env_remove("BASH_ENV")
-        .env_remove("NIU_ENV")
+        .env_remove("NATIVE_SHELL_ENV")
         .env_remove("ENV")
         .stdin(if input.is_some() {
             Stdio::piped()
@@ -123,7 +127,7 @@ fn run_niu_with_input(
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niu: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"));
     if let Some(input) = input {
         child
             .stdin
@@ -139,10 +143,10 @@ fn run_niu_with_input(
 fn restricted_invocation_defers_restrictions_until_startup_in_every_dispatch() {
     let fixture = Fixture::new("restricted-dispatch");
     let startup = "cd \"$HOME\"\nPATH=restricted-startup-path\nSTARTUP_COUNT=$(( ${STARTUP_COUNT:-0} + 1 ))\nprintf 'startup:%s\\n' \"$STARTUP_COUNT\"\n";
-    std::fs::write(fixture.home.join(".niubashrc"), startup).unwrap();
+    std::fs::write(fixture.home.join(".native-shellrc"), startup).unwrap();
     let env_file = fixture.home.join("restricted.env");
     std::fs::write(&env_file, startup).unwrap();
-    let script = fixture.home.join("restricted.niu");
+    let script = fixture.home.join("restricted.nsh");
     for body in [
         "printf 'body:%s:%s\\n' \"$STARTUP_COUNT\" \"$PATH\"; cd .",
         "printf 'body:%s:%s\\n' \"$STARTUP_COUNT\" \"$PATH\"; PATH=body-path",
@@ -160,9 +164,9 @@ fn restricted_invocation_defers_restrictions_until_startup_in_every_dispatch() {
             (vec!["-r", "-i", "-s"], Some(format!("{body}\nexit $?\n"))),
             (vec!["-r", "-C", body], None),
         ];
-        for env_name in ["BASH_ENV", "NIU_ENV"] {
+        for env_name in ["BASH_ENV", "NATIVE_SHELL_ENV"] {
             for (args, input) in &cases {
-                let output = run_niu_with_input(
+                let output = run_native_shell_with_input(
                     args,
                     fixture.path(),
                     &fixture.start,
@@ -214,7 +218,8 @@ fn restricted_norc_and_missing_startup_still_restrict_the_body() {
         ] {
             let input = (args.last() == Some(&"-i") || args.last() == Some(&"-s"))
                 .then_some("echo ${STARTUP_MARKER:-unset}; cd .\nexit $?\n");
-            let output = run_niu_with_input(&args, fixture.path(), &fixture.start, &[], input);
+            let output =
+                run_native_shell_with_input(&args, fixture.path(), &fixture.start, &[], input);
             assert_eq!(stdout_of(&output), "unset", "{args:?}");
             assert!(!output.status.success(), "{args:?}");
             assert!(stderr_of(&output).contains("restricted"), "{args:?}");
@@ -226,7 +231,7 @@ fn restricted_norc_and_missing_startup_still_restrict_the_body() {
 fn startup_set_r_is_not_cleared_when_invocation_is_unrestricted() {
     let fixture = Fixture::new("startup-set-r");
     let startup = "set -r\n";
-    std::fs::write(fixture.home.join(".niubashrc"), startup).unwrap();
+    std::fs::write(fixture.home.join(".native-shellrc"), startup).unwrap();
     let env_file = fixture.home.join("restricted.env");
     std::fs::write(&env_file, startup).unwrap();
     for args in [
@@ -363,9 +368,9 @@ fn assert_ignored_rc_files_unchanged(fixture: &Fixture, files: &[(PathBuf, Vec<u
     assert!(!fixture.home.join("unexpected-rc-execution").exists());
 }
 
-/// Interactive REPL startup sources ~/.niubashrc located through $HOME.
+/// Interactive REPL startup sources ~/.native-shellrc located through $HOME.
 #[test]
-fn interactive_repl_sources_home_niubashrc() {
+fn interactive_repl_sources_home_native_shellrc() {
     let fixture = Fixture::new("repl-home");
     fixture.write_rc("from_rc");
     let output = run_niu(&["-C", PROBE], fixture.path(), &fixture.start, &[]);
@@ -374,11 +379,11 @@ fn interactive_repl_sources_home_niubashrc() {
 }
 
 /// Startup must be read-only with respect to the user's primary rc. A fresh
-/// home must not acquire a generated `~/.niubashrc` merely because niu starts.
+/// home must not acquire a generated `~/.native-shellrc` merely because native-shell starts.
 #[test]
 fn startup_does_not_create_primary_rc_in_a_fresh_home() {
     let fixture = Fixture::new("fresh-home-no-write");
-    let rc = fixture.home.join(".niubashrc");
+    let rc = fixture.home.join(".native-shellrc");
     assert!(!rc.exists(), "fixture must start without {rc:?}");
 
     let output = run_niu(
@@ -398,7 +403,7 @@ fn startup_does_not_create_primary_rc_in_a_fresh_home() {
 fn startup_does_not_repair_or_rewrite_primary_rc() {
     let fixture = Fixture::new("broken-primary-no-repair");
     let ignored = seed_ignored_rc_files(&fixture);
-    let rc = fixture.home.join(".niubashrc");
+    let rc = fixture.home.join(".native-shellrc");
     let original = "if true; then\n  export STARTUP_MARKER=fragment\n";
     std::fs::write(&rc, original).unwrap();
 
@@ -422,7 +427,7 @@ fn startup_without_primary_ignores_legacy_and_bash_rc_files() {
         let output = run_niu(&args, fixture.path(), &fixture.start, &[]);
         assert_success(&output, "primary-only startup");
         assert_eq!(stdout_of(&output), "unset");
-        assert!(!fixture.home.join(".niubashrc").exists());
+        assert!(!fixture.home.join(".native-shellrc").exists());
         assert_ignored_rc_files_unchanged(&fixture, &ignored);
     }
 }
@@ -432,7 +437,7 @@ fn startup_primary_is_exclusive_and_not_rewritten() {
     for original in ["export STARTUP_MARKER=primary\n", ""] {
         let fixture = Fixture::new("primary-only-existing");
         let ignored = seed_ignored_rc_files(&fixture);
-        let rc = fixture.home.join(".niubashrc");
+        let rc = fixture.home.join(".native-shellrc");
         std::fs::write(&rc, original).unwrap();
         let output = run_niu(&["-C", PROBE], fixture.path(), &fixture.start, &[]);
         assert_success(&output, "exclusive primary startup");
@@ -455,7 +460,7 @@ fn rcfile_overrides_default_rc() {
     let fixture = Fixture::new("rcfile");
     let ignored = seed_ignored_rc_files(&fixture);
     fixture.write_rc("from_default_rc");
-    let primary_before = std::fs::read(fixture.home.join(".niubashrc")).unwrap();
+    let primary_before = std::fs::read(fixture.home.join(".native-shellrc")).unwrap();
     let alt = fixture.write_file("alt.rc", "from_rcfile");
     let alt_before = std::fs::read(&alt).unwrap();
     let output = run_niu(
@@ -468,7 +473,7 @@ fn rcfile_overrides_default_rc() {
     assert_eq!(stdout_of(&output), "from_rcfile");
     assert_eq!(std::fs::read(&alt).unwrap(), alt_before);
     assert_eq!(
-        std::fs::read(fixture.home.join(".niubashrc")).unwrap(),
+        std::fs::read(fixture.home.join(".native-shellrc")).unwrap(),
         primary_before
     );
     assert_ignored_rc_files_unchanged(&fixture, &ignored);
@@ -479,7 +484,7 @@ fn missing_rcfile_never_falls_back_or_creates_configuration() {
     let fixture = Fixture::new("missing-rcfile");
     let ignored = seed_ignored_rc_files(&fixture);
     fixture.write_rc("from_default_rc");
-    let primary_before = std::fs::read(fixture.home.join(".niubashrc")).unwrap();
+    let primary_before = std::fs::read(fixture.home.join(".native-shellrc")).unwrap();
     let missing = fixture.home.join("missing.rc");
     let output = run_niu(
         &["--rcfile", missing.to_string_lossy().as_ref(), "-C", PROBE],
@@ -491,7 +496,7 @@ fn missing_rcfile_never_falls_back_or_creates_configuration() {
     assert_eq!(stdout_of(&output), "unset");
     assert!(!missing.exists());
     assert_eq!(
-        std::fs::read(fixture.home.join(".niubashrc")).unwrap(),
+        std::fs::read(fixture.home.join(".native-shellrc")).unwrap(),
         primary_before
     );
     assert_ignored_rc_files_unchanged(&fixture, &ignored);
@@ -503,7 +508,7 @@ fn startup_mode_boundaries_do_not_probe_other_rc_files() {
         let fixture = Fixture::new("rc-mode-boundary");
         let ignored = seed_ignored_rc_files(&fixture);
         fixture.write_rc("must_not_run");
-        let primary = fixture.home.join(".niubashrc");
+        let primary = fixture.home.join(".native-shellrc");
         let original = std::fs::read(&primary).unwrap();
         let mut args = flags;
         args.push(PROBE);
@@ -536,7 +541,7 @@ fn norc_overrides_explicit_rcfile_without_modifying_it() {
     assert_success(&output, "norc with explicit rcfile");
     assert_eq!(stdout_of(&output), "unset");
     assert_eq!(std::fs::read(&alt).unwrap(), original);
-    assert!(!fixture.home.join(".niubashrc").exists());
+    assert!(!fixture.home.join(".native-shellrc").exists());
     assert_ignored_rc_files_unchanged(&fixture, &ignored);
 }
 
@@ -555,7 +560,7 @@ fn norc_skips_interactive_rc() {
     assert_eq!(stdout_of(&output), "unset");
 }
 
-/// niubash#402: an `exit` executed while the startup rc is sourced ends the
+/// native-shell#402: an `exit` executed while the startup rc is sourced ends the
 /// invocation with that status; the command line does not run (GNU
 /// jump_to_top_level unwinds reader_loop). Oracle: WSL GNU Bash 5.3.0,
 /// `bash --rcfile F -i -c 'echo AFTER'` with `F="echo RAN; exit 3"` prints
@@ -584,12 +589,12 @@ fn issue402_exit_in_rcfile_terminates_before_command_line() {
     );
 }
 
-/// niubash#402, the `-C` + default-rc shape from the report: `~/.niubashrc`
+/// native-shell#402, the `-C` + default-rc shape from the report: `~/.native-shellrc`
 /// containing `exit 5` ends the invocation before the REPL command runs.
 #[test]
 fn issue402_exit_in_default_rc_terminates_repl_command() {
     let fixture = Fixture::new("issue402-default-rc-exit");
-    std::fs::write(fixture.home.join(".niubashrc"), "echo RAN\nexit 5\n").unwrap();
+    std::fs::write(fixture.home.join(".native-shellrc"), "echo RAN\nexit 5\n").unwrap();
     let output = run_niu(&["-C", "echo AFTER"], fixture.path(), &fixture.start, &[]);
     let stdout = stdout_of(&output);
     assert!(stdout.contains("RAN"), "rc body should run: {stdout:?}");
@@ -604,13 +609,13 @@ fn issue402_exit_in_default_rc_terminates_repl_command() {
     );
 }
 
-/// niubash#402 guards: the exit handling must not disturb the ordinary
+/// native-shell#402 guards: the exit handling must not disturb the ordinary
 /// startup contracts.
 #[test]
 fn issue402_startup_rc_guards() {
     // (a) An rc that does not exit: the command line still runs.
     let fixture = Fixture::new("issue402-no-exit");
-    std::fs::write(fixture.home.join(".niubashrc"), "echo RAN\n").unwrap();
+    std::fs::write(fixture.home.join(".native-shellrc"), "echo RAN\n").unwrap();
     let output = run_niu(
         &["-i", "-c", "echo AFTER"],
         fixture.path(),
@@ -626,7 +631,7 @@ fn issue402_startup_rc_guards() {
 
     // (b) `exit 0` in the rc: clean status and the command line never runs.
     let fixture = Fixture::new("issue402-exit-zero");
-    std::fs::write(fixture.home.join(".niubashrc"), "echo RAN\nexit 0\n").unwrap();
+    std::fs::write(fixture.home.join(".native-shellrc"), "echo RAN\nexit 0\n").unwrap();
     let output = run_niu(
         &["-i", "-c", "echo AFTER"],
         fixture.path(),
@@ -644,7 +649,7 @@ fn issue402_startup_rc_guards() {
     // semantics: it is warned about, not treated as a jump, and the command
     // line runs with its own status.
     let fixture = Fixture::new("issue402-rc-failure");
-    std::fs::write(fixture.home.join(".niubashrc"), "false\n").unwrap();
+    std::fs::write(fixture.home.join(".native-shellrc"), "false\n").unwrap();
     let output = run_niu(
         &["-i", "-c", "echo AFTER"],
         fixture.path(),
@@ -678,23 +683,26 @@ fn bash_env_sourced_for_non_interactive_c() {
     assert_eq!(stdout_of(&output), "from_bash_env");
 }
 
-/// NIU_ENV takes precedence over BASH_ENV (niubash extension).
+/// NATIVE_SHELL_ENV takes precedence over BASH_ENV (native-shell extension).
 #[test]
-fn niu_env_takes_precedence_over_bash_env() {
+fn native_shell_env_takes_precedence_over_bash_env() {
     let fixture = Fixture::new("niuenv-precedence");
-    let niu = fixture.write_file("niu.env", "from_niu_env");
+    let native_shell = fixture.write_file("native-shell.env", "from_native_shell_env");
     let bash = fixture.write_file("bash.env", "from_bash_env");
     let output = run_niu(
         &["-c", PROBE],
         fixture.path(),
         &fixture.start,
         &[
-            ("NIU_ENV", niu.to_string_lossy().into_owned()),
+            (
+                "NATIVE_SHELL_ENV",
+                native_shell.to_string_lossy().into_owned(),
+            ),
             ("BASH_ENV", bash.to_string_lossy().into_owned()),
         ],
     );
-    assert_success(&output, "niu env precedence");
-    assert_eq!(stdout_of(&output), "from_niu_env");
+    assert_success(&output, "native-shell env precedence");
+    assert_eq!(stdout_of(&output), "from_native_shell_env");
 }
 
 /// A missing BASH_ENV file is skipped silently (GNU evalfile.c:120
@@ -715,7 +723,7 @@ fn missing_bash_env_is_silent() {
 }
 
 /// POSIX mode drops BASH_ENV for non-interactive shells (GNU shell.c:1216
-/// gates on posixly_correct == 0); NIU_ENV stays available as the niubash
+/// gates on posixly_correct == 0); NATIVE_SHELL_ENV stays available as the native-shell
 /// extension.
 #[test]
 fn posix_non_interactive_skips_bash_env() {
@@ -730,18 +738,21 @@ fn posix_non_interactive_skips_bash_env() {
     assert_success(&output, "posix bash env suppression");
     assert_eq!(stdout_of(&output), "unset");
 
-    let niu = fixture.write_file("niu.env", "from_niu_env");
+    let native_shell = fixture.write_file("native-shell.env", "from_native_shell_env");
     let output = run_niu(
         &["--posix", "-c", PROBE],
         fixture.path(),
         &fixture.start,
         &[
             ("BASH_ENV", bash.to_string_lossy().into_owned()),
-            ("NIU_ENV", niu.to_string_lossy().into_owned()),
+            (
+                "NATIVE_SHELL_ENV",
+                native_shell.to_string_lossy().into_owned(),
+            ),
         ],
     );
-    assert_success(&output, "posix niu env extension");
-    assert_eq!(stdout_of(&output), "from_niu_env");
+    assert_success(&output, "posix native-shell env extension");
+    assert_eq!(stdout_of(&output), "from_native_shell_env");
 }
 
 /// Interactive POSIX shells source `$ENV` instead of the rc file (GNU
@@ -874,11 +885,11 @@ fn env_value_expands_tilde() {
     assert_eq!(stdout_of(&output), "from_tilde_env");
 }
 
-/// niubash#157: the rc the setup wizard writes must parse cleanly under the
-/// engine. `niu setup --preset recommended` regressed to an unclosed
+/// native-shell#157: the rc the setup wizard writes must parse cleanly under the
+/// engine. `native-shell setup --preset recommended` regressed to an unclosed
 /// `${USERPROFILE//\}` expansion in the HOME bootstrap, and because the file
 /// is parsed as a whole, every later alias silently died while each
-/// interactive startup printed two syntax-error lines. `niu -n` (noexec)
+/// interactive startup printed two syntax-error lines. `native-shell -n` (noexec)
 /// parses the file without executing it — exit 0 with empty stderr is the
 /// syntax-validity contract for everything the wizard emits.
 #[test]
@@ -890,8 +901,8 @@ fn setup_preset_rc_parses_clean_under_noexec() {
         &fixture.start,
         &[],
     );
-    assert_success(&output, "niu setup --preset recommended");
-    let rc = fixture.home.join(".niubashrc");
+    assert_success(&output, "native-shell setup --preset recommended");
+    let rc = fixture.home.join(".native-shellrc");
     assert!(rc.is_file(), "setup must write {rc:?}");
     let check = run_niu(
         &["-n", rc.to_string_lossy().as_ref()],
@@ -901,7 +912,7 @@ fn setup_preset_rc_parses_clean_under_noexec() {
     );
     assert!(
         check.status.success(),
-        "`niu -n` on the generated rc must exit 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        "`native-shell -n` on the generated rc must exit 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
         check.status.code(),
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)

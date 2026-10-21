@@ -8,7 +8,7 @@ UP but hostile -- 10 KB/s clones (a phone hotspot, a congested link), stalls
 after the first bytes (a captive portal / a dying middlebox), and
 blackholes (connect succeeds, then silence forever -- the worst hang
 class, the one the "startup must stay bounded" assertions exist for).
-niu's git traffic goes through this proxy via
+native-shell's git traffic goes through this proxy via
 `-c http.proxy=http://127.0.0.1:PORT` (or https_proxy in the sandbox env),
 so probes assert the PRODUCT's behavior on a slow network: bounded
 startup, visible progress, honest failure, no silent partial state.

@@ -1,7 +1,7 @@
 # i368 — read-unit / line-number identity audit (alias + line-based semantics)
 
-Lane i368, niubash#368 (host) + engine findings filed to rubash. Host base:
-niubash `origin/master` @ `d60276e`. Engine base: rubash `origin/master` @
+Lane i368, native-shell#368 (host) + engine findings filed to rubash. Host base:
+native-shell `origin/master` @ `d60276e`. Engine base: rubash `origin/master` @
 `8ab35e89`. GNU oracle: WSL GNU Bash (Debian), stdin method
 (`wsl bash --noprofile --norc < script`); engine runtime probes used the
 rubash debug build of the audited revision. Interactive host probes used the
@@ -125,8 +125,8 @@ fast path that reaches `execute_command` with aliases live. The grouped
 drivers expand at text level against the live table
 (`script_driver.rs:1107-1109` → `expand_group_aliases`, `script_driver.rs:85`;
 `src/lexer/alias_stream.rs:221`) with no marker logic, which is why the
-interactive host (`niu`) is unaffected: `execute_interactive_reader_batch`
-(`crates/niubash-runtime/src/shell.rs:770-812`) routes every alias-bearing
+interactive host (`native-shell`) is unaffected: `execute_interactive_reader_batch`
+(`crates/native-shell-runtime/src/shell.rs:770-812`) routes every alias-bearing
 submission through the grouped reader, and the probe confirmed the
 first-prompt rc case holds `marker=1, cur=1` yet expands.
 
@@ -138,7 +138,7 @@ save/restore brackets in `src/builtins/source/execution.rs:291-293,351-358`
 and the eval entry are the natural generation boundaries — the same seam
 GNU's `push_stream`/`run_unwind_frame` owns), and suppress only when BOTH the
 generation and the line match. This is exactly the "monotonic read
-generation" direction already proposed in niubash#368, and it retires the
+generation" direction already proposed in native-shell#368, and it retires the
 marker's line-collision class without weakening the verified same-read
 suppression rows above.
 
@@ -184,7 +184,7 @@ expands in both).
 Both routes execute the same shapes with identical results
 (`$PWD` printed per step; alias defined in phase 2 forces
 `execute_interactive_reader_batch`, phase 1 rides the host fast path with the
-four normalizers `crates/niubash-runtime/src/shell.rs:2435-2560,2682-2869`):
+four normalizers `crates/native-shell-runtime/src/shell.rs:2435-2560,2682-2869`):
 
 | Shape | fast path | grouped route |
 | --- | --- | --- |
@@ -232,7 +232,7 @@ private to the executor map.
 
 ### D — interactive test trustworthiness (host `d60276e`)
 
-- The niubash#367 echo-proof discipline is in place for the whole alias
+- The native-shell#367 echo-proof discipline is in place for the whole alias
   matrix (`tests/interactive.rs:380-575`: markers ride rc variables / printf
   formats / `type` output; `expect_absent("command not found")` guards).
 - `alias_define_then_use_live`, `alias_use_at_next_prompt_executes_not_echo_matched`,
@@ -245,7 +245,7 @@ private to the executor map.
   (`tests/interactive.rs:304-319`)** — `s.expect("half-typed")` is satisfied
   by the terminal echo of the submitted `echo half-typed` itself, so the
   test can pass without the completed line ever executing (the exact class
-  niubash#367 called out). Fix: complete the line with a suffix so the
+  native-shell#367 called out). Fix: complete the line with a suffix so the
   expected output (`half-typed-ok`) never appears verbatim in the input.
 - Weak secondaries (cosmetic, left as-is): `tests/interactive.rs:64` and
   `:82` expect `closed`/`closed'`, which the submitted continuation lines
@@ -267,6 +267,6 @@ transcribed above).
 
 1. rubash ticket: alias marker line-collision across read-units (this file's
    defect section; repros 1+2, controls, fix direction).
-2. Host PR (niubash, `fix/368-audit`): echo-proof hardening of
+2. Host PR (native-shell, `fix/368-audit`): echo-proof hardening of
    `ctrl_d_midline_does_not_exit` + this report. Not to be merged by the
    author; based on `origin/master` `d60276e`.

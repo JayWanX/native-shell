@@ -6,8 +6,8 @@ import tempfile
 
 """End-to-end check for the trapint hook.
 
-Drives target/debug/niu.exe through a Windows ConPTY and asserts that the
-niubash_run_trapint_hooks function defined in .niubashrc runs when the REPL
+Drives target/debug/native-shell.exe through a Windows ConPTY and asserts that the
+native_shell_run_trapint_hooks function defined in .native-shellrc runs when the REPL
 receives Ctrl+C.
 """
 
@@ -113,18 +113,18 @@ def drain_output(out_handle, timeout=6):
 
 
 def main():
-    niu = os.path.join(os.getcwd(), 'target', 'debug', 'niu.exe').replace('/', BS)
-    if not os.path.exists(niu):
-        print('FAIL: niu binary not found at ' + niu)
+    native_shell = os.path.join(os.getcwd(), 'target', 'debug', 'native-shell.exe').replace('/', BS)
+    if not os.path.exists(native_shell):
+        print('FAIL: native-shell binary not found at ' + native_shell)
         return 2
 
-    home = tempfile.mkdtemp(prefix='niubash-ctrlc-e2e-')
+    home = tempfile.mkdtemp(prefix='native-shell-ctrlc-e2e-')
     rc = NL.join([
-        'niubash_run_trapint_hooks() {',
+        'native_shell_run_trapint_hooks() {',
         '  printf ' + chr(39) + 'TRAPINT_HOOK_FIRED' + BS + 'n' + chr(39),
         '}',
     ]) + NL
-    with open(os.path.join(home, '.niubashrc'), 'w', encoding='utf-8') as f:
+    with open(os.path.join(home, '.native-shellrc'), 'w', encoding='utf-8') as f:
         f.write(rc)
 
     GENERIC_READ = 0x80000000
@@ -162,7 +162,7 @@ def main():
     env_block = NL.join(k + '=' + v for k, v in env_items.items()) + NL + chr(0)
     env_w = ctypes.create_unicode_buffer(env_block, len(env_block) + 1)
     kernel32.SetCurrentDirectoryW(cwd)
-    created = kernel32.CreateProcessW(None, Q + niu + Q, None, None, 1,
+    created = kernel32.CreateProcessW(None, Q + native_shell + Q, None, None, 1,
                                       CREATE_UNICODE_ENVIRONMENT, env_w, cwd,
                                       ctypes.byref(si), ctypes.byref(pi))
     if not created:

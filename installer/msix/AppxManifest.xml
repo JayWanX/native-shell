@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Niubash MSIX manifest template.
+  Native Shell MSIX manifest template.
 
   Structure mirrors the PowerShell Store package manifest
   (github.com/PowerShell/PowerShell assets/AppxManifest.xml), which is the
@@ -17,7 +17,7 @@
     __VERSION__                Cargo.toml version + ".0" (Store reserves the
                                fourth version segment; it must be 0)
 
-  The niu.exe execution alias lets users run `niu` from any shell without
+  The native-shell.exe execution alias lets users run `native-shell` from any shell without
   PATH modification (Store policy 10.2.8). Do not add PATH-rewriting logic
   to the Store build.
 -->
@@ -34,7 +34,7 @@
             ProcessorArchitecture="x64" />
 
   <Properties>
-    <DisplayName>Niubash</DisplayName>
+    <DisplayName>Native Shell</DisplayName>
     <PublisherDisplayName>__PUBLISHER_DISPLAY_NAME__</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
@@ -50,20 +50,20 @@
   </Resources>
 
   <Applications>
-    <Application Id="Niubash"
-                 Executable="niu.exe"
+    <Application Id="Native Shell"
+                 Executable="native-shell.exe"
                  EntryPoint="Windows.FullTrustApplication">
       <Extensions>
         <uap3:Extension Category="windows.appExecutionAlias"
                         EntryPoint="Windows.FullTrustApplication"
-                        Executable="niu.exe">
+                        Executable="native-shell.exe">
           <uap3:AppExecutionAlias>
-            <desktop:ExecutionAlias Alias="niu.exe" />
+            <desktop:ExecutionAlias Alias="native-shell.exe" />
           </uap3:AppExecutionAlias>
         </uap3:Extension>
       </Extensions>
       <uap:VisualElements
-          DisplayName="Niubash"
+          DisplayName="Native Shell"
           Description="Windows-native, bash-compatible command-line shell"
           BackgroundColor="transparent"
           Square150x150Logo="Assets\Square150x150Logo.png"

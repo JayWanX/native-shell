@@ -1,6 +1,6 @@
 //! unixwin/rubash#365: `\cmd` alias suppression inside a multi-line
 //! function body recursed infinitely (Windows STATUS_STACK_OVERFLOW,
-//! `thread 'niu-main' has overflowed its stack`) through niu's `-C`
+//! `thread 'niu-main' has overflowed its stack`) through native-shell's `-C`
 //! REPL-command route — the fnm/nvm/zoxide `cd`-wrapper idiom
 //! (`__fnmcd() { \cd "$@" || return $?; ... }; alias cd=__fnmcd`) killed
 //! the shell on every later `cd`.
@@ -49,26 +49,30 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 /// Stack-overflow / infinite-recursion shapes must not hang the suite.
 const CASE_TIMEOUT: Duration = Duration::from_secs(90);
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
-/// Run `niu --norc -C <command>` with piped stdio and a hard deadline.
+/// Run `native-shell --norc -C <command>` with piped stdio and a hard deadline.
 /// Returns (stdout, stderr, exit_code). Panics when the child outlives
 /// the deadline (kill + fail) so a recursion regression can never hang
 /// the test binary.
 fn run_repl_command_guarded(command: &str) -> (String, String, Option<i32>) {
     let temp = unique_temp_dir("niu-issue365");
     std::fs::create_dir_all(temp.join("home")).expect("create home");
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .arg("--norc")
         .arg("-C")
         .arg(command)
@@ -79,7 +83,7 @@ fn run_repl_command_guarded(command: &str) -> (String, String, Option<i32>) {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|err| panic!("failed to spawn niu -C: {err}"));
+        .unwrap_or_else(|err| panic!("failed to spawn native-shell -C: {err}"));
 
     let deadline = Instant::now() + CASE_TIMEOUT;
     let status = loop {
@@ -91,7 +95,7 @@ fn run_repl_command_guarded(command: &str) -> (String, String, Option<i32>) {
                     let _ = child.wait();
                     let _ = std::fs::remove_dir_all(&temp);
                     panic!(
-                        "niu -C did not finish within {CASE_TIMEOUT:?} — recursion hang? \
+                        "native-shell -C did not finish within {CASE_TIMEOUT:?} — recursion hang? \
                          command: {command:?}"
                     );
                 }

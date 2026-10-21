@@ -1,4 +1,4 @@
-//! niubash#200: the parser used to strip a raw ESC byte (0x1B) that appeared
+//! native-shell#200: the parser used to strip a raw ESC byte (0x1B) that appeared
 //! as the first character inside single quotes in a script file, while the
 //! same byte mid-string survived. GNU bash keeps a raw ESC in every position
 //! of every quoting context (verified against GNU bash 5.2.37, od -c).
@@ -7,9 +7,9 @@
 //! byte-identical to the QUOTED_WORD_PREFIX marker the lexer itself emits, so
 //! downstream strip_prefix consumers claimed it. Fixed in rubash by raw-byte
 //! tagging a leading data ESC (unixwin/rubash#474); these tests pin the
-//! product behavior byte-for-byte at the niu boundary.
+//! product behavior byte-for-byte at the native-shell boundary.
 //!
-//! Boundary note (niubash#434/#451): those issues concern the *input bridge*
+//! Boundary note (native-shell#434/#451): those issues concern the *input bridge*
 //! normalizing interactive typed input; this issue is the lexer's handling of
 //! script-file bytes. Both entry paths (script-file argument and piped stdin)
 //! are pinned here so neither normalization layer can eat the byte.
@@ -17,29 +17,33 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
-/// Run a script file through niu and return raw stdout bytes.
+/// Run a script file through native-shell and return raw stdout bytes.
 fn run_script_bytes(script: &[u8]) -> Vec<u8> {
     let dir = std::env::temp_dir().join(format!("niu-200-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("repro200.sh");
     std::fs::write(&path, script).unwrap();
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg(&path)
         .stdin(Stdio::null())
         .output()
-        .unwrap_or_else(|err| panic!("spawn niu: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"));
     let _ = std::fs::remove_dir_all(&dir);
     assert!(
         output.status.success(),
@@ -49,16 +53,16 @@ fn run_script_bytes(script: &[u8]) -> Vec<u8> {
     output.stdout
 }
 
-/// Run the same bytes through niu's piped-stdin entry (interactive-bridge
+/// Run the same bytes through native-shell's piped-stdin entry (interactive-bridge
 /// boundary counterpart of the script-file path).
 fn run_stdin_bytes(script: &[u8]) -> Vec<u8> {
     use std::io::Write;
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niu: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"));
     child
         .stdin
         .as_mut()
@@ -143,7 +147,7 @@ fn assignment_roundtrip_preserves_word_initial_esc() {
 
 #[test]
 fn piped_stdin_entry_preserves_word_initial_esc_too() {
-    // The input-bridge boundary (niubash#434/#451 normalize interactive
+    // The input-bridge boundary (native-shell#434/#451 normalize interactive
     // input upstream of the lexer): the bridge must not pre-eat the byte
     // the lexer now preserves.
     let mut script = b"printf '%s' '".to_vec();

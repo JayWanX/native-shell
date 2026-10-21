@@ -1,9 +1,9 @@
-//! niubash#156: `xargs` must stop parsing its own options at the first
+//! native-shell#156: `xargs` must stop parsing its own options at the first
 //! non-option operand — the utility name — and pass every later argument to
 //! that utility verbatim (POSIX Shell & Utilities, xargs; GNU findutils
 //! behaves the same).
 //!
-//! STATUS: upstream binary gap, NOT a niubash/engine bug. Reproduced
+//! STATUS: upstream binary gap, NOT a native-shell/engine bug. Reproduced
 //! standalone by spawning the WinuxCmd xargs binary directly (no shell in
 //! between): `xargs cat -n` reports `xargs: option '-n' requires an
 //! argument` rc=1, `xargs wc -l` silently eats `-l` as xargs's own
@@ -31,15 +31,19 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
@@ -51,10 +55,10 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
     std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), nanos))
 }
 
-/// Run `niu -c <script>` inside a prepared fixture directory (f1.txt/f2.txt
+/// Run `native-shell -c <script>` inside a prepared fixture directory (f1.txt/f2.txt
 /// exist there). stderr is returned separately, GNU-style.
-fn run_niu_c(script: &str, cwd: &Path) -> Output {
-    let mut command = Command::new(niu_binary());
+fn run_native_shell_c(script: &str, cwd: &Path) -> Output {
+    let mut command = Command::new(native_shell_binary());
     command
         .arg("-c")
         .arg(script)
@@ -62,7 +66,7 @@ fn run_niu_c(script: &str, cwd: &Path) -> Output {
         .stdin(Stdio::null());
     command
         .output()
-        .unwrap_or_else(|err| panic!("spawn niu: {err}"))
+        .unwrap_or_else(|err| panic!("spawn native-shell: {err}"))
 }
 
 fn stdout_of(output: &Output) -> String {
@@ -89,7 +93,7 @@ fn fixture() -> PathBuf {
             unixwin/WinuxCmd#1139); the current one eats -n"]
 fn xargs_passes_dash_n_to_cat() {
     let dir = fixture();
-    let output = run_niu_c(r#"printf 'f1.txt\n' | xargs cat -n"#, &dir);
+    let output = run_native_shell_c(r#"printf 'f1.txt\n' | xargs cat -n"#, &dir);
     assert_eq!(stdout_of(&output), "     1\tone");
     assert_eq!(stderr_of(&output), "");
     assert_eq!(output.status.code(), Some(0));
@@ -103,7 +107,7 @@ fn xargs_passes_dash_n_to_cat() {
             unixwin/WinuxCmd#1139); the current one eats -l silently"]
 fn xargs_passes_dash_l_to_wc() {
     let dir = fixture();
-    let output = run_niu_c(r#"printf 'f1.txt\nf2.txt\n' | xargs wc -l"#, &dir);
+    let output = run_native_shell_c(r#"printf 'f1.txt\nf2.txt\n' | xargs wc -l"#, &dir);
     assert_eq!(stdout_of(&output), "1 f1.txt\n1 f2.txt\n2 total");
     assert_eq!(stderr_of(&output), "");
     assert_eq!(output.status.code(), Some(0));
@@ -116,7 +120,7 @@ fn xargs_passes_dash_l_to_wc() {
             unixwin/WinuxCmd#1139); the current one swallows the --"]
 fn xargs_passes_literal_double_dash_to_echo() {
     let dir = fixture();
-    let output = run_niu_c(r#"printf 'a\n' | xargs echo -- help"#, &dir);
+    let output = run_native_shell_c(r#"printf 'a\n' | xargs echo -- help"#, &dir);
     assert_eq!(stdout_of(&output), "-- help a");
     assert_eq!(output.status.code(), Some(0));
     let _ = std::fs::remove_dir_all(&dir);
@@ -129,7 +133,7 @@ fn xargs_passes_literal_double_dash_to_echo() {
             unixwin/WinuxCmd#1139); the current one parses -s as its own"]
 fn xargs_dash_l1_then_utility_option() {
     let dir = fixture();
-    let output = run_niu_c(r#"printf 'a\n' | xargs -L1 echo -s"#, &dir);
+    let output = run_native_shell_c(r#"printf 'a\n' | xargs -L1 echo -s"#, &dir);
     assert_eq!(stdout_of(&output), "-s a");
     assert_eq!(output.status.code(), Some(0));
     let _ = std::fs::remove_dir_all(&dir);

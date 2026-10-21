@@ -1,4 +1,4 @@
-name: Niubash CI
+name: NativeShell CI
 
 on:
   schedule:
@@ -24,8 +24,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4.2.2
 
-      - name: Checkout rubash path dependency
-        run: git clone --depth 1 https://github.com/unixwin/rubash.git ../rubash
+      # rubash is a path dependency, so the lockfile records the PATCHED package:
+      # the checkout must be exactly the pinned version, or `--locked` fails.
+      - name: Checkout pinned rubash path dependency
+        shell: bash
+        run: |
+          rev="$(grep -o '"rubash_rev": *"[0-9a-f]\{40\}"' scripts/release/rubash-pin.json | grep -o '[0-9a-f]\{40\}')"
+          test -n "$rev"
+          git init --quiet ../rubash
+          git -C ../rubash remote add origin https://github.com/unixwin/rubash.git
+          git -C ../rubash fetch --quiet --depth 1 origin "$rev"
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          echo "rubash pinned at $(git -C ../rubash rev-parse --short=12 HEAD)"
 
       # rubash#827: keep the release-pin verifier honest on every PR (local
       # fixtures, no network). The verifier audits scripts/release/rubash-pin.json
@@ -49,9 +59,9 @@ jobs:
       # CreateFileW failure. Build with the committed lock; bump it by hand
       # when the engine moves.
 
-      # Workspace-wide: the niubash-runtime crate used to carry fmt
-      # violations that the -p niubash gate never saw (observed upstream by
-      # x2410516039/xgr-niubash; the tree has been clean since).
+      # Workspace-wide: the native-shell-runtime crate used to carry fmt
+      # violations that the -p native-shell gate never saw (observed upstream by
+      # x2410516039/xgr-native-shell; the tree has been clean since).
       - name: cargo fmt --check (workspace)
         run: cargo fmt --check --all
 
@@ -61,8 +71,8 @@ jobs:
       - name: cargo test (workspace)
         run: cargo test --workspace --locked
 
-      # Skill bundle golden check (niubash#188): the generated regions in
-      # skills/niubash/ must match the corpus transcripts + applet inventory,
+      # Skill bundle golden check (native-shell#188): the generated regions in
+      # skills/native-shell/ must match the corpus transcripts + applet inventory,
       # and the launcher must embed the whole committed bundle. The
       # install/status verbs themselves are covered by tests/skill_bundle.rs
       # inside `cargo test` above.
@@ -93,8 +103,18 @@ jobs:
       # The [patch."https://github.com/unixwin/rubash.git"] path override in
       # Cargo.toml resolves rubash to a sibling checkout -- same step the
       # build-and-test job uses.
-      - name: Checkout rubash path dependency
-        run: git clone --depth 1 https://github.com/unixwin/rubash.git ../rubash
+      # rubash is a path dependency, so the lockfile records the PATCHED package:
+      # the checkout must be exactly the pinned version, or `--locked` fails.
+      - name: Checkout pinned rubash path dependency
+        shell: bash
+        run: |
+          rev="$(grep -o '"rubash_rev": *"[0-9a-f]\{40\}"' scripts/release/rubash-pin.json | grep -o '[0-9a-f]\{40\}')"
+          test -n "$rev"
+          git init --quiet ../rubash
+          git -C ../rubash remote add origin https://github.com/unixwin/rubash.git
+          git -C ../rubash fetch --quiet --depth 1 origin "$rev"
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          echo "rubash pinned at $(git -C ../rubash rev-parse --short=12 HEAD)"
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1.11
@@ -139,8 +159,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4.2.2
 
-      - name: Checkout rubash path dependency
-        run: git clone --depth 1 https://github.com/unixwin/rubash.git ../rubash
+      # rubash is a path dependency, so the lockfile records the PATCHED package:
+      # the checkout must be exactly the pinned version, or `--locked` fails.
+      - name: Checkout pinned rubash path dependency
+        shell: bash
+        run: |
+          rev="$(grep -o '"rubash_rev": *"[0-9a-f]\{40\}"' scripts/release/rubash-pin.json | grep -o '[0-9a-f]\{40\}')"
+          test -n "$rev"
+          git init --quiet ../rubash
+          git -C ../rubash remote add origin https://github.com/unixwin/rubash.git
+          git -C ../rubash fetch --quiet --depth 1 origin "$rev"
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          echo "rubash pinned at $(git -C ../rubash rev-parse --short=12 HEAD)"
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1.11
@@ -172,8 +202,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4.2.2
 
-      - name: Checkout rubash path dependency
-        run: git clone --depth 1 https://github.com/unixwin/rubash.git ../rubash
+      # rubash is a path dependency, so the lockfile records the PATCHED package:
+      # the checkout must be exactly the pinned version, or `--locked` fails.
+      - name: Checkout pinned rubash path dependency
+        shell: bash
+        run: |
+          rev="$(grep -o '"rubash_rev": *"[0-9a-f]\{40\}"' scripts/release/rubash-pin.json | grep -o '[0-9a-f]\{40\}')"
+          test -n "$rev"
+          git init --quiet ../rubash
+          git -C ../rubash remote add origin https://github.com/unixwin/rubash.git
+          git -C ../rubash fetch --quiet --depth 1 origin "$rev"
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          echo "rubash pinned at $(git -C ../rubash rev-parse --short=12 HEAD)"
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1.11
@@ -198,7 +238,7 @@ jobs:
           fi
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
 
-      - name: Build niubash (musl, release)
+      - name: Build native-shell (musl, release)
         run: cargo build --locked --release --target x86_64-unknown-linux-musl
 
       # Same four checks as build-linux in release.yml, against the binary
@@ -207,7 +247,7 @@ jobs:
       - name: "Smoke-test the musl binary (gate: no smoke, no trust)"
         run: |
           set -euo pipefail
-          bin="target/x86_64-unknown-linux-musl/release/niu"
+          bin="target/x86_64-unknown-linux-musl/release/native-shell"
           test -x "$bin"
 
           # The whole point: prove it is actually static, not silently
@@ -224,7 +264,7 @@ jobs:
           version="$(grep -m1 -E '^version[[:space:]]*=' Cargo.toml | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/')"
           out="$("$bin" --version)"
           printf '%s\n' "$out"
-          grep -qF "Niubash $version " <<<"$out"
+          grep -qF "Native Shell $version " <<<"$out"
           grep -qF "rubash   git ${{ steps.rubash.outputs.revision }}" <<<"$out"
 
           # 2) one-shot engine execution
@@ -240,7 +280,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/smoke-home"
           : > "$RUNNER_TEMP/smoke-plugins.toml"
           out="$(HOME="$RUNNER_TEMP/smoke-home" \
-            NIU_PLUGIN_SPEC="$RUNNER_TEMP/smoke-plugins.toml" \
+            NATIVE_SHELL_PLUGIN_SPEC="$RUNNER_TEMP/smoke-plugins.toml" \
             "$bin" plugin sync --bootstrap 2>&1)"
           if [ -n "$out" ]; then
             echo "plugin sync --bootstrap was not quiet on empty spec:" >&2
@@ -265,8 +305,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4.2.2
 
-      - name: Checkout rubash path dependency
-        run: git clone --depth 1 https://github.com/unixwin/rubash.git ../rubash
+      # rubash is a path dependency, so the lockfile records the PATCHED package:
+      # the checkout must be exactly the pinned version, or `--locked` fails.
+      - name: Checkout pinned rubash path dependency
+        shell: bash
+        run: |
+          rev="$(grep -o '"rubash_rev": *"[0-9a-f]\{40\}"' scripts/release/rubash-pin.json | grep -o '[0-9a-f]\{40\}')"
+          test -n "$rev"
+          git init --quiet ../rubash
+          git -C ../rubash remote add origin https://github.com/unixwin/rubash.git
+          git -C ../rubash fetch --quiet --depth 1 origin "$rev"
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          echo "rubash pinned at $(git -C ../rubash rev-parse --short=12 HEAD)"
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1.11
@@ -303,7 +353,7 @@ jobs:
         shell: pwsh
         run: |
           python scripts/perf/asset-timing.py `
-            --niu (Resolve-Path target/release/niu.exe) `
+            --native-shell (Resolve-Path target/release/native-shell.exe) `
             --omb (Resolve-Path ..\oh-my-bash) `
             --bash-it (Resolve-Path ..\bash-it) `
             --run-dir "$env:RUNNER_TEMP\perfbudget-run" `

@@ -4,81 +4,707 @@
 # Format: <repo-relative path><TAB><verbatim line text of the hit>
 .gitattributes	# Shell scripts are executed by Git Bash / winuxsh, both of which treat CR
 AGENTS.md	- Rename brand gate: `sh scripts/check-rename-clean.sh` must pass (residue is an exact baseline diff; runs under Git Bash and `winuxsh -c` alike). Intentional residue change → regenerate `scripts/check-rename-clean.baseline` via `sh scripts/check-rename-clean.sh --regen` and review the diff.
-AGENTS.md	- Runtime environment variables use the `NIU_` prefix. During the transition, niubash also sets/reads the deprecated `WINUXSH_SHELL` and `WINUXSH_ROOT` names because current rubash upstream still reads them; these bridges are marked with comments and must be removed once rubash renames its readers. (The `*_SHELL_PATH_STYLE` pair was retired rubash-side in rubash#556 / rubash#537: the engine always renders `$PWD`/`pwd` in the POSIX persona form, and niubash no longer exports the variables.)
-AGENTS.md	- Use `~/.niubashrc` as the primary-only interactive user entry point for plugin lists, theme selection, exports, aliases, functions, and shell startup logic. Do not read, migrate, delete, or modify the legacy `~/.winuxshrc` and `~/.winshrc` startup files. An explicitly opted-in `~/.bashrc` fallback is a future plan only, not supported behavior. Startup must not automatically run setup or plugin sync, create the primary rc, or rewrite user rc files. Issue #359 case A (1.4.2): plugin management never writes the rc at all — the manifest (`plugins.toml` + `sources/registry.toml`) drives the generated loader `~/.niubash/generated/plugins.niu`, which the host sources read-only BEFORE the user rc; `niu setup` still writes the rc (create/whole-file) until its 1.4.3 create-only convergence. Never re-attach the retired managed-block writers (`assets::write_managed_block`/`remove_managed_block`) to any verb — the 359.12 structure ratchet fails the build's test suite if you do.
-crates/niubash-runtime/src/completion/path.rs	        .or_else(|| std::env::var_os("WINUXSH_ROOT")) // deprecated rubash bridge
-crates/niubash-runtime/src/setup_wizard.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
-crates/niubash-runtime/src/setup_wizard.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
-crates/niubash-runtime/src/setup_wizard.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
-crates/niubash-runtime/src/setup_wizard.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
-crates/niubash-runtime/src/shell.rs	                for name in [".winuxshrc", ".winshrc", ".bashrc"] {
-crates/niubash-runtime/src/shell.rs	            for name in [".winuxshrc", ".winshrc", ".bashrc"] {
-crates/niubash-runtime/src/shell.rs	            for name in [".winuxshrc", ".winshrc", ".bashrc"] {
-crates/niubash-runtime/src/shell.rs	        .or_else(|| std::env::var_os("WINUXSH_ROOT")) // deprecated rubash bridge
-crates/niubash-runtime/src/shell.rs	        // NIU_SHELL_PATH_STYLE / WINUXSH_SHELL_PATH_STYLE are no longer set
-crates/niubash-runtime/src/shell.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
-crates/niubash-runtime/src/shell.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
-crates/niubash-runtime/src/shell.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
-crates/niubash-runtime/src/shell_links.rs	/// contract variables (`NIU_SHELL`, `WINUXSH_SHELL`) and the shim's own target
-crates/niubash-runtime/src/syntax_highlighting.rs	        .or_else(|| std::env::var_os("WINUXSH_ROOT")) // deprecated rubash bridge
-crates/niubash-runtime/tests/fixtures/skill-corpus/niu-help.txt	Configuration: ~/.niubashrc for interactive startup; a pre-rename ~/.winuxshrc is migrated once into ~/.niubashrc
-docs/audit/AUDIT-PLAN.md	  (documented), winuxshrc → niubashrc migration once-only claim
-docs/audit/AUDIT-PLAN.md	  (winuxshrc migration claim, NIU_ENV precedence claim).
-docs/audit/AUDIT-PLAN.md	  Local/Programs/Winuxsh/niu.exe`) is first on PATH; `command -v niu`
-docs/audit/AUDIT-PLAN.md	  double-managed blocks, `winuxshrc`→`niubashrc` migration once-only
+AGENTS.md	- Runtime environment variables use the `NATIVE_SHELL_` prefix. During the transition, native-shell also sets/reads the deprecated `WINUXSH_SHELL` and `WINUXSH_ROOT` names because current rubash upstream still reads them; these bridges are marked with comments and must be removed once rubash renames its readers. (The `*_SHELL_PATH_STYLE` pair was retired rubash-side in rubash#556 / rubash#537: the engine always renders `$PWD`/`pwd` in the POSIX persona form, and native-shell no longer exports the variables.)
+AGENTS.md	- Use `~/.native-shellrc` as the primary-only interactive user entry point for plugin lists, theme selection, exports, aliases, functions, and shell startup logic. Do not read, migrate, delete, or modify the legacy `~/.winuxshrc` and `~/.winshrc` startup files. An explicitly opted-in `~/.bashrc` fallback is a future plan only, not supported behavior. Startup must not automatically run setup or plugin sync, create the primary rc, or rewrite user rc files. Issue #359 case A (1.4.2): plugin management never writes the rc at all — the manifest (`plugins.toml` + `sources/registry.toml`) drives the generated loader `~/.native-shell/generated/plugins.nsh`, which the host sources read-only BEFORE the user rc; `native-shell setup` still writes the rc (create/whole-file) until its 1.4.3 create-only convergence. Never re-attach the retired managed-block writers (`assets::write_managed_block`/`remove_managed_block`) to any verb — the 359.12 structure ratchet fails the build's test suite if you do.
+CHANGELOG.md	  (`${NIU_SHELL:-niu}`), so a stale native-shell on PATH can no longer hijack it;
+CHANGELOG.md	  POSIX mode and the `NIU_SHELL` contract verified through the links.
+CHANGELOG.md	  `NIU_INVOKED_AS` forward now carries all four faces
+CHANGELOG.md	  cleared of `*.bak-*` / `*.old-*` / `*.niu-old-*` on install and uninstall —
+CHANGELOG.md	  forwards its argv[0] stem as `NIU_INVOKED_AS` (actively scrubbed
+CHANGELOG.md	  machines; `*.niu-old-*` covers a relinker crash between park and drop).
+CHANGELOG.md	  niu-git moves to `layout: flat`: the payload lands under `opt\native-git` and
+CHANGELOG.md	  niu-git question prints the same cancelled note as every other question;
+CHANGELOG.md	  niu-vs-cmd-vs-powershell decision guidance) and installs it into agent
+CHANGELOG.md	- **Windows releases bundle niu-git 2.55.0.5** (`scripts/release/preinstall.json`).
+CHANGELOG.md	- `argv[0]`-marked login shells (`-bash`, `-niu`) preserve `shopt login_shell` as `on` across `reset_shell_options` (#465, rubash#911).
+README.md	[niu-git](https://github.com/unixwin/niu-git): the real git-for-windows C
+assets/native-shell.rc	#define IDI_NIUBASH 101
+assets/native-shell.rc	IDI_NIUBASH ICON "native-shell-icon.ico"
+crates/native-shell-runtime/assets/plugins/recipes.toml	summary = "native Windows git without MSYS (niu-git build); the setup wizard's git pick"
+crates/native-shell-runtime/assets/plugins/recipes.toml	url = "https://github.com/unixwin/niu-git"
+crates/native-shell-runtime/assets/plugins/recipes.toml	url = "https://github.com/unixwin/niu-git/releases/download/v2.55.0.2/niu-git-2.55.0.windows.2-x64.zip"
+crates/native-shell-runtime/src/completion/path.rs	        .or_else(|| std::env::var_os("WINUXSH_ROOT")) // deprecated rubash bridge
+crates/native-shell-runtime/src/config.rs	            "niu-config-degrade-{}-{}",
+crates/native-shell-runtime/src/config.rs	            "niu-config-isolation-{}-{}",
+crates/native-shell-runtime/src/config.rs	            "niu-config-roundtrip-{}-{}",
+crates/native-shell-runtime/src/config.rs	            "niu-config-style-{}-{}",
+crates/native-shell-runtime/src/doctor.rs	                display(&path_niu),
+crates/native-shell-runtime/src/doctor.rs	            if !same_executable(&path_niu, &std::env::current_exe().unwrap_or_default()) =>
+crates/native-shell-runtime/src/doctor.rs	        Some(path_niu)
+crates/native-shell-runtime/src/git_prompt.rs	    let scratch = std::env::temp_dir().join(format!("niu-prompt-git-{}.out", std::process::id()));
+crates/native-shell-runtime/src/path_utils.rs	            "niu-pathutils-{}-{}-{}",
+crates/native-shell-runtime/src/plugins/assets.rs	            "niu-assets-{}-{}-{}",
+crates/native-shell-runtime/src/plugins/assets.rs	/// Strip niu-authored drift-guard debris out of the rc's migrated sections
+crates/native-shell-runtime/src/plugins/assets.rs	/// niu-authored debris — the guard belongs INSIDE the managed block, where
+crates/native-shell-runtime/src/plugins/descriptors.rs	            "niu-desc-bashit-{}-{}",
+crates/native-shell-runtime/src/plugins/distros.rs	                "niu-distros-{tag}-{}-{}",
+crates/native-shell-runtime/src/plugins/distros.rs	                "user.name=niu-distros-test",
+crates/native-shell-runtime/src/plugins/distros.rs	                "user.name=niu-distros-test".into(),
+crates/native-shell-runtime/src/plugins/distros.rs	                "user.name=niu-distros-test".into(),
+crates/native-shell-runtime/src/plugins/distros.rs	            "niu-distros-apply-{}-{}",
+crates/native-shell-runtime/src/plugins/distros.rs	            "niu-distros-bounded-{}-{}",
+crates/native-shell-runtime/src/plugins/distros.rs	            "niu-distros-builtin-{}-{}",
+crates/native-shell-runtime/src/plugins/distros.rs	            "niu-distros-fail-{}-{}",
+crates/native-shell-runtime/src/plugins/distros.rs	            "niu-distros-{}-{}",
+crates/native-shell-runtime/src/plugins/loader.rs	            "niu-loader-{label}-{}-{}",
+crates/native-shell-runtime/src/plugins/recipes.rs	            "niu-git has no winget package:\n{joined}"
+crates/native-shell-runtime/src/plugins/recipes.rs	            "niu-recipes-dryrun-{}-{}",
+crates/native-shell-runtime/src/plugins/recipes.rs	            joined.contains("https://github.com/unixwin/niu-git/"),
+crates/native-shell-runtime/src/plugins/recipes.rs	        // niu-git ships in the wpm index (wpm/native-git.json upstream) but no
+crates/native-shell-runtime/src/plugins/sources.rs	            "niu-sources-{}-{}-{}",
+crates/native-shell-runtime/src/plugins/spec.rs	            "niu-spec-{label}-{}-{}",
+crates/native-shell-runtime/src/plugins/sync.rs	            "niu-sync-{}-{}-{}",
+crates/native-shell-runtime/src/plugins/theme_preview.rs	        std::env::temp_dir().join(format!("niu-theme-preview-{}-{nanos}", std::process::id()));
+crates/native-shell-runtime/src/plugins/trust.rs	            "niu-trust-{}-{}-{}",
+crates/native-shell-runtime/src/prompt_segments.rs	            std::env::temp_dir().join(format!("niu-budget-baseline-{}.out", std::process::id()));
+crates/native-shell-runtime/src/setup_wizard.rs	            "  \u{1f9e9}  niu-git — Windows-native git experience?",
+crates/native-shell-runtime/src/setup_wizard.rs	            "  \u{1f9e9}  niu-git —— Windows 原生 git 体验？",
+crates/native-shell-runtime/src/setup_wizard.rs	            "niu-git 安装失败 —— 其他内容未做任何改动",
+crates/native-shell-runtime/src/setup_wizard.rs	            t.tr("  🧩  niu-git — Windows-native git experience?"),
+crates/native-shell-runtime/src/setup_wizard.rs	        "  \u{1f9e9}  niu-git — Windows-native git experience?" =>
+crates/native-shell-runtime/src/setup_wizard.rs	        "niu-git install failed — no other changes were made" =>
+crates/native-shell-runtime/src/setup_wizard.rs	        "niu-git installed" => "niu-git 已安装",
+crates/native-shell-runtime/src/setup_wizard.rs	        "niu-git" => "niu-git",
+crates/native-shell-runtime/src/setup_wizard.rs	        "niu-git",
+crates/native-shell-runtime/src/setup_wizard.rs	        // niu-git (opt\native-git). Never re-offer installing what is already
+crates/native-shell-runtime/src/setup_wizard.rs	        // niu-git single-choice
+crates/native-shell-runtime/src/setup_wizard.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/setup_wizard.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/setup_wizard.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/setup_wizard.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/setup_wizard.rs	        let temp = unique_temp_dir("niu-git-answer");
+crates/native-shell-runtime/src/setup_wizard.rs	    // --- Q3: niu-git, offered once (never auto-installed, never nagged) ---
+crates/native-shell-runtime/src/setup_wizard.rs	    // The niu-git question is Windows-only (niu-git is Windows-native git):
+crates/native-shell-runtime/src/setup_wizard.rs	    // Windows-only question: niu-git is Windows-native git, and Linux/macOS
+crates/native-shell-runtime/src/setup_wizard.rs	    // wpm first (niu-git ships in the wpm index; owner correction
+crates/native-shell-runtime/src/setup_wizard.rs	    /// Lasting niu-git answer ("never" / "installed").
+crates/native-shell-runtime/src/setup_wizard.rs	    /// The niu-git question is skipped entirely when the release bundle
+crates/native-shell-runtime/src/setup_wizard.rs	    /// already ships niu-git — and the fact is recorded so re-runs stay
+crates/native-shell-runtime/src/setup_wizard.rs	// --- niu-git ask: Windows-only at compile time (niu-git is Windows-native
+crates/native-shell-runtime/src/setup_wizard.rs	// 2026-10-03: wpm is the first-class command-layer tool installer; niu-git
+crates/native-shell-runtime/src/setup_wizard.rs	/// Print the niu-git install recommendation the user explicitly picked
+crates/native-shell-runtime/src/setup_wizard.rs	/// The recorded niu-git answer, when the user gave a lasting one ("never",
+crates/native-shell-runtime/src/setup_wizard.rs	/// The user's answer to the niu-git question.
+crates/native-shell-runtime/src/setup_wizard.rs	/// already ships niu-git). While `None` the wizard may
+crates/native-shell-runtime/src/setup_wizard.rs	/// first: niu-git ships in the wpm index; plus the upstream releases
+crates/native-shell-runtime/src/setup_wizard.rs	/// niu-git is Windows-native git (the topic and the question never appear
+crates/native-shell-runtime/src/setup_wizard.rs	/// niu-git recipe id in the compiled-in plugin recipe index. The wizard
+crates/native-shell-runtime/src/setup_wizard.rs	/// package-manager recommendation (wpm first — niu-git ships in the wpm
+crates/native-shell-runtime/src/shell.rs	                for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/shell.rs	            "export NATIVE_SHELL_AGENT_ENV=from-niu\n",
+crates/native-shell-runtime/src/shell.rs	            Some("from-niu")
+crates/native-shell-runtime/src/shell.rs	            for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/shell.rs	            for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/shell.rs	        .or_else(|| std::env::var_os("WINUXSH_ROOT")) // deprecated rubash bridge
+crates/native-shell-runtime/src/shell.rs	        // NATIVE_SHELL_BIN_PATH_STYLE / WINUXSH_SHELL_PATH_STYLE are no longer set
+crates/native-shell-runtime/src/shell.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/shell.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/shell.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/shell.rs	        let temp = unique_temp_dir("native-shell-env-niu");
+crates/native-shell-runtime/src/shell.rs	    // stays the plain-niu default.
+crates/native-shell-runtime/src/shell.rs	/// removal a nested `sh -c 'native-shell ...'` would hand the plain-niu child the
+crates/native-shell-runtime/src/shell_links.rs	            .filter(|name| name.contains(".niu-old-"))
+crates/native-shell-runtime/src/shell_links.rs	        assert_eq!(find_installation_root(&portable_niu), portable);
+crates/native-shell-runtime/src/shell_links.rs	        let portable_niu = portable.join(SHELL_BIN_NAME);
+crates/native-shell-runtime/src/shell_links.rs	        std::fs::write(&portable_niu, b"native-shell payload").unwrap();
+crates/native-shell-runtime/src/shell_links.rs	    parked_name.push(format!(".niu-old-{}", std::process::id()));
+crates/native-shell-runtime/src/shell_links.rs	/// contract variables (`NATIVE_SHELL_BIN`, `WINUXSH_SHELL`) and the shim's own target
+crates/native-shell-runtime/src/syntax_highlighting.rs	        .or_else(|| std::env::var_os("WINUXSH_ROOT")) // deprecated rubash bridge
+crates/native-shell-runtime/src/typeahead_guard.rs	                .name("niu-typeahead".to_string())
+crates/native-shell-runtime/src/winuxcmd.rs	            .filter(|name| name.contains(".niu-old-"))
+crates/native-shell-runtime/src/winuxcmd.rs	        // The parking step must not leave `.niu-old-*` shapes behind.
+crates/native-shell-runtime/tests/fixtures/skill-corpus/native-shell-help.txt	Configuration: ~/.native-shellrc for interactive startup; a pre-rename ~/.winuxshrc is migrated once into ~/.native-shellrc
+crates/native-shell-runtime/tests/winuxcmd_completions.rs	            .contains(&"--niu-override-flag".to_string()),
+crates/native-shell-runtime/tests/winuxcmd_completions.rs	        "niu-winuxcmd-override-{}-{}",
+crates/native-shell-runtime/tests/winuxcmd_completions.rs	    let input = "ls --niu".to_string();
+crates/native-shell-runtime/tests/winuxcmd_completions.rs	long = "--niu-override-flag"
+crates/native-shell-runtime/tests/wt_shortcut_roundtrip.rs	    let (wt, _niu, icon) = stage_targets(temp.path());
+docs/audit/AUDIT-PLAN.md	  "does NOT cancel" claim), cancel at the niu-git question (documented
+docs/audit/AUDIT-PLAN.md	  (documented), winuxshrc → native-shellrc migration once-only claim
+docs/audit/AUDIT-PLAN.md	  (winuxshrc migration claim, NATIVE_SHELL_ENV precedence claim).
+docs/audit/AUDIT-PLAN.md	  Local/Programs/Winuxsh/native-shell.exe`) is first on PATH; `command -v native-shell`
+docs/audit/AUDIT-PLAN.md	  `"${NIU_SHELL:-niu}"`. Suspected owner: rc template in
+docs/audit/AUDIT-PLAN.md	  double-managed blocks, `winuxshrc`→`native-shellrc` migration once-only
+docs/audit/AUDIT-PLAN.md	  error. `NIU_SHELL` (exported from `current_exe()` at `main.rs:120-125`)
 docs/audit/AUDIT-PLAN.md	  rc + registry layout (old winuxsh dir on PATH — the V1 scenario), run
-docs/audit/AUDIT-PLAN.md	`NIU_COMPLETION_STYLE`), winuxshrc one-time migration, `NIU_ENV`/`BASH_ENV`.
-docs/audit/findings/wt82-L01.md	  (`C:/Users/Administrator/AppData/Local/Programs/Winuxsh/niu.exe`) is first on
-docs/audit/findings/wt82-L01.md	  (target written, `WINUXSH_*`→`NIU_*`, `winuxsh.exe`→`niu.exe`, `.winuxshrc`
-docs/audit/findings/wt82-L01.md	  ADVICE niu on PATH  C:/Users/Administrator/AppData/Local/Programs/Winuxsh/niu.exe
+docs/audit/AUDIT-PLAN.md	(only when ecosystem empty; minimal/recommended/full) → Q3 niu-git →
+docs/audit/AUDIT-PLAN.md	`NATIVE_SHELL_COMPLETION_STYLE`), winuxshrc one-time migration, `NATIVE_SHELL_ENV`/`BASH_ENV`.
+docs/audit/adversarial-matrix.md	| #162 family | TUI child fails to launch under env/DLL path pollution | AM07 (`msys-parent`, `garbage-niu` presets) |
+docs/audit/adversarial-matrix.md	| `env-poisoner.py` | `gitbash,garbage-niu` child observed `PS1=\[…`, `MSYSTEM=MINGW64`, `NATIVE_SHELL_LANG=zh_CN.bogus`, `TERM=/`; `no-home` child observed both HOME and USERPROFILE unset |
+docs/audit/ecosystem-form-factors.md	niu-side citations are `engine:` for the rubash engine (`D:/repo/rubash`,
+docs/audit/findings/wt100-i185.md	  `niu-bindx-before-*`).
+docs/audit/findings/wt100-i185.md	- after (ConPTY, `niu-fzf-final-*`): source at prompt → press \C-r on line `AB`
+docs/audit/findings/wt100-i185.md	ConPTY probes: pywinpty + pyte (`niu-pty-session.py`). Raw artifacts:
+docs/audit/findings/wt82-L01.md	  (`C:/Users/Administrator/AppData/Local/Programs/Winuxsh/native-shell.exe`) is first on
+docs/audit/findings/wt82-L01.md	  (target written, `WINUXSH_*`→`NATIVE_SHELL_*`, `winuxsh.exe`→`native-shell.exe`, `.winuxshrc`
+docs/audit/findings/wt82-L01.md	  ADVICE native-shell on PATH  C:/Users/Administrator/AppData/Local/Programs/Winuxsh/native-shell.exe
 docs/audit/findings/wt82-L01.md	  `NIU_SHELL` (and deprecated `WINUXSH_SHELL`) from `std::env::current_exe()`
+docs/audit/findings/wt82-L01.md	  `v1-wizard-emits-niu-shell-line`). Sandbox rc written by the fixed wizard contains
+docs/audit/findings/wt82-L01.md	  before `run()` — so `NIU_SHELL` is always the running exe inside any native-shell process
+docs/audit/findings/wt82-L01.md	  command -v "${NIU_SHELL:-niu}" >/dev/null 2>&1 && "${NIU_SHELL:-niu}" plugin sync --bootstrap
+docs/audit/findings/wt82-L01.md	  for plain `source ~/.native-shellrc` from foreign shells; if `NIU_SHELL` is set but the
 docs/audit/findings/wt82-L01.md	  nothing (`shell.rs migrate_legacy_winuxsh_rc`: skipped when target exists).
-docs/audit/findings/wt82-L01.md	- **`.winuxshrc` → `.niubashrc` migration once-only.** First `-C` contact migrates
-docs/planning/niugit-integration-study.md	- 生态接线：`D:\repo\niubash\crates\niubash-runtime\src\setup_wizard.rs`（NIUGIT_INSTALL_COMMAND）、`plugins/sources.rs:531`（Command::new("git")）、`D:\repo\unixwin-oh-my-winuxsh\lib\git.niu`、`D:\repo\wpm-source\index.json`（git/niugit 条目）
+docs/audit/findings/wt82-L01.md	  or by hand: replace both `native-shell` occurrences with `"${NIU_SHELL:-niu}"`. Detection:
+docs/audit/findings/wt82-L01.md	  sed -i 's|^command -v native-shell >/dev/null 2>&1 && native-shell plugin sync --bootstrap$|command -v "${NIU_SHELL:-niu}" >/dev/null 2>\&1 \&\& "${NIU_SHELL:-niu}" plugin sync --bootstrap|' ~/.native-shellrc
+docs/audit/findings/wt82-L01.md	  the NIU_SHELL line; `-c`/`-C`/REPL-shaped invocations all clean.
+docs/audit/findings/wt82-L01.md	- **`.winuxshrc` → `.native-shellrc` migration once-only.** First `-C` contact migrates
+docs/audit/findings/wt82-L02.md	    channel — demonstrated 2/5 trials in a trivial non-niu child
+docs/audit/findings/wt82-L02.md	  "🛑 Setup cancelled — nothing was written."; the niu-git question's
+docs/audit/findings/wt82-L02.md	  Windows Terminal pass over: collection / niu-git / Apply-gate /
+docs/audit/findings/wt82-L02.md	  sweep) is unchanged; `NIU_SHELL` remains unused in the template.
+docs/audit/findings/wt82-L02.md	### L02-3 (P2, code-path-derived; ConPTY-unverifiable) — Ctrl+C at the niu-git question exits silently (no cancelled note)
+docs/audit/gap-matrix.json	      "fix_path": "keep bash text parity (compat contract); add rich rendering only behind a niu-specific flag"
+docs/audit/gap-matrix.json	      "ours": "partial (bash set/shopt + setopt alias, zsh_options.rs; no niu-specific feature flags)",
+docs/audit/shell-gap-matrix.md	| D17-02 | per-feature feature flags | status features + fish_features (src/builtins/status.rs:175) | 219 setopt names (Src/options.c optns :79) | experimental flags | partial (bash set/shopt + setopt alias, zsh_options.rs; no niu-specific feature flags) | low | native-shell feature flags only when a behavioral fork needs one |
+docs/audit/shell-gap-matrix.md	| D18-01 | span-annotated, labeled errors | plain text with caret for parse errors | text | miette-backed labeled errors (nu-protocol/src/errors/{labeled_error,report_error}.rs) | partial (bash-format text diagnostics, src/posix_errors.rs; stderr ordering caveat per rubash AGENTS.md) | low-med | keep bash text parity (compat contract); add rich rendering only behind a niu-specific flag |
+docs/journey-gate.md	| P3-S3 first-key integrity (native-shell#167 anti-masking) | idle the themed prompt ≥1.2 s (≥1 clock repaint), then `echo NIU167KEY` with the Ctrl-U wake DISABLED, no retry | the full word executes (bare marker output); never `cho: command not found`. On a pass the run FLIPS `WAKE_ENABLED` off — every later send goes wake-free (the gate stops masking) |
+docs/planning/download-architecture-analysis.md	   (c) 第三方需要 headless 驱动包管理器。届时 `niu-pkg` 的函数接口原样挂一个 `main()`
+docs/planning/download-architecture-analysis.md	   （`niu-pkg`：download + recipes + sources + trust + registry IO），网络传输置于 cargo feature
+docs/planning/download-architecture-analysis.md	- **C — 独立可执行 `niu-pkg`（随产品安装，shell 子进程调用）**：进程级隔离；
+docs/planning/download-architecture-analysis.md	1. 新 crate `niu-pkg`（或 `native-shell-pkg`）：迁入 `plugins/{download,recipes,sources,trust,
+docs/planning/download-architecture-analysis.md	3. 传输统一收口进 `niu-pkg`：#3 字体从 curl.exe 迁到 ureq（owner 已在迁），#1/#3/#6 共用
+docs/planning/download-architecture-analysis.md	| 5 | 向导装 niu-git | `setup_wizard.rs:1193 install_native_shell_git`（命令串 `:163`） | **wpm 子进程**（`wpm install native-git`，仅在用户显式选 Install 时） | setup 向导 Q3 | **委托既有包管理器**（wpm 自己下载） |
+docs/planning/handoff-444-pface.md	- artifacts（verdict+transcripts，全可读）：`D:/tmp/jt444-baseline`（J2 本机首曝 stall）、`-run2/-run3`（clone 超时轮）、`-run4`（pyte deque crash 轮）、`-run5`（lock 修复后，代理不稳轮）、`-run6`（P4 niu-git crash 轮，其 seal 洞实锤）、`-run7`（rubash 旧 pin panic 轮）、`-run8`（无效轮：旧二进制）、**`-run9`（最终态：仅 P8-S4 一红）**。
+docs/planning/handoff-444-pface.md	- 交付加固（本地实锤 2026-10-19：Enter 落进菜单自绘窗口会被吞）：J2 walk 与 `wizard_rerun` 每次菜单作答前 `wait_quiescent()`；`wizard_rerun` 的 niu-git 问句条件化（#230 同款，bundle 带 opt/native-git 时跳过——J2 walk 原本就有此形状，run6 在本机因此 crash）。
+docs/planning/handoff-444-pface.md	2. `fix(#444): journey harness hardening — seal holds blocked, feed under lock, quiesce before wizard menus, conditional niu-git ask`。
+docs/planning/host-semantic-layer-elimination.md	  `src/bin/bash.rs` (shim prefers `NIU_SHELL`/`native-shell.exe`, with the
+docs/planning/native-shell-git.md	- 仓名定案：**niu-git**（`unixwin/niu-git`，本地仓已建 D:\repo\niu-git，远程建仓待用户）
+docs/planning/niugit-integration-study.md	$ D:/repo/niu-git/dist/git.exe clone https://github.com/unixwin/demo-repository.git
+docs/planning/niugit-integration-study.md	$ D:/repo/niu-git/dist/git.exe config --show-origin --get-all credential.helper
+docs/planning/niugit-integration-study.md	$ D:/repo/niu-git/dist/git.exe credential-manager --version
+docs/planning/niugit-integration-study.md	$ printf 'protocol=https\nhost=github.com\n\n' | D:/repo/niu-git/dist/git.exe credential fill
+docs/planning/niugit-integration-study.md	- GitHub `unixwin/niu-git`（public，2026-09-16 建仓，patch-only：源码永不入库，CI 拉 git-for-windows tag 打 `patches/`）
+docs/planning/niugit-integration-study.md	- setup_wizard 已内建 niu-git 引导（`wpm install native-git`，Windows-only 编译门控，setup_wizard.rs:158-176, 1040+），并有探测 PATH git 后"现有 git 不受影响"的文案——**产品接线已经就位**
+docs/planning/niugit-integration-study.md	- 凭据语义：`D:\repo\niu-git\src\credential.c` `credential_do()`（helper 三分支）、`run_credential_helper()`（use_shell）
+docs/planning/niugit-integration-study.md	- 本地 `D:\repo\niu-git`：`scripts/build.py`（231 行）拉取 `v2.55.0.windows.2` tarball → `cmake -S src/contrib/buildsystems -DUSE_VCPKG=OFF -DSKIP_DASHED_BUILT_INS=ON -DBUILD_TESTING=OFF`（build.py:82-92）→ vcpkg classic 安装（`D:/vcpkg/installed/x64-windows`，zlib+curl(schannel)+iconv 三个动态 DLL）
+docs/planning/niugit-integration-study.md	- 构建/产物：`D:\repo\niu-git\scripts\build.py`（configure 82-92、DLL 181-186）、`scripts/entry/launch-git.c`、`dist/etc/gitconfig`、`wpm/native-git.json`
+docs/planning/niugit-integration-study.md	- 生态接线：`D:\repo\native-shell\crates\native-shell-runtime\src\setup_wizard.rs`（NATIVE_GIT_INSTALL_COMMAND）、`plugins/sources.rs:531`（Command::new("git")）、`D:\repo\unixwin-oh-my-winuxsh\lib\git.nsh`、`D:\repo\wpm-source\index.json`（git/native-git 条目）
+docs/planning/niugit-integration-study.md	- 计划与基线：`D:\repo\native-shell\docs\planning\native-shell-git.md`（§3 依赖边界、§8 集成、§10 阶段）、`D:\repo\niu-git\docs\test-baseline.md`、`D:\repo\niu-git\testlog-run10\SUMMARY.md`
+docs/planning/niugit-integration-study.md	调研对象：`unixwin/niu-git`（本地 `D:\repo\niu-git` @ d0e525e，Release v2.55.0.2）
+docs/planning/oh-my-niu-ecosystem.md	   niu-git 仓库 `wpm/native-git.json` 官方索引条目并下载实测）；向导保留的
+docs/planning/oh-my-niu-ecosystem.md	### 14.5 加载保真守卫落地（wt44/niu365，2026-10-03）
+docs/planning/oh-my-niu-ecosystem.md	1. **setup 向导**：niu-git 问题的安装分支从 `wpm install native-git` 改道
+docs/planning/oh-my-niu-ecosystem.md	opt-in 问题（补全包、niu-git 一次性询问）。字体/预设菜单/starship/工具套
+docs/planning/oh-my-niu-ecosystem.md	| git/niu-git | 应用工具 | 向导问题改道 `native-shell plugin add native-git`（Windows-only 问题保留） |
 docs/planning/oh-my-winuxsh-bundle-plan.md	    oh-my-winuxsh/
-docs/planning/oh-my-winuxsh-bundle-plan.md	%LOCALAPPDATA%/Niubash/bundles/oh-my-winuxsh/<version>/
-docs/planning/oh-my-winuxsh-bundle-plan.md	%LOCALAPPDATA%/Niubash/bundles/oh-my-winuxsh/current
+docs/planning/oh-my-winuxsh-bundle-plan.md	%LOCALAPPDATA%/Native Shell/bundles/oh-my-winuxsh/<version>/
+docs/planning/oh-my-winuxsh-bundle-plan.md	%LOCALAPPDATA%/Native Shell/bundles/oh-my-winuxsh/current
 docs/planning/oh-my-winuxsh-bundle-plan.md	5. Add `oh-my-winuxsh` bundle update support.
-docs/planning/oh-my-winuxsh-bundle-plan.md	<niubash install dir>/bundles/oh-my-winuxsh
+docs/planning/oh-my-winuxsh-bundle-plan.md	<native-shell install dir>/bundles/oh-my-winuxsh
 docs/planning/oh-my-winuxsh-bundle-plan.md	C:\Users\caomengxuan\repo\oh-my-winuxsh
 docs/planning/oh-my-winuxsh-bundle-plan.md	The existing `unixwin/oh-my-winuxsh` repository is legacy content. Do not
-docs/planning/oh-my-winuxsh-bundle-plan.md	`oh-my-winuxsh` is the official Niubash plugin bundle.
+docs/planning/oh-my-winuxsh-bundle-plan.md	`oh-my-winuxsh` is the official Native Shell plugin bundle.
 docs/planning/oh-my-winuxsh-bundle-plan.md	asset = "oh-my-winuxsh-{version}.zip"
 docs/planning/oh-my-winuxsh-bundle-plan.md	bundles = ["oh-my-winuxsh"]
 docs/planning/oh-my-winuxsh-bundle-plan.md	name = "oh-my-winuxsh"
-docs/planning/oh-my-winuxsh-bundle-plan.md	niu plugin rollback oh-my-winuxsh
-docs/planning/oh-my-winuxsh-bundle-plan.md	niu plugin update oh-my-winuxsh --from dist\oh-my-winuxsh-1.0.0.zip --checksum-file dist\oh-my-winuxsh-1.0.0.zip.sha256
-docs/planning/oh-my-winuxsh-bundle-plan.md	niu plugin update oh-my-winuxsh --github-release latest
-docs/planning/oh-my-winuxsh-bundle-plan.md	niu plugin update oh-my-winuxsh --github-release v1.0.0 --json
+docs/planning/oh-my-winuxsh-bundle-plan.md	native-shell plugin rollback oh-my-winuxsh
+docs/planning/oh-my-winuxsh-bundle-plan.md	native-shell plugin update oh-my-winuxsh --from dist\oh-my-winuxsh-1.0.0.zip --checksum-file dist\oh-my-winuxsh-1.0.0.zip.sha256
+docs/planning/oh-my-winuxsh-bundle-plan.md	native-shell plugin update oh-my-winuxsh --github-release latest
+docs/planning/oh-my-winuxsh-bundle-plan.md	native-shell plugin update oh-my-winuxsh --github-release v1.0.0 --json
 docs/planning/oh-my-winuxsh-bundle-plan.md	oh-my-winuxsh/
 docs/planning/oh-my-winuxsh-bundle-plan.md	repo = "unixwin/oh-my-winuxsh"
-docs/planning/oh-my-winuxsh-bundle-plan.md	so `niu plugin update oh-my-winuxsh ...` can move independently of app
-docs/planning/oh-my-winuxsh-bundle-plan.md	tags: [niubash, plugins, oh-my-winuxsh, bundle, roadmap]
+docs/planning/oh-my-winuxsh-bundle-plan.md	so `native-shell plugin update oh-my-winuxsh ...` can move independently of app
+docs/planning/oh-my-winuxsh-bundle-plan.md	tags: [native-shell, plugins, oh-my-winuxsh, bundle, roadmap]
 docs/planning/user-rc-read-only.md	Decision update: retire both `~/.winuxshrc` and `~/.winshrc` as startup inputs.
 docs/planning/user-rc-read-only.md	The same protection applies to legacy `~/.winuxshrc` and `~/.winshrc`, symlink
+docs/planning/wizard-redesign.md	   read-only from the niu-git repo docs: `D:/repo/niu-git` README "WPM
+docs/planning/wizard-redesign.md	  niu-git choice, answers file, rc generation, i18n.
+docs/planning/wizard-redesign.md	4. **niu-git** (offered once): `Skip` (default) / `Install via wpm
+docs/src/agents.md	  `niu-sandbox` and `tool-bash`, disables the PowerShell shell/tool rows, and
+docs/src/agents.md	- **Mechanism:** plugins. `dsh-niu` ships a profile bundle that enables
+docs/src/agents.md	- **Set it to native-shell:** `dsh plugin --profile web add @cmx666/dsh-niu-bundle@<version>`.
+docs/src/agents.md	- **Set it to native-shell:** this fork adds `ShellType::Niu` with
+docs/src/agents.md	Verified against the machine in `docs/` (2026-10-16): native-shell 1.4.0, niu-git
+docs/src/agents.md	opencode has no niu-specific code at all (zero occurrences of `native-shell` in the
+docs/src/getting-started.md	duf, erdtree, direnv, niu-git …) install through your real package
+docs/src/hooks.md	Status (2026-10, native-shell#161): the **niu-native named-hook registry described
+docs/src/installer.md	  12.7 ms against a forwarding wrapper's 32.2 ms, unixwin/niu-git#8). A
+docs/src/installer.md	  `*.old-*` left by earlier updaters, and `*.niu-old-*`, the relinker's park
+docs/src/installer.md	NIU_INVOKED_AS=ash
+docs/src/installer.md	NIU_INVOKED_AS=bash
+docs/src/installer.md	NIU_INVOKED_AS=sh
+docs/src/installer.md	`NIU_INVOKED_AS` contract above).
+docs/src/installer.md	shim stays the fallback. It sets `NIU_INVOKED_AS=bash` / `NIU_INVOKED_AS=sh`
+docs/src/platform-support.md	artifact is different (`niu-<ver>-ohos.hnp`, inside a HAP), and the
+installer/native-shell.iss	; relinker parks as <name>.niu-old-<pid> and drops it, but a crash between
+installer/native-shell.iss	Type: files; Name: "{app}\winuxcmd\bin\*.niu-old-*"
+installer/native-shell.iss	Type: files; Name: "{app}\winuxcmd\bin\*.niu-old-*"
+installer/native-shell.iss	Type: files; Name: "{app}\winuxcmd\usr\bin\*.niu-old-*"
+installer/native-shell.iss	Type: files; Name: "{app}\winuxcmd\usr\bin\*.niu-old-*"
+scripts/adversarial/env-poisoner.py	    if name == "garbage-niu":
+scripts/adversarial/env-poisoner.py	    python scripts/adversarial/env-poisoner.py --preset gitbash,garbage-niu \
+scripts/adversarial/env-poisoner.py	  garbage-niu      NATIVE_SHELL_LANG=zh_CN.bogus, NATIVE_SHELL_THEME='%s%d%%', TERM=/
+scripts/audit/l01-verb-sweep/sweep.sh	        STALE="$SB/fakepath/niu.exe"
+scripts/audit/l01-verb-sweep/sweep.sh	    # Every active dispatch verb must appear in `niu plugin --help` as a
+scripts/audit/l01-verb-sweep/sweep.sh	    # V2: every active dispatch verb must be advertised in `niu --help`
+scripts/audit/l01-verb-sweep/sweep.sh	    # stderr when the old rc line runs it as `niu plugin sync --bootstrap` —
 scripts/audit/l01-verb-sweep/sweep.sh	    STALE="/c/Users/Administrator/AppData/Local/Programs/Winuxsh/niu.exe"
+scripts/audit/l01-verb-sweep/sweep.sh	    cp "$STALE" "$SB/fakepath/niu.exe"
+scripts/audit/l01-verb-sweep/sweep.sh	    cp /c/Windows/System32/cmd.exe "$SB/fakepath/niu.exe" 2>/dev/null &&
+scripts/audit/l01-verb-sweep/sweep.sh	    d=$(cd "$(dirname "$NIU")/../.." 2>/dev/null && pwd)
+scripts/audit/l01-verb-sweep/sweep.sh	    echo "SKIP v1-* (no stale niu binary available; set STALE_NIU)"
+scripts/audit/l01-verb-sweep/sweep.sh	    echo "usage: sweep.sh <path-to-niu.exe> [repo-root]" >&2
+scripts/audit/l01-verb-sweep/sweep.sh	    ok_if v1-doctor-warns-path-mismatch command grep -qi "niu on PATH" "$o" "$e"
+scripts/audit/l01-verb-sweep/sweep.sh	    ok_if v1-wizard-emits-niu-shell-line command grep -q 'command -v "\${NATIVE_SHELL_BIN:-niu}"' "$SB/home/.niubashrc"
+scripts/audit/l01-verb-sweep/sweep.sh	    timeout "$tmo" "$NIU" "$@" >"$o" 2>"$e" </dev/null
+scripts/audit/l01-verb-sweep/sweep.sh	    timeout 20 "$NIU" --help >"$o" 2>"$e" </dev/null
+scripts/audit/l01-verb-sweep/sweep.sh	    timeout 20 "$NIU" plugin --help >"$o" 2>"$e" </dev/null
+scripts/audit/l01-verb-sweep/sweep.sh	    timeout 60 "$NIU" --self-update --check >"$o" 2>"$e" </dev/null
+scripts/audit/l01-verb-sweep/sweep.sh	    timeout 60 "$NIU" -C 'echo v1-probe-marker' >"$o" 2>"$e" </dev/null
+scripts/audit/l01-verb-sweep/sweep.sh	    timeout 60 "$NIU" doctor >"$o" 2>"$e" </dev/null
+scripts/audit/l01-verb-sweep/sweep.sh	    timeout 60 "$NIU" setup --preset minimal >"$OUT/v1-wizard.out" 2>"$OUT/v1-wizard.err"
+scripts/audit/l01-verb-sweep/sweep.sh	#              copy named niu.exe — any binary that answers to `niu` but
+scripts/audit/l01-verb-sweep/sweep.sh	#   STALE_NIU  path to an old-vintage niu.exe for the V1 regression probe
+scripts/audit/l01-verb-sweep/sweep.sh	#   scripts/audit/l01-verb-sweep/sweep.sh [path/to/niu.exe] [repo-root]
+scripts/audit/l01-verb-sweep/sweep.sh	# (`command -v niu … && niu plugin sync --bootstrap`) resolved and ran it on
+scripts/audit/l01-verb-sweep/sweep.sh	# A niu that predates `plugin sync` first on PATH: the pre-fix wizard rc
+scripts/audit/l01-verb-sweep/sweep.sh	# EVERY startup, printing `niu: unknown plugin subcommand 'sync'` (real
+scripts/audit/l01-verb-sweep/sweep.sh	BASE="${NIU%/target/release/niu.exe}"
+scripts/audit/l01-verb-sweep/sweep.sh	NIU="${1:-}"
+scripts/audit/l01-verb-sweep/sweep.sh	NIU=$(cd "$(dirname "$NIU")" && pwd)/$(basename "$NIU")
+scripts/audit/l01-verb-sweep/sweep.sh	STALE="${STALE_NIU:-}"
+scripts/audit/l01-verb-sweep/sweep.sh	[ "$BASE" != "$NIU" ] || OUT="./l01-sweep-$(date +%Y%m%d-%H%M%S)"
+scripts/audit/l01-verb-sweep/sweep.sh	echo 'echo hello-stdin' | timeout 20 "$NIU" >"$o" 2>"$e"
+scripts/audit/l01-verb-sweep/sweep.sh	if [ -z "$NIU" ]; then
 scripts/audit/l01-verb-sweep/sweep.sh	if [ -z "$STALE" ] && [ -f "/c/Users/Administrator/AppData/Local/Programs/Winuxsh/niu.exe" ]; then
+scripts/audit/l01-verb-sweep/sweep.sh	probe completion-probe 0 "-" 20 --completion-probe "niu plugin "
+scripts/audit/l01-verb-sweep/sweep.sh	probe doctor 0 "niubash doctor" 30 doctor
+scripts/audit/l01-verb-sweep/sweep.sh	probe help-long 0 "Usage:  niu" 20 --help
+scripts/audit/l01-verb-sweep/sweep.sh	probe help-short 0 "Usage:  niu" 20 -h
+scripts/audit/l01-verb-sweep/sweep.sh	probe pdistro-usage 0 "Usage:  niu plugin distro" 20 plugin distro
+scripts/audit/l01-verb-sweep/sweep.sh	probe plugin-discover 0 "Niubash plugin ecosystem" 30 plugin discover
+scripts/audit/l01-verb-sweep/sweep.sh	probe plugin-help 0 "Usage:  niu plugin" 20 plugin --help
+scripts/audit/l01-verb-sweep/sweep.sh	probe plugin-usage 0 "Usage:  niu plugin" 20 plugin
+scripts/audit/l01-verb-sweep/sweep.sh	probe pmirror-usage 0 "Usage:  niu plugin mirror" 20 plugin mirror
+scripts/audit/l01-verb-sweep/sweep.sh	probe precipe-usage 0 "Usage:  niu plugin recipe" 20 plugin recipe
+scripts/audit/l01-verb-sweep/sweep.sh	probe psource-usage 0 "Usage:  niu plugin source" 20 plugin source
+scripts/audit/l01-verb-sweep/sweep.sh	probe version-long 0 "Niubash " 20 --version
+scripts/audit/l01-verb-sweep/sweep.sh	probe version-short 0 "Niubash " 20 -V
+scripts/audit/l01-verb-sweep/sweep.sh	timeout 20 "$NIU" plugin source --help >"$o" 2>"$e" </dev/null
+scripts/audit/l01-verb-sweep/sweep.sh	timeout 8 "$NIU" --internal-yes 2>"$e" | head -c 1000 >"$o"
+scripts/audit/l22-migration/migrate.sh	        bad s2-post-upgrade-clean-under-stale-path "stale-niu noise after upgrade"
+scripts/audit/l22-migration/migrate.sh	        timeout 60 "$NIU" -C 'echo s2-post-upgrade' >"$o" 2>"$e"
+scripts/audit/l22-migration/migrate.sh	    bad s2-wizard-writes-niu-shell-line "rc lacks NATIVE_SHELL_BIN bootstrap"
+scripts/audit/l22-migration/migrate.sh	    cp "$STALE" "$SB/fakepath/niu.exe"
+scripts/audit/l22-migration/migrate.sh	    echo "SKIP s2-post-upgrade-clean-under-stale-path (no stale niu available)"
+scripts/audit/l22-migration/migrate.sh	    echo "usage: migrate.sh <path-to-niu.exe>" >&2
+scripts/audit/l22-migration/migrate.sh	    if command grep -q 'id = "legacy-src"' "$H3/.niubash/sources/registry.toml"; then
 scripts/audit/l22-migration/migrate.sh	    ok s1-original-untouched || bad s1-original-untouched "original .winuxshrc modified"
+scripts/audit/l22-migration/migrate.sh	    ok s2-wizard-writes-niu-shell-line
+scripts/audit/l22-migration/migrate.sh	#     and NO ~/.niubash/plugins.toml (the spec did not exist in 1.2.x);
+scripts/audit/l22-migration/migrate.sh	#   - a pre-spec imperative plugins tree under ~/.niubash/sources/<id>/
 scripts/audit/l22-migration/migrate.sh	#   - optionally a pre-rename ~/.winuxshrc for the once-only migration.
+scripts/audit/l22-migration/migrate.sh	#   - sources registry at the 1.2.5 schema ("niubash:plugin-source-registry
+scripts/audit/l22-migration/migrate.sh	# Edit this file with normal Niubash/bash syntax.
+scripts/audit/l22-migration/migrate.sh	# Niubash interactive rc - generated by the setup wizard (1.2.x vintage).
+scripts/audit/l22-migration/migrate.sh	# Usage: scripts/audit/l22-migration/migrate.sh [path/to/niu.exe]
+scripts/audit/l22-migration/migrate.sh	# Windows-form path: the spec is a data file — niu passes `target` to git
+scripts/audit/l22-migration/migrate.sh	# post-upgrade startup with a STALE niu first on PATH (V1-in-migration):
 scripts/audit/l22-migration/migrate.sh	# reference: ~/.winuxshrc.self and the winuxsh.exe entry point
+scripts/audit/l22-migration/migrate.sh	# tag (niubash.git 3d0de1e):
 scripts/audit/l22-migration/migrate.sh	# winuxsh interactive rc (pre-rename, ~0.x vintage)
 scripts/audit/l22-migration/migrate.sh	# ── Scenario 1: pre-rename ~/.winuxshrc migrates once ──────────────────────
+scripts/audit/l22-migration/migrate.sh	: >"$H2/.niubash/.setup-done"
+scripts/audit/l22-migration/migrate.sh	BASE="${NIU%/target/release/niu.exe}"
 scripts/audit/l22-migration/migrate.sh	H1="$SB/home-winuxshrc"
+scripts/audit/l22-migration/migrate.sh	HOME="$H1" USERPROFILE="$H1" timeout 60 "$NIU" -C 'echo s1-alive' \
+scripts/audit/l22-migration/migrate.sh	HOME="$H1" USERPROFILE="$H1" timeout 60 "$NIU" -C 'echo s1-second' \
+scripts/audit/l22-migration/migrate.sh	HOME="$H2" USERPROFILE="$H2" timeout 30 "$NIU" doctor \
+scripts/audit/l22-migration/migrate.sh	HOME="$H2" USERPROFILE="$H2" timeout 30 "$NIU" plugin list \
+scripts/audit/l22-migration/migrate.sh	HOME="$H2" USERPROFILE="$H2" timeout 30 "$NIU" plugin sync \
+scripts/audit/l22-migration/migrate.sh	HOME="$H2" USERPROFILE="$H2" timeout 60 "$NIU" -C 'echo s2-alive' \
+scripts/audit/l22-migration/migrate.sh	HOME="$H2" USERPROFILE="$H2" timeout 60 "$NIU" -C 'echo s2-second' \
+scripts/audit/l22-migration/migrate.sh	HOME="$H2" USERPROFILE="$H2" timeout 60 "$NIU" setup --preset minimal \
+scripts/audit/l22-migration/migrate.sh	HOME="$H3" USERPROFILE="$H3" RUST_LOG=warn timeout 30 "$NIU" plugin list \
+scripts/audit/l22-migration/migrate.sh	HOME="$H3" USERPROFILE="$H3" timeout 30 "$NIU" plugin list \
+scripts/audit/l22-migration/migrate.sh	HOME="$H3" USERPROFILE="$H3" timeout 60 "$NIU" plugin sync \
+scripts/audit/l22-migration/migrate.sh	NATIVE_SHELL_THEME_PLUGIN='oh-my-niu'
+scripts/audit/l22-migration/migrate.sh	NIU="${1:-}"
+scripts/audit/l22-migration/migrate.sh	NIU=$(cd "$(dirname "$NIU")" && pwd)/$(basename "$NIU")
 scripts/audit/l22-migration/migrate.sh	STALE="${STALE_NIU:-/c/Users/Administrator/AppData/Local/Programs/Winuxsh/niu.exe}"
 scripts/audit/l22-migration/migrate.sh	[ "$(cat "$H1/.winuxshrc")" = "$before" ] &&
+scripts/audit/l22-migration/migrate.sh	[ "$BASE" != "$NIU" ] || OUT="./l22-migration-$(date +%Y%m%d-%H%M%S)"
+scripts/audit/l22-migration/migrate.sh	[ "$m1" = "$m2" ] && ok s1-once-only || bad s1-once-only ".niubashrc changed on second run"
+scripts/audit/l22-migration/migrate.sh	after3=$(md5sum "$H3/.niubash/sources/registry.toml" | cut -d' ' -f1)
+scripts/audit/l22-migration/migrate.sh	assert_file s1-niubashrc-created "$H1/.niubashrc"
 scripts/audit/l22-migration/migrate.sh	assert_file s1-winuxshrc-kept "$H1/.winuxshrc"
+scripts/audit/l22-migration/migrate.sh	assert_file s2-registry-intact "$H2/.niubash/sources/registry.toml"
+scripts/audit/l22-migration/migrate.sh	assert_file s2-wizard-backup-created "$H2/.niubash/backups/.niubashrc."*.bak
+scripts/audit/l22-migration/migrate.sh	assert_grep s1-migrated-content-renamed "NATIVE_SHELL_LEGACY_MARKER" "$H1/.niubashrc"
+scripts/audit/l22-migration/migrate.sh	assert_grep s1-migrated-entry-point "niu.exe" "$H1/.niubashrc"
+scripts/audit/l22-migration/migrate.sh	assert_no_file s2-no-spec-written "$H2/.niubash/plugins.toml"
 scripts/audit/l22-migration/migrate.sh	assert_no_grep s1-migrated-no-winuxsh-stray "WINUXSH_LEGACY_MARKER" "$H1/.niubashrc"
+scripts/audit/l22-migration/migrate.sh	before3=$(md5sum "$H3/.niubash/sources/registry.toml" | cut -d' ' -f1)
 scripts/audit/l22-migration/migrate.sh	before=$(cat "$H1/.winuxshrc")
 scripts/audit/l22-migration/migrate.sh	cat >"$H1/.winuxshrc" <<'EOF'
+scripts/audit/l22-migration/migrate.sh	cat >"$H2/.niubash/sources/registry.toml" <<EOF
+scripts/audit/l22-migration/migrate.sh	cat >"$H2/.niubashrc" <<'EOF'
+scripts/audit/l22-migration/migrate.sh	cat >"$H3/.niubash/plugins.toml" <<EOF
+scripts/audit/l22-migration/migrate.sh	cat >"$H3/.niubash/sources/registry.toml" <<EOF
+scripts/audit/l22-migration/migrate.sh	command grep -q "NATIVE_SHELL_THEME='robbyrussell'" "$H2/.niubash/backups/".niubashrc.*.bak &&
+scripts/audit/l22-migration/migrate.sh	command grep -q "NATIVE_SHELL_THEME='robbyrussell'" "$H2/.niubashrc" &&
 scripts/audit/l22-migration/migrate.sh	command grep -q "winuxshrc.migrat" "$OUT/s1-first.out" "$OUT/s1-first.err" 2>/dev/null &&
+scripts/audit/l22-migration/migrate.sh	command grep -q 'id = "oh-my-bash"' "$H2/.niubash/sources/registry.toml" &&
 scripts/audit/l22-migration/migrate.sh	export WINUXSH_LEGACY_MARKER=1
-scripts/audit/wt82-L02/conpty_lib.py	           "WINUXSH_ROOT", "NIU_THEME", "OSH_THEME", "BASH_IT_THEME",
+scripts/audit/l22-migration/migrate.sh	if [ -z "$NIU" ]; then
+scripts/audit/l22-migration/migrate.sh	if command grep -q 'command -v "\${NATIVE_SHELL_BIN:-niu}"' "$H2/.niubashrc"; then
+scripts/audit/l22-migration/migrate.sh	if command grep -q 'niubash:plugin-source-registry@0.3.0' "$H2/.niubash/sources/registry.toml"; then
+scripts/audit/l22-migration/migrate.sh	m1=$(md5sum "$H2/.niubashrc" | cut -d' ' -f1)
+scripts/audit/l22-migration/migrate.sh	m1=$(stat -c %Y "$H1/.niubashrc" 2>/dev/null; md5sum "$H1/.niubashrc" | cut -d' ' -f1)
+scripts/audit/l22-migration/migrate.sh	m2=$(md5sum "$H2/.niubashrc" | cut -d' ' -f1)
+scripts/audit/l22-migration/migrate.sh	m2=$(stat -c %Y "$H1/.niubashrc" 2>/dev/null; md5sum "$H1/.niubashrc" | cut -d' ' -f1)
+scripts/audit/l22-migration/migrate.sh	mkdir -p "$H1/.niubash"
+scripts/audit/l22-migration/migrate.sh	mkdir -p "$H2/.niubash/sources/oh-my-bash" "$H2/.niubash/sources/bash-it"
+scripts/audit/l22-migration/migrate.sh	mkdir -p "$H3/.niubash/sources/legacy-src"
+scripts/audit/l22-migration/migrate.sh	path = "$H2/.niubash/sources/oh-my-bash"
+scripts/audit/l22-migration/migrate.sh	path = "$H3/.niubash/sources/legacy-src"
+scripts/audit/l22-migration/migrate.sh	printf '#!/usr/bin/env bash\necho bashit-fake\n' >"$H2/.niubash/sources/bash-it/bash_it.sh"
+scripts/audit/l22-migration/migrate.sh	printf '#!/usr/bin/env bash\necho omb-fake-theme-loaded\n' >"$H2/.niubash/sources/oh-my-bash/themes.sh"
+scripts/audit/l22-migration/migrate.sh	printf '#!/usr/bin/env bash\ntrue\n' >"$H3/.niubash/sources/legacy-src/loader.sh"
+scripts/audit/l22-migration/migrate.sh	printf 'OSH=./\n' >"$H2/.niubash/sources/oh-my-bash/oh-my-bash.sh"
+scripts/audit/l22-migration/migrate.sh	schema = "niubash:plugin-source-registry@0.1.0"
+scripts/audit/l22-migration/migrate.sh	schema = "niubash:plugin-source-registry@0.3.0"
+scripts/audit/l22-migration/migrate.sh	schema = "niubash:plugin-spec@0.1.0"
+scripts/audit/wt82-L02/conpty_lib.py	           "WINUXSH_ROOT", "NATIVE_SHELL_THEME", "OSH_THEME", "BASH_IT_THEME",
 scripts/audit/wt82-L02/conpty_lib.py	        "compat_rc_exists": (home / ".winuxshrc").is_file(),
-scripts/harvest/eco-test.py	                    "NIU_REPL_STARTUP", "BASH_ENV", "WINUXSH_ROOT",
-scripts/harvest/snapshots/wt92-local-20261005/test-results.jsonl	{"ts": "2026-10-05T03:20:16Z", "content_hash": "ccdb6cdce47107a97c59fa8ec900f9623e662b25", "repo": "icy/pacapt", "path": "lib/zz_main.sh", "tier": "t3", "category": "framework", "bytes": 8357, "source_url": "https://raw.githubusercontent.com/icy/pacapt/94c4b2c2209659a0e0b745d7c9417033bd71a399/lib/zz_main.sh", "niu": "D:\\repo\\niubash-wt-hres\\target\\debug\\niu.exe", "rubash": "D:\\repo\\rubash\\target\\debug\\rubash.exe", "local_work": "E:\\eco-harvest\\tmp\\work-ccdb6cdce471\\asset.sh", "rubash_ok": true, "phases_ms": {"startup": 2301, "source_wall": 328, "enter1": 83, "enter2": 82}, "phase": null, "tail": [], "storm_lines": 9, "storm_head": ["niu: _sun_tools_init: command not found", "niu: _require_programs: command not found", "niu: _debug: command not found", "rams/Winuxsh/niu: cannot execute binary file", "niu: _PACMAN_detect: command not found", "niu: _die: command not found", "niu: _die: command not found", "niu: _validate_operation: command not found", "niu: _not_implemented: command not found"], "signature": "ok", "verdict": "OK", "ms": 5634}
-scripts/journey/golden-journey.py	                "WINUXSH_ROOT", "NIU_THEME", "OSH_THEME", "BASH_IT_THEME"):
+scripts/audit/wt82-L02/run_l02.py	                   and "niu-git" in session.raw_stripped())
+scripts/audit/wt82-L02/run_l02.py	            step.check("niu-git asked again (the cancelled run persisted "
+scripts/audit/wt82-L02/run_l02.py	            step.check("niu-git asked again (the cancelled run persisted "
+scripts/audit/wt82-L02/run_l02.py	            step.check("niu-git question suppressed after Don't ask again",
+scripts/audit/wt82-L02/run_l02.py	            step.check("niu-git question suppressed after Don't ask again",
+scripts/audit/wt82-L02/run_l02.py	        step.check("CHANNEL EVIDENCE: 0x18 (Ctrl+X) at the niu-git menu "
+scripts/audit/wt82-L02/run_l02.py	        step.check("Esc at niu-git prints its fast-forward line",
+scripts/audit/wt82-L02/run_l02.py	        step.check("journal keeps the transient niu-git Skip out "
+scripts/audit/wt82-L02/run_l02.py	        step.check("journal: no collection, no lasting niu-git",
+scripts/audit/wt82-L02/run_l02.py	        step.check("niu-git question silently skipped by fast-forward",
+scripts/audit/wt82-L02/run_l02.py	        step.check("niu-git question silently skipped by fast-forward",
+scripts/audit/wt82-L02/run_l02.py	    """Drive collection + niu-git menus. collection: skip|minimal|
+scripts/audit/wt82-L02/run_l02.py	    """Esc at the niu-git question only: collection answered Skip first,
+scripts/audit/wt82-L02/run_l02.py	    step = verdict.step("m05", "Esc at niu-git: defaults for the rest, "
+scripts/audit/wt82-L02/run_l02.py	    tested binary directly; non-niu lines (`cp ...`) go through the
+scripts/audit/wt82-L02/run_l02.py	    verdict = Verdict(artifacts, "l02-m05 Esc at niu-git -> fast-forward")
+scripts/audit/wt82-L02/run_l05.py	        # Pick demox (digit 3) -> niu-git (Skip) -> Apply.
+scripts/gen-plugin-recipes.py	          "windows-x64": ("https://github.com/unixwin/niu-git/releases/download/v2.55.0.2/niu-git-2.55.0.windows.2-x64.zip",
+scripts/gen-plugin-recipes.py	     "GPL-2.0-only", "https://github.com/unixwin/niu-git",
+scripts/gen-plugin-recipes.py	     "native Windows git without MSYS (niu-git build); the setup wizard's git pick",
+scripts/generate-skill.py	    with tempfile.TemporaryDirectory(prefix="niu-skill-gen-") as tmp:
+scripts/harvest/eco-test.py	                    "NATIVE_SHELL_REPL_STARTUP", "BASH_ENV", "WINUXSH_ROOT",
+scripts/harvest/test_eco_resume.py	        self.assertNotEqual(original, identity(native_shell_rev="niu-b"))
+scripts/installer-slot-probe.py	                    entry for entry in os.listdir(parent) if ".niu-old-" in entry
+scripts/installer-slot-probe.py	                 `.niu-old-*` name left; the decoy and the real
+scripts/installer-slot-probe.py	        return self.check(not strays, f"no parked .niu-old-* names left: {strays or 'none'}")
+scripts/journey/golden-journey.py	                       "niu-git (native-shell#230) — nothing to answer")
+scripts/journey/golden-journey.py	                  "niu-git (native-shell#230) — nothing to answer")
+scripts/journey/golden-journey.py	                "WINUXSH_ROOT", "NATIVE_SHELL_THEME", "OSH_THEME", "BASH_IT_THEME"):
+scripts/journey/golden-journey.py	            session.wait_for("niu-git", timeout=10)
+scripts/journey/golden-journey.py	            step.check("niu-git question answered with Skip", True)
+scripts/journey/golden-journey.py	            step.check("niu-git question answered with Skip", True,
+scripts/journey/golden-journey.py	        # bundle already carries niu-git (opt/native-git) skips the question
+scripts/journey/golden-journey.py	        session.wait_for("niu-git", timeout=10)
+scripts/journey/golden-journey.py	        step.note("niu-git question skipped: the bundle already carries "
+scripts/journey/golden-journey.py	     `echo NIU167KEY` with the driver's Ctrl-U wake DISABLED for this
+scripts/journey/golden-journey.py	    # niu-git (opt/native-git) skips the question silently — nothing to
+scripts/journey/golden-journey.py	    gallery (Q2.6 TAB completion style, Q3 niu-git, Q4 external completion
+scripts/journey/golden-journey.py	    marker = "NIU167KEY"
+scripts/perf/git-startup.py	        "warm_niu": {}, "warm_gitbash": {}, "new_terminal": {}, "work": {},
+scripts/perf/git-startup.py	        ("warm_niu", "warm `native-shell -c` (per call)"),
+scripts/perf/git-startup.py	        binaries.append(("niu-git (git on PATH)", git))
+scripts/perf/git-startup.py	        result["rows"]["warm_niu"] = {
+scripts/perf/git-startup.py	niu-git only shrinks the second term. Inside Git Bash the first term is
+scripts/perf/ttp-bench.py	    root = Path(tempfile.mkdtemp(prefix=f"niu-ttp-{prefix}-"))
+scripts/perf/ttp-bench.py	    root = sandbox_home("niu-trace")
+scripts/probe-msys-spawn.sh	    err="$(cat /tmp/niu141-err.$$)"
+scripts/probe-msys-spawn.sh	    out="$("$NATIVE_SHELL" -c "$script" 2>/tmp/niu141-err.$$)"
+scripts/probe-msys-spawn.sh	rm -f /tmp/niu141-err.$$
+scripts/release/preinstall.json	      "purpose": "Niu-git 2.56.0.1 (native Windows git without MSYS; real git-for-windows C source built with MSVC, no POSIX layer). The full plugin distro (oh-my-bash, omb-theme-robbyrussell, bash-it, bash-completion, bash-preexec) installs every entry through git clone/pull, so a fresh machine without git.exe on PATH failed all five with 'failed to run git; is git.exe on PATH?' (native-shell#209). Bundling native-git removes the hard dependency on the user's environment. 2.56.0.1 is layout=flat: the payload lands under <root>\\opt\\native-git (mingw64/ + etc/) and mingw64/bin/git.exe is mapped straight onto usr\\bin\\git.exe, so the git on PATH IS the git binary - no launcher, no winuxcmd dispatch hop, and git --version drops from 72-83 ms to ~14 ms (Git Bash: 45-103 ms). Requires WinuxCmd 1.1.9 or newer in the same release (wpm#1183: POSIX-unlink hardlink break, without which the flat mapping cannot replace the usr\\bin hardlink). It is schannel-only TLS with no bundled shell/perl (shell-script parts of git run on native-shell's sh) and accepts POSIX-shaped (/d/...) path args."
+scripts/run-realworld-with-native-shell.sh	    run_niu "eval \"\$(cat '$tmp')\"$extra; echo eval-ok"
+scripts/run-realworld-with-native-shell.sh	    run_niu "export NATIVE_SHELL='$NATIVE_SHELL_BUNDLE'; NATIVE_SHELL_PLUGINS=(git aliases functions); source '$NATIVE_SHELL_BUNDLE/oh-my-native-shell.nsh'; echo bundle-ok"
+scripts/run-realworld-with-native-shell.sh	    run_niu "printf 'b\na\n' | $prog 2>/dev/null | tr -d '\r'"
+scripts/run-realworld-with-native-shell.sh	    run_niu 'source /mingw64/share/git/completion/git-completion.bash; echo gc-ok'
+scripts/run-realworld-with-native-shell.sh	    run_niu 'source /mingw64/share/git/completion/git-prompt.sh; t=$(__git_ps1 "p:%s" 2>/dev/null); echo gp-ok'
+scripts/run-realworld-with-native-shell.sh	# run_niu <script>: run native-shell -c with 30s bound, capture stdout/stderr/rc into
+scripts/run-realworld-with-native-shell.sh	NATIVE_SHELL="${1:-${NATIVE_SHELL_EXE:-niu}}"
+scripts/run-realworld-with-native-shell.sh	run_niu 'v=hello; echo "${v}$(echo 中)"; v=ok; echo "x${v}$(echo 中)y"'
+scripts/run-realworld-with-native-shell.sh	run_niu() {
+scripts/smoke-theme-gallery-preview.py	        # The highlighted twoline is confirmed, Skip through the niu-git
+scripts/smoke-theme-gallery-preview.py	        # highlighted twoline is confirmed, Skip through the niu-git
+scripts/smoke-theme-gallery-preview.py	        s.wait_for("niu-git")
+scripts/smoke-wizard-journey.py	            s.wait_for("niu-git")
+scripts/smoke-wizard-journey.py	        ["-c", "user.email=smoke@native-shell", "-c", "user.name=niu-smoke",
+scripts/smoke-wizard-journey.py	        ["-c", "user.email=smoke@native-shell", "-c", "user.name=niu-smoke", "add", "-A"],
+scripts/test-winuxcmd-completions.py	    with tempfile.TemporaryDirectory(prefix="niu-winuxcmd-golden-") as tmp:
+scripts/test_setup_wizard_pty.py	    return tempfile.TemporaryDirectory(prefix="niu-wizard-test-")
+skills/native-shell/SKILL.md	  block (idempotent, keyed on `"${NIU_SHELL:-niu}"`). `native-shell -c` and script
+skills/native-shell/SKILL.md	- **When `NIU_SHELL` matters.** Native Shell exports it (its own executable
 src/main.rs	            std::env::set_var("WINUXSH_SHELL", path);
+src/main.rs	        .name("niu-main".to_string())
+src/main.rs	        // native-shell#399: a login-marked argv[0] (`-niu script`) sources the
 src/main.rs	    // WINUXSH_SHELL is a deprecated bridge for current rubash upstream.
+src/main.rs	    // attaches the niu-CLI-specific flag only when the host CLI declared
+src/main.rs	    // for byte what the engine binary prints, while every niu-face
+src/main.rs	    // native-shell#399: a login-marked argv[0] (`-niu < script`) sources the
+src/piped_stdout.rs	                .name("niu-stdout-pump".to_string())
+src/self_update.rs	        .name("niu-update-check".to_string())
+tests/background_spawn_args.rs	        run_niu("coproc C { echo --marker; }; read line <&${C[0]}; echo got=$line");
+tests/background_spawn_args.rs	    let (stdout, stderr) = run_niu("echo --connect-timeout 5 --max-time 10 & wait; echo done");
+tests/background_spawn_args.rs	    let dir = std::env::temp_dir().join(format!("niu-362-{}", std::process::id()));
+tests/background_spawn_args.rs	fn run_niu(script: &str) -> (String, String) {
+tests/build_rs_dirty.rs	            std::env::temp_dir().join(format!("niu-buildrs-{name}-{}-{nanos}", std::process::id()));
+tests/completion_probe.rs	    let env = ProbeEnv::new("native-shell-completion-niu-env");
+tests/completion_probe.rs	    let env = ProbeEnv::new("native-shell-completion-niu-env-priority");
+tests/console_window_gate.rs	        let (out, offenders, conhosts) = run_and_observe_niu(args, DETACHED_PROCESS);
+tests/console_window_gate.rs	        let (output, offenders, conhosts) = run_and_observe_niu(&["-c", &script], flags);
+tests/console_window_gate.rs	        run_and_observe_niu(&["--encoded-command", &b64], DETACHED_PROCESS);
+tests/console_window_gate.rs	        run_and_observe_niu(&["-C", repl_script], DETACHED_PROCESS);
+tests/console_window_gate.rs	        run_and_observe_niu(&[&script_arg], DETACHED_PROCESS);
+tests/console_window_gate.rs	    let (out_v, offenders_v, conhosts_v) = run_and_observe_niu(&["--version"], DETACHED_PROCESS);
+tests/console_window_gate.rs	    let (output, offenders, conhosts) = run_and_observe_niu(&["-c", &script], DETACHED_PROCESS);
+tests/console_window_gate.rs	    let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], CREATE_NO_WINDOW);
+tests/console_window_gate.rs	    let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
+tests/console_window_gate.rs	    let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
+tests/console_window_gate.rs	    let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
+tests/console_window_gate.rs	    let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
+tests/console_window_gate.rs	    let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
+tests/console_window_gate.rs	    let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
+tests/console_window_gate.rs	    let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
+tests/console_window_gate.rs	    let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
+tests/console_window_gate.rs	    let (output, offenders, conhosts) = run_and_observe_niu(&["-c", script], DETACHED_PROCESS);
+tests/console_window_gate.rs	    let dir = std::env::temp_dir().join(format!("niu-gate-466-shim-{}", std::process::id()));
+tests/console_window_gate.rs	    let dir = std::env::temp_dir().join(format!("niu-gate-faces-{}", std::process::id()));
+tests/console_window_gate.rs	    let dir = std::env::temp_dir().join(format!("niu-gate-script-{}", std::process::id()));
+tests/console_window_gate.rs	    let dir = std::env::temp_dir().join(format!("niu-gate-shebang-{}", std::process::id()));
+tests/console_window_gate.rs	    let mut child = spawn_niu(
+tests/console_window_gate.rs	    let mut child = spawn_niu(
+tests/console_window_gate.rs	fn run_and_observe_niu(
+tests/console_window_gate.rs	fn spawn_niu(args: &[&str], detached: bool) -> std::process::Child {
+tests/cwd_state.rs	        "niu-cwd-state-{}-{}-{}",
+tests/cwd_state.rs	    let (_, _, code) = run_niu(
+tests/cwd_state.rs	    let (_, _, code) = run_niu(
+tests/cwd_state.rs	    let (_, _, code) = run_niu(
+tests/cwd_state.rs	    let (_, _, code) = run_niu(&scratch, &["--cwd-state", &state_arg(&state), "-c", "true"]);
+tests/cwd_state.rs	    let (_, stderr, code) = run_niu(&scratch, &["--cwd-state"]);
+tests/cwd_state.rs	    let (stdout, _, code) = run_niu(
+tests/cwd_state.rs	    let (stdout, _, code) = run_niu(
+tests/cwd_state.rs	    let (stdout, _, code) = run_niu(
+tests/cwd_state.rs	    let (stdout, _, code) = run_niu(&scratch, &["--cwd-state", &state_arg(&state), "-c", "pwd"]);
+tests/cwd_state.rs	    let (stdout, _, code) = run_niu(&scratch, &["--cwd-state", &state_arg(&state), "-c", "pwd"]);
+tests/cwd_state.rs	    let (stdout, _, code) = run_niu(&scratch, &["--cwd-state", &state_arg(&state), "-c", "pwd"]);
+tests/cwd_state.rs	    let (stdout, _, code) = run_niu(&scratch, &["-c", "pwd"]);
+tests/cwd_state.rs	fn run_niu(cwd: &Path, args: &[&str]) -> (String, String, i32) {
+tests/defaults_floor.rs	    // are optional), the HOME bootstrap, and the niu-managed block markers.
+tests/defaults_floor.rs	    let dir = std::env::temp_dir().join(format!("niu-floor-{name}-{}-{nanos}", std::process::id()));
+tests/fixtures/sources/oh-my-bash/oh-my-bash.sh	# Consume the niu-managed selection arrays the way the real loader's
+tests/fixtures/sources/oh-my-bash/plugins/bashmarks/bashmarks.plugin.sh	# Fixture bashmarks-shaped plugin (wt44/niu365, loader-fidelity guard).
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu(
+tests/host_contract.rs	    let output = run_niu("cd /c/Users; pwd", &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu("cd ~; pwd; cmd.exe /C cd", &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu("echo command-ok", &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu("echo out; echo err >&2; exit 7", &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu("history; echo rc=$?", &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu("printf '%s' \"$0\"", &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu("printf '%s' \"$STARSHIP_SHELL\"", &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu("printf '%s' \"$__RUBASH_SHELL_NAME\"", &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu("printf '%s' command-ok", &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu("printf '%s' dir-ok; echo rc=$?", &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu("printf 'alpha\nbeta\n' | grep alpha", &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu("yes ok | head -n 3 | wc", &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu(&format!("{drive}:; pwd; cmd.exe /C cd"), &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu(&script, &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu(&script, &start, &home, &[]);
+tests/host_contract.rs	    let output = run_niu(&script, &temp, &home, &[]);
+tests/host_contract.rs	    let output = run_niu(script, &start, &home, &[]);
+tests/host_contract.rs	    let saved = run_niu(
+tests/host_contract.rs	fn run_niu(script: &str, cwd: &Path, home: &Path, extra_env: &[(&str, String)]) -> Output {
+tests/installer_surface.rs	    const SANCTIONED_SHAPES: [&str; 3] = ["*.bak-*", "*.old-*", "*.niu-old-*"];
+tests/interactive.rs	        "niu-floor-omb-{}-{}",
+tests/interactive.rs	        "niu-legacy-framework-{}-{}",
+tests/interactive.rs	    let marker = ("NATIVE_SHELL_INVOKED_AS".to_string(), "-niu".to_string());
+tests/interactive.rs	    let marker = ("NATIVE_SHELL_INVOKED_AS".to_string(), "-niu".to_string());
+tests/interactive.rs	    std::env::temp_dir().join(format!("niu-login-{label}-{}-{nanos}", std::process::id()))
+tests/interactive/driver.rs	        "niu-interactive-{prefix}-{}-{}",
+tests/issue117_foreign_ps1.rs	    let home = unique_temp_dir("niu-issue117-home");
+tests/issue117_foreign_ps1.rs	    let output = run_niu(
+tests/issue117_foreign_ps1.rs	    let output = run_niu(None, &["--norc", "-C", "echo repl-ok"]);
+tests/issue117_foreign_ps1.rs	    let output = run_niu(Some(git_bash_default), &["--norc", "-C", "echo repl-ok"]);
+tests/issue117_foreign_ps1.rs	    let output = run_niu(Some(r"\u@\h:\w\$ "), &["--norc", "-C", "echo custom-ok"]);
+tests/issue117_foreign_ps1.rs	    let visible = run_niu(
+tests/issue117_foreign_ps1.rs	    let visible = run_niu(Some(r"\u@\h:\w\$ "), &["-c", r#"echo "[$PS1]""#]);
+tests/issue117_foreign_ps1.rs	fn run_niu(ps1: Option<&str>, args: &[&str]) -> Output {
 tests/issue153_root_slash_arg.rs	        .env_remove("WINUXSH_ROOT")
+tests/issue153_root_slash_arg.rs	    let root = unique_temp_dir("niu-153-bare");
+tests/issue153_root_slash_arg.rs	    let root = unique_temp_dir("niu-153-redirect");
 tests/issue153_root_slash_arg.rs	/// clean WINUXSH_ROOT so the root under test is exactly `root`.
+tests/issue156_xargs_option_boundary.rs	    let dir = unique_temp_dir("niu-156-xargs");
+tests/issue160_unclosed_quote_c_silent_rc.rs	    let dir = std::env::temp_dir().join(format!("niu-issue160-{}", std::process::id()));
+tests/issue162_tmpdir_child_boundary.rs	        .env("TEMP", r"T:\niu162-temp")
+tests/issue162_tmpdir_child_boundary.rs	        .env("TMP", r"T:\niu162-tmp")
+tests/issue162_tmpdir_child_boundary.rs	        out, "C:/Niu162Probe",
+tests/issue162_tmpdir_child_boundary.rs	    assert_eq!(out, r"T:\niu162-temp T:\niu162-tmp");
+tests/issue162_tmpdir_child_boundary.rs	    let out = run_script(r#"export TMPDIR=/c/Niu162Probe; cmd /c "echo %TMPDIR%""#);
+tests/issue162_tmpdir_child_boundary.rs	/// Before the fix this printed `/t/niu162-temp` (slash-drive form of the
+tests/issue191_prompt_command_exit_jump_repl.rs	    let dir = unique_temp_dir("niu-issue191-script");
+tests/issue191_prompt_command_exit_jump_repl.rs	    let home = unique_temp_dir("niu-issue191-home");
+tests/issue191_prompt_command_exit_jump_repl.rs	    let home = unique_temp_dir("niu-issue191-home");
+tests/issue191_prompt_command_exit_jump_repl.rs	    let output = run_niu(
+tests/issue191_prompt_command_exit_jump_repl.rs	    let output = run_niu(true, &["--norc", "-c", "exit 5"]);
+tests/issue191_prompt_command_exit_jump_repl.rs	    let output = run_niu(true, &["--norc", &script]);
+tests/issue191_prompt_command_exit_jump_repl.rs	//! the engine's own `run_interactive_stdin` reader consumes it. The niu-side
+tests/issue191_prompt_command_exit_jump_repl.rs	fn run_niu(home_env: bool, args: &[&str]) -> std::process::Output {
+tests/issue195_setup_help_plain.rs	    let output = run_niu(&["setup", "--help"]);
+tests/issue195_setup_help_plain.rs	    let output = run_niu(&["setup", "-h"]);
+tests/issue195_setup_help_plain.rs	fn run_niu(args: &[&str]) -> Output {
+tests/issue200_esc_quote_strip.rs	    let dir = std::env::temp_dir().join(format!("niu-200-{}", std::process::id()));
+tests/issue201_epochrealtime.rs	    let out = run_niu(
+tests/issue201_epochrealtime.rs	    let out = run_niu(
+tests/issue201_epochrealtime.rs	    let out = run_niu(
+tests/issue201_epochrealtime.rs	    let out = run_niu("echo $((EPOCHSECONDS - $(date +%s)))");
+tests/issue201_epochrealtime.rs	    let secs: u64 = run_niu("echo $EPOCHSECONDS")
+tests/issue201_epochrealtime.rs	fn run_niu(script: &str) -> String {
+tests/issue365_alias_suppression_multiline.rs	    let temp = unique_temp_dir("niu-issue365");
+tests/issue365_alias_suppression_multiline.rs	//! `thread 'niu-main' has overflowed its stack`) through native-shell's `-C`
+tests/issue373.rs	        "niu-373-dsr-{prefix}-{}-{nanos}",
+tests/issue373.rs	        "niu373 timing: echo_cycle={}ms",
+tests/issue373.rs	    eprintln!("niu373 timing: banner={banner_ms}ms first_prompt=+{prompt_ms}ms");
+tests/issue390_encoded_command_flags.rs	    let command = "echo $NIU390_UNSET_VARIABLE";
+tests/issue392_command_appears_after_miss.rs	            "cp \"$NIU392_DONOR\" \"$NIU392_DIR/{}\"\n{}",
+tests/issue392_command_appears_after_miss.rs	            "cp \"$NIU392_DONOR\" \"$NIU392_DIR/{}\"\n{}",
+tests/issue392_command_appears_after_miss.rs	        "niu-issue392-{tag}-{}-{}",
+tests/issue392_command_appears_after_miss.rs	        .env("NIU392_DIR", probe_dir)
+tests/issue392_command_appears_after_miss.rs	        .env("NIU392_DONOR", donor)
+tests/issue392_command_appears_after_miss.rs	const PROBE_A: &str = "niu392probe_a";
+tests/issue392_command_appears_after_miss.rs	const PROBE_B: &str = "niu392probe_b";
+tests/issue404_406_invocation_surface.rs	    let dir = std::env::temp_dir().join(format!("niu-404-{}", std::process::id()));
+tests/issue431_stray_close_paren.rs	    let dir = std::env::temp_dir().join(format!("niu-issue431-f-{}", std::process::id()));
+tests/issue431_stray_close_paren.rs	    let dir = std::env::temp_dir().join(format!("niu-issue431-s-{}", std::process::id()));
+tests/issue431_stray_close_paren.rs	    let dir = std::env::temp_dir().join(format!("niu-issue431-{}", std::process::id()));
+tests/keyevent_record_probe.rs	    let dir = std::env::temp_dir().join("niu341-record-probe");
+tests/keyevent_record_probe.rs	    let dir = std::env::temp_dir().join("niu341-record-probe");
+tests/keyevent_record_probe.rs	    let dir = std::env::temp_dir().join("niu341-record-probe");
+tests/plugin_assets.rs	/// wt44/niu365 (owner ruling 2026-10-02: loader fidelity, no shim layer) —
+tests/plugin_bootstrap_read_only.rs	            std::env::temp_dir().join(format!("niu-bootstrap-{}-{nanos}", std::process::id()));
+tests/plugin_sources.rs	    // No question was asked, so no lasting answer (niu-git nag marker) may
+tests/rc_readonly_loader.rs	            "niu-rc-readonly-{label}-{}-{nanos}",
+tests/rc_readonly_loader.rs	        run_niu(&["-i", "-c", script], &self.envs)
+tests/rc_readonly_loader.rs	        run_niu(args, &self.envs)
+tests/rc_readonly_loader.rs	fn run_niu(args: &[&str], envs: &[(&'static str, String)]) -> Output {
+tests/repl_command.rs	    let output = run_niu(
+tests/repl_command.rs	    let output = run_niu(
+tests/repl_command.rs	    let output = run_niu(
+tests/repl_command.rs	    let output = run_niu(
+tests/repl_command.rs	    let output = run_niu(
+tests/repl_command.rs	    let output = run_niu(&["--bogus-flag", "-C", "echo x"], &start, &home);
+tests/repl_command.rs	    let output = run_niu(&["-C", "cat ~/.winshrc"], &start, &home);
+tests/repl_command.rs	    let output = run_niu(&["-C", "echo plain:[$RC_148_ALTFROM]"], &start, &home);
+tests/repl_command.rs	fn run_niu(args: &[&str], start: &Path, home: &Path) -> Output {
+tests/skill_bundle.rs	        "niu-skill-bundle-test-{}-{tag}",
+tests/smoke.rs	    let output = run_niu(
+tests/smoke.rs	    let output = run_niu(
+tests/smoke.rs	    let output = run_niu("arr=(a b c); echo ${arr[1]}", &temp, &home);
+tests/smoke.rs	    let output = run_niu("arr=(x y z); echo ${#arr[@]}", &temp, &home);
+tests/smoke.rs	    let output = run_niu("echo $((2 + 3))", &temp, &home);
+tests/smoke.rs	    let output = run_niu("echo hello world", &temp, &home);
+tests/smoke.rs	    let output = run_niu("echo hello | tr '[:lower:]' '[:upper:]'", &temp, &home);
+tests/smoke.rs	    let output = run_niu("echo it works", &temp, &home);
+tests/smoke.rs	    let output = run_niu("false; echo $?", &temp, &home);
+tests/smoke.rs	    let output = run_niu("for i in 1 2 3; do echo $i; done", &temp, &home);
+tests/smoke.rs	    let output = run_niu("greet() { echo \"Hi, $1!\"; }; greet World", &temp, &home);
+tests/smoke.rs	    let output = run_niu("native-shell --version", &temp, &home);
+tests/smoke.rs	    let output = run_niu("s='hello world'; echo ${#s}", &temp, &home);
+tests/smoke.rs	    let output = run_niu("s='hello world'; echo ${s:0:5}", &temp, &home);
+tests/smoke.rs	    let output = run_niu("x=10; ((x += 5)); echo $x", &temp, &home);
+tests/smoke.rs	    let output = run_niu("x=42; echo $x", &temp, &home);
+tests/smoke.rs	fn run_niu(script: &str, cwd: &Path, home: &Path) -> Output {
+tests/smoke_1_3_0.rs	            "neither the niu-git question nor the provider question rendered; screen:\n{}",
+tests/smoke_1_3_0.rs	            "user.name=niu-smoke",
+tests/smoke_1_3_0.rs	            "user.name=niu-smoke",
+tests/smoke_1_3_0.rs	            let pipeline = run_niu(
+tests/smoke_1_3_0.rs	            s.expect("niu-git");
+tests/smoke_1_3_0.rs	        "niu-smoke130-{name}-{}-{nanos}",
+tests/smoke_1_3_0.rs	        if s.screen_contains("niu-git") {
+tests/smoke_1_3_0.rs	        let numbered = run_niu(
+tests/smoke_1_3_0.rs	        let out = run_niu(&args, &sandbox.envs);
+tests/smoke_1_3_0.rs	        let out = run_niu(&args, &sandbox.envs);
+tests/smoke_1_3_0.rs	        s.expect("niu-git");
+tests/smoke_1_3_0.rs	    // Q3 (Windows only): niu-git — asked once per lasting answer and skipped
+tests/smoke_1_3_0.rs	    // Q3 (Windows only): niu-git — the default (Skip) is highlighted.
+tests/smoke_1_3_0.rs	    // waits for whichever question actually renders next — niu-git or the
+tests/smoke_1_3_0.rs	    let add = run_niu(
+tests/smoke_1_3_0.rs	    let add = run_niu(
+tests/smoke_1_3_0.rs	    let add = run_niu(&["plugin", "add", "fzf"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let add = run_niu(&["plugin", "source", "add", &fixture_str], &envs);
+tests/smoke_1_3_0.rs	    let bootstrap = run_niu(&["plugin", "sync", "--bootstrap"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let disable = run_niu(&["plugin", "disable", "oh-my-bash"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let enable = run_niu(&["plugin", "enable", "oh-my-bash"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let first = run_niu(&["plugin", "sync"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let font = run_niu(&["font"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let hello = run_niu(&["-c", "echo hello"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let list = run_niu(&["plugin", "recipe", "list", "--json"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let list = run_niu(&["plugin", "tool", "list"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let parse = run_niu(&["-n", &rc_path.to_string_lossy()], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let plugin = run_niu(&["plugin", "enable", "base"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let probe = run_niu(
+tests/smoke_1_3_0.rs	    let probe = run_niu(
+tests/smoke_1_3_0.rs	    let probe = run_niu(
+tests/smoke_1_3_0.rs	    let second = run_niu(&["plugin", "sync"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let settle = run_niu(&["plugin", "sync"], &probe_env);
+tests/smoke_1_3_0.rs	    let setup = run_niu(&["setup", "--preset", "recommended"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let theme = run_niu(&["plugin", "enable", "agnoster"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let theme = run_niu(&["plugin", "enable", "demox"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let trust = run_niu(&["plugin", "source", "trust", "oh-my-bash"], &envs);
+tests/smoke_1_3_0.rs	    let trust = run_niu(&["plugin", "trust", "bash-it"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let trust = run_niu(&["plugin", "trust", "oh-my-bash"], &sandbox.envs);
+tests/smoke_1_3_0.rs	    let version = run_niu(&["--version"], &sandbox.envs);
+tests/smoke_1_3_0.rs	fn run_niu(args: &[&str], envs: &[(&str, String)]) -> Output {
+tests/startup_files.rs	            "niu-startup-{label}-{}-{nanos}",
+tests/startup_files.rs	        let output = run_niu(
+tests/startup_files.rs	        let output = run_niu(&["-C", PROBE], fixture.path(), &fixture.start, &[]);
+tests/startup_files.rs	        let output = run_niu(&args, fixture.path(), &fixture.start, &[]);
+tests/startup_files.rs	        let output = run_niu(&args, fixture.path(), &fixture.start, &[]);
+tests/startup_files.rs	        let output = run_niu(&args, fixture.path(), &fixture.start, &[]);
+tests/startup_files.rs	        let output = run_niu(&args, fixture.path(), &fixture.start, &envs);
 tests/startup_files.rs	    [".winuxshrc", ".winshrc", ".bashrc"]
+tests/startup_files.rs	    let check = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(
+tests/startup_files.rs	    let output = run_niu(&["-C", "echo AFTER"], fixture.path(), &fixture.start, &[]);
+tests/startup_files.rs	    let output = run_niu(&["-C", PROBE], fixture.path(), &fixture.start, &[]);
+tests/startup_files.rs	fn run_niu(args: &[&str], home: &Path, cwd: &Path, envs: &[(&str, String)]) -> Output {

@@ -2,25 +2,25 @@
 //! download retraction 2026-10-04) — one binary-level pass over every leg
 //! the release claims, in the order of the release checklist:
 //!
-//! * A. install chain — `niu plugin add --path` → trust → enable → the
-//!   managed rc block actually takes effect in a fresh `niu -c` shell
+//! * A. install chain — `native-shell plugin add --path` → trust → enable → the
+//!   managed rc block actually takes effect in a fresh `native-shell -c` shell
 //!   (oh-my-bash `OSH_THEME`, bash-it theme PS1), and the declarative spec
-//!   round-trips through `niu plugin sync` byte-idempotently;
+//!   round-trips through `native-shell plugin sync` byte-idempotently;
 //! * B. download retraction — the compiled-in recipe index is non-empty,
 //!   executable-tool recipes recommend package managers instead of
 //!   fetching (fully offline), the retired `plugin tool` verb fails with
-//!   the retirement message, and `niu font` runs offline as
+//!   the retirement message, and `native-shell font` runs offline as
 //!   detection+recommendation;
 //! * C. defaults-as-floor — an enabled external theme claims the prompt
 //!   slot end-to-end, disabling it releases the slot back to the shell
 //!   floor (the product floor's own restore is pinned by the runtime unit
 //!   tests referenced in tests/defaults_floor.rs);
-//! * D. setup wizard — `niu setup --preset recommended` in an isolated
-//!   HOME writes an rc that parses clean (`niu -n`) and sells no retired
+//! * D. setup wizard — `native-shell setup --preset recommended` in an isolated
+//!   HOME writes an rc that parses clean (`native-shell -n`) and sells no retired
 //!   stack fields;
-//! * E. basics — `niu --version`, `echo`, `seq 1 3 | wc -l` = 3, `cat -n`.
+//! * E. basics — `native-shell --version`, `echo`, `seq 1 3 | wc -l` = 3, `cat -n`.
 //!
-//! Every subprocess this file spawns is timeout-guarded: a hung niu is
+//! Every subprocess this file spawns is timeout-guarded: a hung native-shell is
 //! killed at its deadline and reported as a failure of that leg, so the
 //! suite is safe in CI without external watchdogs. No leg touches the
 //! network — the shell carries zero download responsibility.
@@ -34,15 +34,19 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 /// Default per-invocation deadline.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
@@ -83,19 +87,22 @@ impl Sandbox {
         let root = temp_dir(label);
         let home = root.join("home");
         let sources_root = root.join("sources");
-        fs::create_dir_all(home.join(".niubash")).unwrap();
+        fs::create_dir_all(home.join(".native-shell")).unwrap();
         fs::create_dir_all(&sources_root).unwrap();
-        let spec_path = home.join(".niubash").join("plugins.toml");
+        let spec_path = home.join(".native-shell").join("plugins.toml");
         let envs = vec![
             ("HOME", home.to_string_lossy().into_owned()),
             ("USERPROFILE", home.to_string_lossy().into_owned()),
             (
-                "NIU_PLUGIN_SOURCES_ROOT",
+                "NATIVE_SHELL_PLUGIN_SOURCES_ROOT",
                 sources_root.to_string_lossy().into_owned(),
             ),
-            ("NIU_PLUGIN_SPEC", spec_path.to_string_lossy().into_owned()),
+            (
+                "NATIVE_SHELL_PLUGIN_SPEC",
+                spec_path.to_string_lossy().into_owned(),
+            ),
             // No pre-existing rc may leak into the boot legs.
-            ("NIU_ENV", String::new()),
+            ("NATIVE_SHELL_ENV", String::new()),
         ];
         Self {
             home,
@@ -107,17 +114,17 @@ impl Sandbox {
     }
 
     fn rc(&self) -> String {
-        fs::read_to_string(self.home.join(".niubashrc")).unwrap_or_default()
+        fs::read_to_string(self.home.join(".native-shellrc")).unwrap_or_default()
     }
 
-    /// The generated loader's text (niubash#359: the activation plane the
+    /// The generated loader's text (native-shell#359: the activation plane the
     /// verbs publish; the user rc is never written).
     fn loader(&self) -> String {
         fs::read_to_string(
             self.home
-                .join(".niubash")
+                .join(".native-shell")
                 .join("generated")
-                .join("plugins.niu"),
+                .join("plugins.nsh"),
         )
         .unwrap_or_default()
     }
@@ -139,13 +146,13 @@ fn kill_tree(child: &mut Child) {
     let _ = child.wait();
 }
 
-/// Spawn `niu <args>` under `envs` and enforce `timeout`. Stdout/stderr are
+/// Spawn `native-shell <args>` under `envs` and enforce `timeout`. Stdout/stderr are
 /// drained by reader threads while we poll, so a chatty child (the recipe
 /// index prints >150KB) can never fill the OS pipe buffer and deadlock
 /// against a wait-first reader. A hang is killed at its deadline and fails
 /// the leg with a clear message instead of stalling the whole suite.
-fn run_niu_timed(args: &[&str], envs: &[(&str, String)], timeout: Duration) -> Output {
-    let mut command = Command::new(niu_binary());
+fn run_native_shell_timed(args: &[&str], envs: &[(&str, String)], timeout: Duration) -> Output {
+    let mut command = Command::new(native_shell_binary());
     command
         .args(args)
         .stdin(Stdio::null())
@@ -154,7 +161,7 @@ fn run_niu_timed(args: &[&str], envs: &[(&str, String)], timeout: Duration) -> O
     apply_envs(&mut command, envs);
     let mut child = command
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niu {args:?}: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell {args:?}: {err}"));
     let stdout_reader = child.stdout.take();
     let stderr_reader = child.stderr.take();
     let stdout_handle =
@@ -164,10 +171,10 @@ fn run_niu_timed(args: &[&str], envs: &[(&str, String)], timeout: Duration) -> O
     let status = wait_with_deadline(&mut child, timeout, args);
     let stdout = stdout_handle
         .join()
-        .unwrap_or_else(|_| panic!("stdout reader panicked for niu {args:?}"));
+        .unwrap_or_else(|_| panic!("stdout reader panicked for native-shell {args:?}"));
     let stderr = stderr_handle
         .join()
-        .unwrap_or_else(|_| panic!("stderr reader panicked for niu {args:?}"));
+        .unwrap_or_else(|_| panic!("stderr reader panicked for native-shell {args:?}"));
     Output {
         status,
         stdout,
@@ -177,7 +184,7 @@ fn run_niu_timed(args: &[&str], envs: &[(&str, String)], timeout: Duration) -> O
 
 fn apply_envs(command: &mut Command, envs: &[(&str, String)]) {
     for (key, value) in envs {
-        // "" clears the var (NIU_ENV must be unset for boot legs).
+        // "" clears the var (NATIVE_SHELL_ENV must be unset for boot legs).
         if value.is_empty() {
             command.env_remove(key);
         } else {
@@ -204,16 +211,16 @@ fn wait_with_deadline(
             Ok(Some(status)) => return status,
             Ok(None) if Instant::now() >= deadline => {
                 kill_tree(child);
-                panic!("niu {args:?} did not finish within {timeout:?}");
+                panic!("native-shell {args:?} did not finish within {timeout:?}");
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
-            Err(err) => panic!("wait niu {args:?}: {err}"),
+            Err(err) => panic!("wait native-shell {args:?}: {err}"),
         }
     }
 }
 
 fn run_niu(args: &[&str], envs: &[(&str, String)]) -> Output {
-    run_niu_timed(args, envs, DEFAULT_TIMEOUT)
+    run_native_shell_timed(args, envs, DEFAULT_TIMEOUT)
 }
 
 fn assert_success(output: &Output, context: &str) {
@@ -238,11 +245,11 @@ fn normalized(output: &Output) -> String {
     stdout_text(output).replace("\r\n", "\n").trim().to_string()
 }
 
-/// `niu -i` fed from a pipe (the interactive rc loads, then the piped
+/// `native-shell -i` fed from a pipe (the interactive rc loads, then the piped
 /// commands run; prompts render to stdout). Stdout/stderr drain on reader
-/// threads for the same pipe-buffer reason as [`run_niu_timed`].
+/// threads for the same pipe-buffer reason as [`run_native_shell_timed`].
 fn boot_interactive(sandbox: &Sandbox, stdin_script: &str) -> Output {
-    let mut command = Command::new(niu_binary());
+    let mut command = Command::new(native_shell_binary());
     command
         .arg("-i")
         .stdin(Stdio::piped())
@@ -251,13 +258,13 @@ fn boot_interactive(sandbox: &Sandbox, stdin_script: &str) -> Output {
     apply_envs(&mut command, &sandbox.envs);
     let mut child = command
         .spawn()
-        .unwrap_or_else(|err| panic!("spawn niu -i: {err}"));
+        .unwrap_or_else(|err| panic!("spawn native-shell -i: {err}"));
     {
         let stdin = child.stdin.as_mut().expect("piped stdin");
         stdin
             .write_all(stdin_script.as_bytes())
             .and_then(|()| stdin.flush())
-            .expect("write niu -i stdin");
+            .expect("write native-shell -i stdin");
     }
     drop(child.stdin.take());
     let stdout_reader = child.stdout.take();
@@ -269,10 +276,10 @@ fn boot_interactive(sandbox: &Sandbox, stdin_script: &str) -> Output {
     let status = wait_with_deadline(&mut child, DEFAULT_TIMEOUT, &["-i"]);
     let stdout = stdout_handle
         .join()
-        .unwrap_or_else(|_| panic!("stdout reader panicked for niu -i"));
+        .unwrap_or_else(|_| panic!("stdout reader panicked for native-shell -i"));
     let stderr = stderr_handle
         .join()
-        .unwrap_or_else(|_| panic!("stderr reader panicked for niu -i"));
+        .unwrap_or_else(|_| panic!("stderr reader panicked for native-shell -i"));
     Output {
         status,
         stdout,
@@ -283,7 +290,7 @@ fn boot_interactive(sandbox: &Sandbox, stdin_script: &str) -> Output {
 // ── A. install chain ─────────────────────────────────────────────────────────
 
 /// oh-my-bash: catalog add (offline fixture) → trust → enable source+theme →
-/// a fresh `niu -c '. ~/.niubash/generated/plugins.niu; echo $OSH_THEME'`
+/// a fresh `native-shell -c '. ~/.native-shell/generated/plugins.nsh; echo $OSH_THEME'`
 /// (the manual-source path a user opts into) sees the theme the generation
 /// declared. This is the literal 1.3.0 checklist leg, loader-era.
 #[test]
@@ -318,7 +325,10 @@ fn a1_oh_my_bash_install_chain_theme_takes_effect() {
     assert!(!sandbox.rc().contains("OSH_THEME"), "{}", sandbox.rc());
 
     let probe = run_niu(
-        &["-c", ". ~/.niubash/generated/plugins.niu; echo $OSH_THEME"],
+        &[
+            "-c",
+            ". ~/.native-shell/generated/plugins.nsh; echo $OSH_THEME",
+        ],
         &sandbox.envs,
     );
     assert_success(&probe, "fresh shell sourcing the generated loader");
@@ -360,7 +370,7 @@ fn a2_bash_it_install_chain_theme_takes_effect() {
     let probe = run_niu(
         &[
             "-c",
-            ". ~/.niubash/generated/plugins.niu; printf '%s' \"$PS1\"",
+            ". ~/.native-shell/generated/plugins.nsh; printf '%s' \"$PS1\"",
         ],
         &sandbox.envs,
     );
@@ -372,7 +382,7 @@ fn a2_bash_it_install_chain_theme_takes_effect() {
     );
 }
 
-/// Spec idempotency: after the OMB chain, `niu plugin sync` reports clean,
+/// Spec idempotency: after the OMB chain, `native-shell plugin sync` reports clean,
 /// and a second sync leaves the spec and the rc byte-identical.
 #[test]
 fn a3_spec_sync_is_idempotent() {
@@ -390,7 +400,7 @@ fn a3_spec_sync_is_idempotent() {
         vec!["plugin", "enable", "git"],
     ] {
         let out = run_niu(&args, &sandbox.envs);
-        assert_success(&out, &format!("niu {}", args.join(" ")));
+        assert_success(&out, &format!("native-shell {}", args.join(" ")));
     }
 
     let first = run_niu(&["plugin", "sync"], &sandbox.envs);
@@ -448,7 +458,7 @@ fn b1_recipe_list_is_non_empty() {
 }
 
 /// Executable-tool recipes recommend package managers instead of fetching
-/// (download retraction 2026-10-04): `niu plugin add fzf` exits 0, fully
+/// (download retraction 2026-10-04): `native-shell plugin add fzf` exits 0, fully
 /// offline, printing install commands — wpm first on Windows (owner
 /// correction 2026-10-03), native package managers on every platform —
 /// plus the upstream URL, and never a download attempt.
@@ -479,7 +489,7 @@ fn b2_tool_recipes_recommend_package_managers_offline() {
     assert!(
         !sandbox
             .home
-            .join(".niubash")
+            .join(".native-shell")
             .join("tools")
             .join("fzf")
             .exists(),
@@ -488,7 +498,7 @@ fn b2_tool_recipes_recommend_package_managers_offline() {
     assert!(
         !sandbox
             .home
-            .join(".niubash")
+            .join(".native-shell")
             .join("tools")
             .join("registry.toml")
             .exists(),
@@ -497,7 +507,7 @@ fn b2_tool_recipes_recommend_package_managers_offline() {
 }
 
 /// The retired downloaded-tools verbs fail loudly with the retirement
-/// message (never a silent success), and `niu font` runs offline as
+/// message (never a silent success), and `native-shell font` runs offline as
 /// detection + recommendations.
 #[test]
 fn b3_retired_tool_verb_and_offline_font_recommendation() {
@@ -515,10 +525,13 @@ fn b3_retired_tool_verb_and_offline_font_recommendation() {
         stderr_text(&list)
     );
 
-    // `niu font` is pure detection+recommendation: works with no terminal
+    // `native-shell font` is pure detection+recommendation: works with no terminal
     // and no network, names the package channels and nerdfonts.com.
     let font = run_niu(&["font"], &sandbox.envs);
-    assert_success(&font, "niu font (offline detection+recommendation)");
+    assert_success(
+        &font,
+        "native-shell font (offline detection+recommendation)",
+    );
     let font_text = stdout_text(&font);
     assert!(font_text.contains("JetBrainsMono Nerd Font"), "{font_text}");
     assert!(font_text.contains("nerdfonts.com"), "{font_text}");
@@ -554,7 +567,7 @@ fn c1_external_theme_claims_then_releases_the_prompt_slot() {
         vec!["plugin", "enable", "agnoster"],
     ] {
         let out = run_niu(&args, &sandbox.envs);
-        assert_success(&out, &format!("niu {}", args.join(" ")));
+        assert_success(&out, &format!("native-shell {}", args.join(" ")));
     }
 
     let claimed = boot_interactive(&sandbox, "echo CLAIM=[$PS1]\n");
@@ -569,7 +582,7 @@ fn c1_external_theme_claims_then_releases_the_prompt_slot() {
     let disable = run_niu(&["plugin", "disable", "oh-my-bash"], &sandbox.envs);
     assert_success(&disable, "plugin disable oh-my-bash");
     assert!(
-        !sandbox.rc().contains(">>> niu source oh-my-bash"),
+        !sandbox.rc().contains(">>> native-shell source oh-my-bash"),
         "{}",
         sandbox.rc()
     );
@@ -584,7 +597,7 @@ fn c1_external_theme_claims_then_releases_the_prompt_slot() {
     // On the piped `-i` path the engine initializes PS1 to GNU's default
     // `\s-\v\$ ` (variables.c set_if_not) — the floor of the shell itself.
     // The product (reedline) floor's claim/release cycle is pinned by the
-    // niubash-runtime unit tests named in tests/defaults_floor.rs.
+    // native-shell-runtime unit tests named in tests/defaults_floor.rs.
     assert!(
         released_out.contains("CLAIM=[\\s-\\v\\$ ]"),
         "after release the shell-default floor must render, got:\n{released_out}"
@@ -593,8 +606,8 @@ fn c1_external_theme_claims_then_releases_the_prompt_slot() {
 
 // ── D. setup wizard ──────────────────────────────────────────────────────────
 
-/// `niu setup --preset recommended` in an isolated HOME: rc written, parses
-/// clean under `niu -n`, sells zero retired stack fields, journal records
+/// `native-shell setup --preset recommended` in an isolated HOME: rc written, parses
+/// clean under `native-shell -n`, sells zero retired stack fields, journal records
 /// the preset.
 #[test]
 fn d1_setup_preset_recommended_writes_a_clean_parseable_rc() {
@@ -607,25 +620,34 @@ fn d1_setup_preset_recommended_writes_a_clean_parseable_rc() {
         stdout_text(&setup)
     );
 
-    let rc_path = sandbox.home.join(".niubashrc");
+    let rc_path = sandbox.home.join(".native-shellrc");
     let rc = fs::read_to_string(&rc_path).expect("rc written");
-    for dead in ["NIU_THEME=", "NIU_PLUGINS=", "NIU_BANNER="] {
+    for dead in [
+        "NATIVE_SHELL_THEME=",
+        "NATIVE_SHELL_PLUGINS=",
+        "NATIVE_SHELL_BANNER=",
+    ] {
         assert!(
             !rc.contains(dead),
             "retired field {dead} in preset rc:\n{rc}"
         );
     }
-    assert!(rc.contains("NIU_PROMPT_CWD_STYLE"), "{rc}");
+    assert!(rc.contains("NATIVE_SHELL_PROMPT_CWD_STYLE"), "{rc}");
     assert!(
         rc.contains("alias ll="),
         "recommended preset ships aliases:\n{rc}"
     );
 
     let parse = run_niu(&["-n", &rc_path.to_string_lossy()], &sandbox.envs);
-    assert_success(&parse, "niu -n parse of the generated rc");
+    assert_success(&parse, "native-shell -n parse of the generated rc");
 
-    let journal = fs::read_to_string(sandbox.home.join(".niubash").join("setup-journal.toml"))
-        .expect("journal written");
+    let journal = fs::read_to_string(
+        sandbox
+            .home
+            .join(".native-shell")
+            .join("setup-journal.toml"),
+    )
+    .expect("journal written");
     assert!(journal.contains("preset = 'recommended'"), "{journal}");
 }
 
@@ -640,7 +662,7 @@ fn d1_setup_preset_recommended_writes_a_clean_parseable_rc() {
 mod journey_driver;
 
 /// Recursively copy a fixture tree (the mirror seeder; git's own clone is
-/// what niu exercises, this only stages the mirror's source).
+/// what native-shell exercises, this only stages the mirror's source).
 fn copy_dir(src: &std::path::Path, dest: &std::path::Path) {
     fs::create_dir_all(dest).unwrap();
     for entry in fs::read_dir(src).unwrap() {
@@ -655,14 +677,14 @@ fn copy_dir(src: &std::path::Path, dest: &std::path::Path) {
 }
 
 /// Seed `<dest>` as a real git repository holding the fixture tree at
-/// `src` — the offline mirror niu's `git clone` resolves to.
+/// `src` — the offline mirror native-shell's `git clone` resolves to.
 fn seed_mirror_repo(git: &std::path::Path, src: &std::path::Path, dest: &std::path::Path) {
     copy_dir(src, dest);
     for args in [
         vec!["init", "-q"],
         vec![
             "-c",
-            "user.email=smoke@niu",
+            "user.email=smoke@native-shell",
             "-c",
             "user.name=niu-smoke",
             "add",
@@ -670,7 +692,7 @@ fn seed_mirror_repo(git: &std::path::Path, src: &std::path::Path, dest: &std::pa
         ],
         vec![
             "-c",
-            "user.email=smoke@niu",
+            "user.email=smoke@native-shell",
             "-c",
             "user.name=niu-smoke",
             "commit",
@@ -694,12 +716,12 @@ fn seed_mirror_repo(git: &std::path::Path, src: &std::path::Path, dest: &std::pa
 }
 
 /// d2 — owner ruling 2026-10-03 (装完即选主题): a fresh user picks the
-/// recommended collection and gets the theme pick in the SAME `niu setup`
+/// recommended collection and gets the theme pick in the SAME `native-shell setup`
 /// run — empty gallery at Q1 → recommended → Apply → untrusted install →
-/// trust-now question → pick agnoster → rc rewritten → a fresh `niu -c`
+/// trust-now question → pick agnoster → rc rewritten → a fresh `native-shell -c`
 /// shows OSH_THEME=agnoster. Drives the real interactive wizard under a
 /// pseudo terminal (ConPTY). Fully offline: the collection's git clones
-/// resolve through a seeded local mirror (`NIU_MIRRORS` insteadOf — the
+/// resolve through a seeded local mirror (`NATIVE_SHELL_MIRRORS` insteadOf — the
 /// documented §14.8 transport layer), never the network.
 #[test]
 fn d2_wizard_one_run_theme_journey() {
@@ -717,14 +739,14 @@ fn d2_wizard_one_run_theme_journey() {
 
     // The offline GitHub mirror: repo layout matches the canonical origins
     // the recipes declare (ohmybash/oh-my-bash.git, scop/bash-completion.git,
-    // plus the independent recipes niubash#171 added to `recommended`:
+    // plus the independent recipes native-shell#171 added to `recommended`:
     // rcaloras/bash-preexec.git, cykerway/complete-alias.git,
     // junegunn/fzf-git.sh.git).
     let root = temp_dir("d2-journey");
     let home = root.join("home");
     let sources = root.join("sources");
     let mirror = root.join("mirror");
-    fs::create_dir_all(home.join(".niubash")).unwrap();
+    fs::create_dir_all(home.join(".native-shell")).unwrap();
     fs::create_dir_all(&sources).unwrap();
     seed_mirror_repo(
         &git,
@@ -756,10 +778,10 @@ fn d2_wizard_one_run_theme_journey() {
         mirror.display().to_string().replace('\\', "/")
     );
     fs::write(
-        home.join(".niubash").join("mirrors.toml"),
+        home.join(".native-shell").join("mirrors.toml"),
         format!(
             "# smoke journey: rewrite GitHub fetches to the seeded local mirror\n\
-             schema = \"niubash:mirrors@0.1.0\"\n\
+             schema = \"native-shell:mirrors@0.1.0\"\n\
              active = \"custom\"\n\n\
              [github]\n\
              git_instead_of = \"{mirror_base}/\"\n"
@@ -769,19 +791,19 @@ fn d2_wizard_one_run_theme_journey() {
 
     let extra_env = vec![
         (
-            "NIU_PLUGIN_SOURCES_ROOT".to_string(),
+            "NATIVE_SHELL_PLUGIN_SOURCES_ROOT".to_string(),
             sources.to_string_lossy().into_owned(),
         ),
         (
-            "NIU_PLUGIN_SPEC".to_string(),
-            home.join(".niubash")
+            "NATIVE_SHELL_PLUGIN_SPEC".to_string(),
+            home.join(".native-shell")
                 .join("plugins.toml")
                 .to_string_lossy()
                 .into_owned(),
         ),
         (
-            "NIU_MIRRORS".to_string(),
-            home.join(".niubash")
+            "NATIVE_SHELL_MIRRORS".to_string(),
+            home.join(".native-shell")
                 .join("mirrors.toml")
                 .to_string_lossy()
                 .into_owned(),
@@ -794,7 +816,7 @@ fn d2_wizard_one_run_theme_journey() {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"));
     let path_dirs = vec![system_root.join("System32"), system_root.clone(), git_dir];
-    let mut s = journey_driver::NiuSession::spawn_cli(
+    let mut s = journey_driver::NativeShellSession::spawn_cli(
         "d2-journey",
         &["setup".to_string()],
         &extra_env,
@@ -806,7 +828,7 @@ fn d2_wizard_one_run_theme_journey() {
     // console queue after `cursor::position()` returns), so every answer
     // waits out the draw before pressing a key — send-too-early keys are
     // silently discarded and the menu would hang.
-    let answer = |s: &mut journey_driver::NiuSession, keys: &str| {
+    let answer = |s: &mut journey_driver::NativeShellSession, keys: &str| {
         std::thread::sleep(Duration::from_millis(250));
         s.send(keys);
     };
@@ -820,8 +842,8 @@ fn d2_wizard_one_run_theme_journey() {
     s.expect("TAB completion style?");
     answer(&mut s, "\r");
     // Q3 (Windows only): niu-git — asked once per lasting answer and skipped
-    // entirely when the running installation already bundles niugit
-    // (niubash#230: never re-offer what is already there). Whether it
+    // entirely when the running installation already bundles native-git
+    // (native-shell#230: never re-offer what is already there). Whether it
     // renders is environment-conditional (the winuxcmd root discovery is
     // not deterministic under the cleared journey env), so the journey
     // waits for whichever question actually renders next — niu-git or the
@@ -861,34 +883,38 @@ fn d2_wizard_one_run_theme_journey() {
     s.expect("Pick a theme");
     answer(&mut s, "2\r"); // agnoster
     let finish = s.expect("Change things later:");
-    assert!(finish.contains("niu plugin disable agnoster"), "{finish}");
+    assert!(
+        finish.contains("native-shell plugin disable agnoster"),
+        "{finish}"
+    );
     let code = s.wait_exit();
     assert_eq!(code, 0, "the wizard run must exit 0");
 
     // The same run recorded the pick; the activation content went to the
-    // generated loader (niubash#359) — the rc carries none.
-    let rc = fs::read_to_string(s.home().join(".niubashrc")).unwrap();
-    assert!(!rc.contains(">>> niu source oh-my-bash"), "{rc}");
+    // generated loader (native-shell#359) — the rc carries none.
+    let rc = fs::read_to_string(s.home().join(".native-shellrc")).unwrap();
+    assert!(!rc.contains(">>> native-shell source oh-my-bash"), "{rc}");
     assert!(!rc.contains("OSH_THEME="), "{rc}");
     let loader = fs::read_to_string(
         s.home()
-            .join(".niubash")
+            .join(".native-shell")
             .join("generated")
-            .join("plugins.niu"),
+            .join("plugins.nsh"),
     )
     .unwrap_or_default();
     assert!(
         loader.contains("OSH_THEME='agnoster'"),
         "the pick published the loader generation: {loader}"
     );
-    let journal = fs::read_to_string(s.home().join(".niubash").join("setup-journal.toml")).unwrap();
+    let journal =
+        fs::read_to_string(s.home().join(".native-shell").join("setup-journal.toml")).unwrap();
     assert!(journal.contains("theme = 'agnoster'"), "{journal}");
     assert!(journal.contains("collection = 'recommended'"), "{journal}");
 
     // 1.3.1: the journey ends SPEC-MANAGED. The post-pick adoption
     // declared the collection's sources with the live snapshot — canonical
     // origins (the mirror is transport-only) and the picked theme.
-    let spec = fs::read_to_string(home.join(".niubash").join("plugins.toml")).unwrap();
+    let spec = fs::read_to_string(home.join(".native-shell").join("plugins.toml")).unwrap();
     assert!(
         spec.contains("https://github.com/ohmybash/oh-my-bash.git"),
         "oh-my-bash declared by its canonical origin: {spec}"
@@ -897,7 +923,7 @@ fn d2_wizard_one_run_theme_journey() {
         spec.contains("https://github.com/scop/bash-completion.git"),
         "bash-completion declared: {spec}"
     );
-    // niubash#171: the recommended collection's independent recipe
+    // native-shell#171: the recommended collection's independent recipe
     // entries are declared too — canonical origins, mirror transport-only.
     assert!(
         spec.contains("https://github.com/rcaloras/bash-preexec.git"),
@@ -917,18 +943,21 @@ fn d2_wizard_one_run_theme_journey() {
     let home_str = s.home().to_string_lossy().into_owned();
     let sources_str = sources.to_string_lossy().into_owned();
     let spec_str = home
-        .join(".niubash")
+        .join(".native-shell")
         .join("plugins.toml")
         .to_string_lossy()
         .into_owned();
     let probe_env: Vec<(&str, String)> = vec![
         ("HOME", home_str),
         ("USERPROFILE", s.home().to_string_lossy().into_owned()),
-        ("NIU_PLUGIN_SOURCES_ROOT", sources_str),
-        ("NIU_PLUGIN_SPEC", spec_str),
+        ("NATIVE_SHELL_PLUGIN_SOURCES_ROOT", sources_str),
+        ("NATIVE_SHELL_PLUGIN_SPEC", spec_str),
     ];
     let probe = run_niu(
-        &["-c", ". ~/.niubash/generated/plugins.niu; echo $OSH_THEME"],
+        &[
+            "-c",
+            ". ~/.native-shell/generated/plugins.nsh; echo $OSH_THEME",
+        ],
         &probe_env,
     );
     assert_success(&probe, "fresh shell sourcing the journey loader");
@@ -939,11 +968,11 @@ fn d2_wizard_one_run_theme_journey() {
     );
 
     // The adopted spec round-trips: a plain sync leaves the rc untouched.
-    let rc_before = fs::read_to_string(s.home().join(".niubashrc")).unwrap();
+    let rc_before = fs::read_to_string(s.home().join(".native-shellrc")).unwrap();
     let settle = run_niu(&["plugin", "sync"], &probe_env);
     assert_success(&settle, "plain sync after the wizard journey");
     assert_eq!(
-        fs::read_to_string(s.home().join(".niubashrc")).unwrap(),
+        fs::read_to_string(s.home().join(".native-shellrc")).unwrap(),
         rc_before,
         "sync after adoption must not move the rc"
     );
@@ -951,11 +980,11 @@ fn d2_wizard_one_run_theme_journey() {
     let _ = fs::remove_dir_all(&root);
 }
 
-/// d3 — niubash#180: `niu setup` typed INSIDE a live session (the owner's
+/// d3 — native-shell#180: `native-shell setup` typed INSIDE a live session (the owner's
 /// exact repro: answer the wizard, and the session still ran the old
-/// configuration until a manual `source ~/.niubashrc`). The wizard is a
+/// configuration until a manual `source ~/.native-shellrc`). The wizard is a
 /// child process, so the handoff goes through a one-shot marker: the rc
-/// rewrite leaves `~/.niubash/setup-apply-pending`, the finish screen
+/// rewrite leaves `~/.native-shell/setup-apply-pending`, the finish screen
 /// states the truth about the current session, and the parent session
 /// consumes the marker at its next prompt — re-sourcing the new rc so the
 /// freshly picked theme (a DIFFERENT theme than the session's current
@@ -969,22 +998,25 @@ fn d3_setup_rerun_applies_in_the_live_session() {
     let root = temp_dir("d3-journey");
     let home = root.join("home");
     let sources = root.join("sources");
-    fs::create_dir_all(home.join(".niubash")).unwrap();
+    fs::create_dir_all(home.join(".native-shell")).unwrap();
     fs::create_dir_all(&sources).unwrap();
     // The session's CURRENT look: the old-configuration sentinel prompt.
-    let rc_text = "PS1='OLD> '\nNIU_DISABLE_DEFAULT_PLUGINS=1\n";
-    fs::write(home.join(".niubashrc"), rc_text).unwrap();
+    let rc_text = "PS1='OLD> '\nNATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n";
+    fs::write(home.join(".native-shellrc"), rc_text).unwrap();
 
-    let spec_path = home.join(".niubash").join("plugins.toml");
+    let spec_path = home.join(".native-shell").join("plugins.toml");
     let envs: Vec<(&str, String)> = vec![
         ("HOME", home.to_string_lossy().into_owned()),
         ("USERPROFILE", home.to_string_lossy().into_owned()),
         (
-            "NIU_PLUGIN_SOURCES_ROOT",
+            "NATIVE_SHELL_PLUGIN_SOURCES_ROOT",
             sources.to_string_lossy().into_owned(),
         ),
-        ("NIU_PLUGIN_SPEC", spec_path.to_string_lossy().into_owned()),
-        ("NIU_ENV", String::new()),
+        (
+            "NATIVE_SHELL_PLUGIN_SPEC",
+            spec_path.to_string_lossy().into_owned(),
+        ),
+        ("NATIVE_SHELL_ENV", String::new()),
     ];
 
     // A trusted fixture source, so the rerun wizard's Q1 gallery is
@@ -995,21 +1027,21 @@ fn d3_setup_rerun_applies_in_the_live_session() {
     let trust = run_niu(&["plugin", "source", "trust", "oh-my-bash"], &envs);
     assert_success(&trust, "plugin source trust oh-my-bash");
 
-    // PATH must carry the niu binary so the live session can spawn
-    // `niu setup` as its child (the wizard of this journey).
-    let niu_dir = niu_binary()
+    // PATH must carry the native-shell binary so the live session can spawn
+    // `native-shell setup` as its child (the wizard of this journey).
+    let native_shell_dir = native_shell_binary()
         .parent()
-        .expect("niu binary has a parent dir")
+        .expect("native-shell binary has a parent dir")
         .to_path_buf();
     let system_root = std::env::var_os("SystemRoot")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"));
-    let path_dirs = vec![system_root.join("System32"), system_root, niu_dir];
+    let path_dirs = vec![system_root.join("System32"), system_root, native_shell_dir];
     let extra_env: Vec<(String, String)> = envs
         .iter()
         .map(|(key, value)| (key.to_string(), value.clone()))
         .collect();
-    let mut s = journey_driver::NiuSession::spawn_shared_home(
+    let mut s = journey_driver::NativeShellSession::spawn_shared_home(
         &root,
         rc_text,
         &extra_env,
@@ -1017,26 +1049,26 @@ fn d3_setup_rerun_applies_in_the_live_session() {
         (120, 34),
         Duration::from_secs(180),
     );
-    s.expect("Niubash");
+    s.expect("Native Shell");
     s.expect("OLD> ");
 
     // Menus drop input queued while they draw (the d2 note), so every
     // answer waits out the draw before pressing a key.
-    let answer = |s: &mut journey_driver::NiuSession, keys: &str| {
+    let answer = |s: &mut journey_driver::NativeShellSession, keys: &str| {
         std::thread::sleep(Duration::from_millis(250));
         s.send(keys);
     };
 
     // The wizard child runs on the session's console, exactly like a user
-    // typing `niu setup` at the prompt.
-    s.send_line("niu setup");
+    // typing `native-shell setup` at the prompt.
+    s.send_line("native-shell setup");
     // Q1 gallery (1-based jump keys): Skip is 1; themes sorted by name —
     // agnoster (the fixture's "agnoster-fixture-face " PS1) is 2, i.e. a
     // DIFFERENT theme than the session's current look.
     s.expect("Pick a theme");
     answer(&mut s, "2\r");
     // Q2.5 is skipped (the source registry is non-empty). Q2.6 (2026-10-12):
-    // TAB completion style — the step runs on every `niu setup` re-run with
+    // TAB completion style — the step runs on every `native-shell setup` re-run with
     // the current effective style pre-highlighted, so Enter keeps it (a
     // no-op pick writes no rc line). Without this answer the wizard waits
     // on the menu and the journey dead-ends at its 180s session timeout.
@@ -1057,13 +1089,13 @@ fn d3_setup_rerun_applies_in_the_live_session() {
     answer(&mut s, "\r");
 
     // The finish screen must state the truth about the current session
-    // (niubash#180 minimum) — prominent, before the how-to-change block.
+    // (native-shell#180 minimum) — prominent, before the how-to-change block.
     let finish = s.expect("Change things later:");
     assert!(
         finish.contains("New config takes effect in new terminals."),
         "{finish}"
     );
-    assert!(finish.contains("source ~/.niubashrc"), "{finish}");
+    assert!(finish.contains("source ~/.native-shellrc"), "{finish}");
 
     // The wizard child exits; the parent session consumes the handoff
     // marker at its next prompt, re-sources the new rc, and renders the
@@ -1072,17 +1104,24 @@ fn d3_setup_rerun_applies_in_the_live_session() {
     s.expect("agnoster-fixture-face ");
 
     // The one-shot marker is consumed, the pick is active (the loader
-    // generation carries it — niubash#359), and the old sentinel prompt is
+    // generation carries it — native-shell#359), and the old sentinel prompt is
     // gone for good.
     assert!(
-        !home.join(".niubash").join("setup-apply-pending").exists(),
+        !home
+            .join(".native-shell")
+            .join("setup-apply-pending")
+            .exists(),
         "the handoff marker must be consumed by the apply"
     );
-    let rc = fs::read_to_string(home.join(".niubashrc")).unwrap();
+    let rc = fs::read_to_string(home.join(".native-shellrc")).unwrap();
     assert!(!rc.contains("OSH_THEME="), "{rc}");
     assert!(!rc.contains("OLD> "), "{rc}");
-    let loader = fs::read_to_string(home.join(".niubash").join("generated").join("plugins.niu"))
-        .unwrap_or_default();
+    let loader = fs::read_to_string(
+        home.join(".native-shell")
+            .join("generated")
+            .join("plugins.nsh"),
+    )
+    .unwrap_or_default();
     assert!(
         loader.contains("OSH_THEME='agnoster'"),
         "the pick is in the loader generation: {loader}"
@@ -1104,9 +1143,12 @@ fn e1_version_and_basic_commands() {
     let sandbox = Sandbox::new("e1-basics");
 
     let version = run_niu(&["--version"], &sandbox.envs);
-    assert_success(&version, "niu --version");
+    assert_success(&version, "native-shell --version");
     assert!(
-        normalized(&version).to_lowercase().contains("niubash"),
+        normalized(&version)
+            .to_lowercase()
+            .replace(" ", "-")
+            .contains("native-shell"),
         "{}",
         normalized(&version)
     );

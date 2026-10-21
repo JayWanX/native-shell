@@ -1,12 +1,12 @@
-//! niubash#286 regression: the closed-stdout contract must hold for EVERY
-//! non-interactive execution shape, not only `niu -c '<loop>'`.
+//! native-shell#286 regression: the closed-stdout contract must hold for EVERY
+//! non-interactive execution shape, not only `native-shell -c '<loop>'`.
 //!
 //! Issue #286 reported the `-c` shape (host_contract::closed_stdout_pipe…
-//! red on 0830c78): with the reader gone, niu kept looping forever and
-//! spammed `niu: line 1: Broken pipe` — one engine diagnostic per failed
+//! red on 0830c78): with the reader gone, native-shell kept looping forever and
+//! spammed `native-shell: line 1: Broken pipe` — one engine diagnostic per failed
 //! write, forever, because Windows has no SIGPIPE to kill the producer and
 //! the host had no convergence of its own. The host-level fix is the
-//! piped-stdout pump (src/piped_stdout.rs, niubash#245/#256): every process
+//! piped-stdout pump (src/piped_stdout.rs, native-shell#245/#256): every process
 //! stdout writer — engine builtins AND external children, for `-c`, script
 //! files, and stdin scripts alike — flows through one wrapper pipe; the
 //! pump is the only writer to the real downstream, so a dead reader costs
@@ -14,20 +14,20 @@
 //! `yes` shapes are pinned by tests/broken_stdout_pipe.rs; this file pins
 //! the shapes #286's report implies but nothing yet guards:
 //!
-//! - a script FILE with an unbounded producer (`niu loop.sh`)
-//! - a stdin SCRIPT with an unbounded producer (bare `niu`, script on stdin)
+//! - a script FILE with an unbounded producer (`native-shell loop.sh`)
+//! - a stdin SCRIPT with an unbounded producer (bare `native-shell`, script on stdin)
 //! - an EXTERNAL CHILD as the unbounded producer (inherited-handle path)
 //! - stderr ALSO gone when the pump reports (the diagnostic write must not
 //!   be able to hang or wedge the exit)
 //!
 //! GNU oracle (WSL bash): `bash -c 'while true; do echo x; done' | head -c
-//! 16` dies promptly via SIGPIPE with ZERO stderr bytes. niu's vendored
+//! 16` dies promptly via SIGPIPE with ZERO stderr bytes. native-shell's vendored
 //! adaptation (rubash#455 semantics: a failed write is an ordinary command
 //! failure) keeps the prompt termination and the silence-about-errno, and
 //! deliberately spends one descriptive diagnostic plus status 1 instead of
 //! signal death — the shapes below pin exactly that.
 //!
-//! Every run is deadline-bounded: the pre-fix failure mode was "niu never
+//! Every run is deadline-bounded: the pre-fix failure mode was "native-shell never
 //! exits", so a hang must fail the test, never pass it.
 
 #![cfg(windows)]
@@ -48,15 +48,15 @@ const PRODUCER_SCRIPT: &str = "i=0\nwhile true; do echo line-$i; i=$((i+1)); don
 const EXTERNAL_PRODUCER_SCRIPT: &str =
     "i=0\nwhile true; do cmd /c echo line-$i; i=$((i+1)); done\n";
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push("niu.exe");
+    fallback.push("native-shell.exe");
     fallback
 }
 
@@ -64,7 +64,8 @@ struct ScratchDir(PathBuf);
 
 impl ScratchDir {
     fn new(tag: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("niubash-286-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("native-shell-286-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create scratch dir");
         ScratchDir(dir)
@@ -90,9 +91,9 @@ struct ClosedReaderRun {
     stderr: Option<String>,
 }
 
-/// Spawn niu with both streams piped, let the child produce, read a first
+/// Spawn native-shell with both streams piped, let the child produce, read a first
 /// chunk of stdout, then drop the reader (and optionally stderr's reader
-/// too) and wait for niu to exit ON ITS OWN. `argv` and `stdin_body` pick
+/// too) and wait for native-shell to exit ON ITS OWN. `argv` and `stdin_body` pick
 /// the execution shape under test.
 fn run_with_reader_gone(
     scratch: &ScratchDir,
@@ -105,7 +106,7 @@ fn run_with_reader_gone(
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
 
-    let mut command = Command::new(niu_binary());
+    let mut command = Command::new(native_shell_binary());
     command
         .args(argv)
         .current_dir(&start)
@@ -119,7 +120,7 @@ fn run_with_reader_gone(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = command.spawn().expect("spawn niu");
+    let mut child = command.spawn().expect("spawn native-shell");
 
     if let Some(body) = stdin_body {
         let mut stdin = child.stdin.take().expect("piped stdin");
@@ -173,7 +174,7 @@ fn assert_contract(run: &ClosedReaderRun, context: &str) {
     assert_eq!(
         run.code,
         Some(1),
-        "{context}: niu must exit by itself with the rubash#455-shaped status 1"
+        "{context}: native-shell must exit by itself with the rubash#455-shaped status 1"
     );
     if let Some(stderr) = &run.stderr {
         assert!(
@@ -205,7 +206,7 @@ fn script_file_producer_loop_exits_once_when_reader_closes() {
     assert_contract(&run, "script-file while-true loop");
 }
 
-/// #286 shape 2: bare `niu` with the producer arriving on stdin — the
+/// #286 shape 2: bare `native-shell` with the producer arriving on stdin — the
 /// run_stdin_script route (no `-c` word at all).
 #[test]
 fn stdin_script_producer_loop_exits_once_when_reader_closes() {
@@ -248,6 +249,6 @@ fn exits_even_when_stderr_is_gone_too() {
     assert_eq!(
         run.code,
         Some(1),
-        "niu must exit by itself even when both output streams are gone"
+        "native-shell must exit by itself even when both output streams are gone"
     );
 }

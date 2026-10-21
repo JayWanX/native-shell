@@ -1,15 +1,15 @@
 {
   "meta": {
-    "schema": "niubash:perf-asset-timing@1.0.0",
-    "niu": "D:\\repo\\niubash-wt-perfbudget\\target\\release\\niu.exe",
-    "niu_version": "Niubash 1.3.3 \u2014 bash-compatible shell for Windows",
+    "schema": "native-shell:perf-asset-timing@1.0.0",
+    "native-shell": "D:\\repo\\native-shell-wt-perfbudget\\target\\release\\native-shell.exe",
+    "native_shell_version": "NativeShell 1.3.3 \u2014 bash-compatible shell for Windows",
     "omb": "C:\\Users\\Administrator\\.oh-my-bash",
     "bashit": "D:\\repo\\rubash\\target-ecosys2\\bash-it",
     "reps": 3,
     "workers": 4,
     "phase_timeout_s": 5.0,
     "settle_ms": 150,
-    "budgets_file": "D:\\repo\\niubash-wt-perfbudget\\scripts\\perf\\budgets.toml",
+    "budgets_file": "D:\\repo\\native-shell-wt-perfbudget\\scripts\\perf\\budgets.toml",
     "recorded_at": "2026-10-04T10:17:54.404918+00:00",
     "wall_seconds": 2051.8,
     "asset_count": 437,
@@ -11440,9 +11440,9 @@
           "max": null,
           "status": "timeout",
           "errors": [
-            "sentinel window did not close within 5.0s; stderr tail: niu: prompt_color: parameter not set | bash-5.3# exit | exit",
-            "sentinel window did not close within 5.0s; stderr tail: niu: prompt_color: parameter not set | bash-5.3# exit | exit",
-            "sentinel window did not close within 5.0s; stderr tail: niu: prompt_color: parameter not set | bash-5.3# exit | exit"
+            "sentinel window did not close within 5.0s; stderr tail: native-shell: prompt_color: parameter not set | bash-5.3# exit | exit",
+            "sentinel window did not close within 5.0s; stderr tail: native-shell: prompt_color: parameter not set | bash-5.3# exit | exit",
+            "sentinel window did not close within 5.0s; stderr tail: native-shell: prompt_color: parameter not set | bash-5.3# exit | exit"
           ],
           "loader_median_ms": 399.73
         },
@@ -11652,9 +11652,9 @@
           "max": null,
           "status": "timeout",
           "errors": [
-            "sentinel window did not close within 5.0s; stderr tail: niu: bold: parameter not set | bash-5.3# exit | exit",
-            "sentinel window did not close within 5.0s; stderr tail: niu: bold: parameter not set | bash-5.3# exit | exit",
-            "sentinel window did not close within 5.0s; stderr tail: niu: bold: parameter not set | bash-5.3# exit | exit"
+            "sentinel window did not close within 5.0s; stderr tail: native-shell: bold: parameter not set | bash-5.3# exit | exit",
+            "sentinel window did not close within 5.0s; stderr tail: native-shell: bold: parameter not set | bash-5.3# exit | exit",
+            "sentinel window did not close within 5.0s; stderr tail: native-shell: bold: parameter not set | bash-5.3# exit | exit"
           ],
           "loader_median_ms": 404.13
         },
@@ -12343,9 +12343,9 @@
           "max": null,
           "status": "timeout",
           "errors": [
-            "sentinel window did not close within 5.0s; stderr tail: niu: python_venv: parameter not set | \u001b]0;C:/perf-runs/baseline/fixture-repo\u0007\u250c\u2500[\u001b[32;1m\u00b1\u001b[0m][master \u001b[32;1m\u2713\u001b[0m][\u001b[0;36mAdministrator\u001b[0m][\u001b[0;36mC:/perf-runs/baseline/fixture-repo\u001b[0m] | \u2514\u2500\u25aa exit | exit",
-            "sentinel window did not close within 5.0s; stderr tail: niu: python_venv: parameter not set | \u001b]0;C:/perf-runs/baseline/fixture-repo\u0007\u250c\u2500[\u001b[32;1m\u00b1\u001b[0m][master \u001b[32;1m\u2713\u001b[0m][\u001b[0;36mAdministrator\u001b[0m][\u001b[0;36mC:/perf-runs/baseline/fixture-repo\u001b[0m] | \u2514\u2500\u25aa exit | exit",
-            "sentinel window did not close within 5.0s; stderr tail: niu: python_venv: parameter not set | \u001b]0;C:/perf-runs/baseline/fixture-repo\u0007\u250c\u2500[\u001b[32;1m\u00b1\u001b[0m][master \u001b[32;1m\u2713\u001b[0m][\u001b[0;36mAdministrator\u001b[0m][\u001b[0;36mC:/perf-runs/baseline/fixture-repo\u001b[0m] | \u2514\u2500\u25aa exit | exit"
+            "sentinel window did not close within 5.0s; stderr tail: native-shell: python_venv: parameter not set | \u001b]0;C:/perf-runs/baseline/fixture-repo\u0007\u250c\u2500[\u001b[32;1m\u00b1\u001b[0m][master \u001b[32;1m\u2713\u001b[0m][\u001b[0;36mAdministrator\u001b[0m][\u001b[0;36mC:/perf-runs/baseline/fixture-repo\u001b[0m] | \u2514\u2500\u25aa exit | exit",
+            "sentinel window did not close within 5.0s; stderr tail: native-shell: python_venv: parameter not set | \u001b]0;C:/perf-runs/baseline/fixture-repo\u0007\u250c\u2500[\u001b[32;1m\u00b1\u001b[0m][master \u001b[32;1m\u2713\u001b[0m][\u001b[0;36mAdministrator\u001b[0m][\u001b[0;36mC:/perf-runs/baseline/fixture-repo\u001b[0m] | \u2514\u2500\u25aa exit | exit",
+            "sentinel window did not close within 5.0s; stderr tail: native-shell: python_venv: parameter not set | \u001b]0;C:/perf-runs/baseline/fixture-repo\u0007\u250c\u2500[\u001b[32;1m\u00b1\u001b[0m][master \u001b[32;1m\u2713\u001b[0m][\u001b[0;36mAdministrator\u001b[0m][\u001b[0;36mC:/perf-runs/baseline/fixture-repo\u001b[0m] | \u2514\u2500\u25aa exit | exit"
           ],
           "loader_median_ms": 394.21
         },

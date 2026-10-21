@@ -2,31 +2,35 @@
 //!
 //! Rubash spawns the host executable for background jobs and coprocs. The
 //! spawned argv must stick to the common `-c <script>` contract; a leading
-//! `--` is a rubash-CLI-only convention that the niubash launcher rejects as
+//! `--` is a rubash-CLI-only convention that the native-shell launcher rejects as
 //! a script-file argument ("unknown argument '--' (not a script file)").
 
 use std::path::PathBuf;
 use std::process::Command;
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
 fn run_niu(script: &str) -> (String, String) {
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg("-c")
         .arg(script)
-        .env("NIU_SKIP_WINUXCMD_ACTIVATION", "1")
+        .env("NATIVE_SHELL_SKIP_WINUXCMD_ACTIVATION", "1")
         .output()
-        .expect("spawn niubash");
+        .expect("spawn native-shell");
     (
         String::from_utf8_lossy(&output.stdout).to_string(),
         String::from_utf8_lossy(&output.stderr).to_string(),
@@ -63,13 +67,13 @@ fn coproc_command_keeps_dash_dash_args_out_of_host_cli() {
     );
 }
 
-/// niubash#362: `&` must survive a large function table. The engine
+/// native-shell#362: `&` must survive a large function table. The engine
 /// serializes the WHOLE function table into the respawned child's `-c`
 /// argument; on Windows that overflows CreateProcessW's 32767-unit
 /// command line, and on Unix a single argv entry over MAX_ARG_STRLEN
-/// (128 KiB), so the spawn died with `niu: File name too long` before the
+/// (128 KiB), so the spawn died with `native-shell: File name too long` before the
 /// command ran. The engine now hands an over-budget script to the child
-/// through a temp file (__RUBASH_CMD_FILE); niu.exe must read it back.
+/// through a temp file (__RUBASH_CMD_FILE); native-shell.exe must read it back.
 ///
 /// The script goes through a FILE (not `-c`) so the test harness's own
 /// spawn stays under the limit; the background `echo hello &` is what
@@ -89,11 +93,11 @@ fn large_function_table_background_command_runs() {
     script.push_str("echo hello &\nwait\necho large-fn-status:$?\n");
     std::fs::write(&path, &script).expect("write script");
 
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .arg(&path)
-        .env("NIU_SKIP_WINUXCMD_ACTIVATION", "1")
+        .env("NATIVE_SHELL_SKIP_WINUXCMD_ACTIVATION", "1")
         .output()
-        .expect("spawn niubash");
+        .expect("spawn native-shell");
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 

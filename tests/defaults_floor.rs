@@ -1,11 +1,11 @@
-//! Defaults-as-floor (oh-my-niu design §14.5, owner ruling 2026-10-03):
+//! Defaults-as-floor (oh-my-native-shell design §14.5, owner ruling 2026-10-03):
 //! the product's own prompt defaults are the lowest-priority *floor* — any
 //! enabled external framework (oh-my-bash theme, starship init) claims the
-//! prompt through PS1 and niubash never fights back, and disabling the
+//! prompt through PS1 and native-shell never fights back, and disabling the
 //! framework lets the floor render again.
 //!
 //! Binary-level evidence in this file:
-//! * the shipped `.niubashrc.example` sells zero retired-stack fields;
+//! * the shipped `.native-shellrc.example` sells zero retired-stack fields;
 //! * a real enable → boot cycle: the OMB guarded loader block claims PS1
 //!   end-to-end (managed rc block → `oh-my-bash.sh` → theme → PS1), and the
 //!   product floor does not overwrite it;
@@ -17,7 +17,7 @@
 //!   floor stays active meanwhile — iron law 2).
 //!
 //! The reedline-side backend swap (floor Template ⇄ bash-compatible channel)
-//! is pinned by unit tests in `niubash-runtime::shell::tests`
+//! is pinned by unit tests in `native-shell-runtime::shell::tests`
 //! (`prompt_claim_release_restores_the_floor`, `hook_only_prompt_command_
 //! keeps_the_floor`, `starship_style_precmd_hook_claims_via_ps1_same_cycle`).
 use std::fs;
@@ -26,15 +26,19 @@ use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niu" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
@@ -49,7 +53,7 @@ fn temp_dir(name: &str) -> PathBuf {
     dir
 }
 
-/// HOME + USERPROFILE + NIU_PLUGIN_SOURCES_ROOT pointed at one sandbox so
+/// HOME + USERPROFILE + NATIVE_SHELL_PLUGIN_SOURCES_ROOT pointed at one sandbox so
 /// plugin enable/disable and rc boots never touch the real user home.
 struct Sandbox {
     home: PathBuf,
@@ -67,7 +71,7 @@ impl Sandbox {
             ("HOME", home.to_string_lossy().into_owned()),
             ("USERPROFILE", home.to_string_lossy().into_owned()),
             (
-                "NIU_PLUGIN_SOURCES_ROOT",
+                "NATIVE_SHELL_PLUGIN_SOURCES_ROOT",
                 sources_root.to_string_lossy().into_owned(),
             ),
         ];
@@ -79,17 +83,17 @@ impl Sandbox {
     }
 
     fn rc(&self) -> String {
-        fs::read_to_string(self.home.join(".niubashrc")).unwrap_or_default()
+        fs::read_to_string(self.home.join(".native-shellrc")).unwrap_or_default()
     }
 
-    /// The generated loader's text (niubash#359: the activation plane the
+    /// The generated loader's text (native-shell#359: the activation plane the
     /// verbs publish; the user rc is never written).
     fn loader(&self) -> String {
         fs::read_to_string(
             self.home
-                .join(".niubash")
+                .join(".native-shell")
                 .join("generated")
-                .join("plugins.niu"),
+                .join("plugins.nsh"),
         )
         .unwrap_or_default()
     }
@@ -101,15 +105,15 @@ impl Drop for Sandbox {
     }
 }
 
-fn run_niu_with_env(args: &[&str], envs: &[(&str, String)]) -> Output {
-    let mut command = Command::new(niu_binary());
+fn run_native_shell_with_env(args: &[&str], envs: &[(&str, String)]) -> Output {
+    let mut command = Command::new(native_shell_binary());
     command.args(args).stdin(Stdio::null());
     for (key, value) in envs {
         command.env(key, value);
     }
     command
         .output()
-        .unwrap_or_else(|err| panic!("failed to run niu {args:?}: {err}"))
+        .unwrap_or_else(|err| panic!("failed to run native-shell {args:?}: {err}"))
 }
 
 fn assert_success(output: &Output, context: &str) {
@@ -126,36 +130,36 @@ fn stdout_text(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-/// Run `niu -i` with piped stdin (the interactive stdin driver reads
+/// Run `native-shell -i` with piped stdin (the interactive stdin driver reads
 /// commands from the pipe; rc output and echoes go to stdout). The
 /// interactive rc (with the enabled framework block) is sourced first.
 fn boot_interactive(sandbox: &Sandbox, stdin_data: &str) -> Output {
-    let mut child = Command::new(niu_binary())
+    let mut child = Command::new(native_shell_binary())
         .arg("-i")
         .env("HOME", &sandbox.home)
         .env("USERPROFILE", &sandbox.home)
         .env(
-            "NIU_PLUGIN_SOURCES_ROOT",
+            "NATIVE_SHELL_PLUGIN_SOURCES_ROOT",
             sandbox.sources_root.to_string_lossy().as_ref(),
         )
-        .env_remove("NIU_ENV")
+        .env_remove("NATIVE_SHELL_ENV")
         .env_remove("BASH_ENV")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|err| panic!("failed to spawn niu -i: {err}"));
+        .unwrap_or_else(|err| panic!("failed to spawn native-shell -i: {err}"));
     {
         let stdin = child.stdin.as_mut().expect("piped stdin");
         stdin
             .write_all(stdin_data.as_bytes())
             .and_then(|()| stdin.flush())
-            .expect("write niu stdin");
+            .expect("write native-shell stdin");
     }
     drop(child.stdin.take());
     child
         .wait_with_output()
-        .unwrap_or_else(|err| panic!("failed to wait for niu -i: {err}"))
+        .unwrap_or_else(|err| panic!("failed to wait for native-shell -i: {err}"))
 }
 
 fn omb_fixture() -> PathBuf {
@@ -167,7 +171,7 @@ fn omb_fixture() -> PathBuf {
 }
 
 fn install_trusted_omb(sandbox: &Sandbox) {
-    let add = run_niu_with_env(
+    let add = run_native_shell_with_env(
         &[
             "plugin",
             "add",
@@ -178,28 +182,29 @@ fn install_trusted_omb(sandbox: &Sandbox) {
         &sandbox.envs,
     );
     assert_success(&add, "plugin add oh-my-bash --path");
-    let trust = run_niu_with_env(&["plugin", "trust", "oh-my-bash"], &sandbox.envs);
+    let trust = run_native_shell_with_env(&["plugin", "trust", "oh-my-bash"], &sandbox.envs);
     assert_success(&trust, "plugin trust oh-my-bash");
 }
 
 /// The shipped example rc must sell the post-migration shape only: zero
-/// retired-stack fields (niubash#145: NIU_THEME/NIU_THEME_PLUGIN/
-/// NIU_PLUGINS/NIU_BANNER/NIUBASH + `oh-my-niu.winux` chain), floor knobs
+/// retired-stack fields (native-shell#145: NATIVE_SHELL_THEME/NATIVE_SHELL_THEME_PLUGIN/
+/// NATIVE_SHELL_PLUGINS/NATIVE_SHELL_BANNER/NATIVE_SHELL + `oh-my-native-shell.winux` chain), floor knobs
 /// documented as floor-only, HOME bootstrap, and the managed-block marker
 /// discipline shown for reference.
 #[test]
 fn example_rc_sells_no_retired_stack_fields() {
-    let example =
-        fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".niubashrc.example"))
-            .expect(".niubashrc.example is shipped");
+    let example = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".native-shellrc.example"),
+    )
+    .expect(".native-shellrc.example is shipped");
     for dead in [
-        "NIU_THEME=",
-        "NIU_THEME_PLUGIN",
-        "NIU_PLUGINS=",
-        "NIU_BANNER",
-        "NIU_PROMPT_SYMBOL",
-        "NIUBASH=",
-        "oh-my-niu",
+        "NATIVE_SHELL_THEME=",
+        "NATIVE_SHELL_THEME_PLUGIN",
+        "NATIVE_SHELL_PLUGINS=",
+        "NATIVE_SHELL_BANNER",
+        "NATIVE_SHELL_PROMPT_SYMBOL",
+        "NATIVE_SHELL=",
+        "oh-my-native-shell",
     ] {
         assert!(
             !example.contains(dead),
@@ -208,34 +213,40 @@ fn example_rc_sells_no_retired_stack_fields() {
     }
     // The post-migration shape is documented: floor knobs (commented, they
     // are optional), the HOME bootstrap, and the niu-managed block markers.
-    assert!(example.contains("NIU_PROMPT_CWD_STYLE"), "{example}");
-    assert!(example.contains("NIU_COMPLETION_STYLE"), "{example}");
+    assert!(
+        example.contains("NATIVE_SHELL_PROMPT_CWD_STYLE"),
+        "{example}"
+    );
+    assert!(
+        example.contains("NATIVE_SHELL_COMPLETION_STYLE"),
+        "{example}"
+    );
     assert!(example.contains("USERPROFILE"), "{example}");
     assert!(
-        example.contains(">>> niu source oh-my-bash (managed by `niu plugin enable/disable`) >>>"),
+        example.contains(">>> native-shell source oh-my-bash (managed by `native-shell plugin enable/disable`) >>>"),
         "{example}"
     );
     assert!(
-        example.contains("<<< niu source oh-my-bash <<<"),
+        example.contains("<<< native-shell source oh-my-bash <<<"),
         "{example}"
     );
-    // The example must stay parseable under the engine (niubash#157 guards
+    // The example must stay parseable under the engine (native-shell#157 guards
     // the closed `${USERPROFILE//\\//}` form; a broken expansion silently
     // disables every alias in an adopted rc).
-    let parsed = run_niu_with_env(
+    let parsed = run_native_shell_with_env(
         &[
             "-n",
             &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join(".niubashrc.example")
+                .join(".native-shellrc.example")
                 .to_string_lossy(),
         ],
         &[],
     );
-    assert_success(&parsed, "noexec parse of .niubashrc.example");
+    assert_success(&parsed, "noexec parse of .native-shellrc.example");
 }
 
 /// A freshly enabled oh-my-bash theme claims the prompt end-to-end: the
-/// generated loader (host-sourced before the rc, niubash#359) loads
+/// generated loader (host-sourced before the rc, native-shell#359) loads
 /// `oh-my-bash.sh`, the theme sets PS1, and the boot shell carries the
 /// claim — the product floor never overwrites it.
 #[test]
@@ -243,7 +254,7 @@ fn omb_theme_claims_the_prompt_slot_end_to_end() {
     let sandbox = Sandbox::new("omb-claim");
     install_trusted_omb(&sandbox);
     for target in ["oh-my-bash", "agnoster"] {
-        let enable = run_niu_with_env(&["plugin", "enable", target], &sandbox.envs);
+        let enable = run_native_shell_with_env(&["plugin", "enable", target], &sandbox.envs);
         assert_success(&enable, &format!("enable {target}"));
     }
     let loader = sandbox.loader();
@@ -269,12 +280,12 @@ fn disabling_the_source_releases_the_prompt_slot() {
     let sandbox = Sandbox::new("omb-release");
     install_trusted_omb(&sandbox);
     for target in ["oh-my-bash", "agnoster"] {
-        let enable = run_niu_with_env(&["plugin", "enable", target], &sandbox.envs);
+        let enable = run_native_shell_with_env(&["plugin", "enable", target], &sandbox.envs);
         assert_success(&enable, &format!("enable {target}"));
     }
-    let disable = run_niu_with_env(&["plugin", "disable", "oh-my-bash"], &sandbox.envs);
+    let disable = run_native_shell_with_env(&["plugin", "disable", "oh-my-bash"], &sandbox.envs);
     assert_success(&disable, "disable oh-my-bash");
-    assert!(!sandbox.rc().contains(">>> niu source oh-my-bash"));
+    assert!(!sandbox.rc().contains(">>> native-shell source oh-my-bash"));
 
     let output = boot_interactive(&sandbox, "echo CLAIM=[$PS1]\n");
     assert_success(&output, "boot after disable");
@@ -295,7 +306,7 @@ fn disabling_the_source_releases_the_prompt_slot() {
     );
 }
 
-/// rc order contract (§14.5), read-only edition (niubash#359): enable never
+/// rc order contract (§14.5), read-only edition (native-shell#359): enable never
 /// rewrites the user's rc at all — floor knobs and user lines stay exactly
 /// where the user put them, byte for byte — and the framework activation
 /// lands in the generated loader, which the host sources BEFORE the rc so
@@ -304,20 +315,23 @@ fn disabling_the_source_releases_the_prompt_slot() {
 fn enable_never_rewrites_the_rc_and_the_loader_carries_the_framework() {
     let sandbox = Sandbox::new("rc-order");
     install_trusted_omb(&sandbox);
-    let user_rc = "# my rc\nNIU_PROMPT_CWD_STYLE='home'\nalias ll='ls -la'\n";
-    fs::write(sandbox.home.join(".niubashrc"), user_rc).unwrap();
+    let user_rc = "# my rc\nNATIVE_SHELL_PROMPT_CWD_STYLE='home'\nalias ll='ls -la'\n";
+    fs::write(sandbox.home.join(".native-shellrc"), user_rc).unwrap();
 
-    let enable = run_niu_with_env(&["plugin", "enable", "oh-my-bash"], &sandbox.envs);
+    let enable = run_native_shell_with_env(&["plugin", "enable", "oh-my-bash"], &sandbox.envs);
     assert_success(&enable, "enable oh-my-bash");
     let rc = sandbox.rc();
-    assert_eq!(rc, user_rc, "enable must not touch the rc (niubash#359)");
+    assert_eq!(
+        rc, user_rc,
+        "enable must not touch the rc (native-shell#359)"
+    );
     let loader = sandbox.loader();
     assert!(
         loader.contains("oh-my-bash.sh"),
         "the framework activation is in the loader: {loader}"
     );
 
-    let disable = run_niu_with_env(&["plugin", "disable", "oh-my-bash"], &sandbox.envs);
+    let disable = run_native_shell_with_env(&["plugin", "disable", "oh-my-bash"], &sandbox.envs);
     assert_success(&disable, "disable oh-my-bash");
     assert_eq!(
         sandbox.rc(),
@@ -348,7 +362,7 @@ fn real_ohmybash_chain_keeps_claim_or_floor_invariant() {
     }
     let sandbox = Sandbox::new("real-omb");
     // A user rc that adopts the real tree through the same guarded shape
-    // `niu plugin enable` writes (OSH export + readability guard).
+    // `native-shell plugin enable` writes (OSH export + readability guard).
     fs::create_dir_all(&sandbox.sources_root).unwrap();
     // Point the loader at the real corpus tree: OSH is the tree root, bound
     // directly at the corpus path inside the guarded block.
@@ -356,7 +370,7 @@ fn real_ohmybash_chain_keeps_claim_or_floor_invariant() {
         "export DISABLE_AUTO_UPDATE=true\nOSH='{0}'\nif [ -f \"$OSH/oh-my-bash.sh\" ]; then\n  OSH_THEME=agnoster\n  . \"$OSH/oh-my-bash.sh\"\nfi\n",
         corpus.to_string_lossy().replace('\\', "/")
     );
-    fs::write(sandbox.home.join(".niubashrc"), loader).unwrap();
+    fs::write(sandbox.home.join(".native-shellrc"), loader).unwrap();
 
     let output = boot_interactive(
         &sandbox,

@@ -13,7 +13,7 @@ real profile or the network outside 127.0.0.1.
 | `throttle-git.py` | 9 timing + 1 | 10 KB/s slow git (pay-before-forward pacing — verified 7.9 KB/s), captive-portal `--stall-after-bytes`, `--mode blackhole` (connect succeeds, no data) | `logs/throttle.log`, `logs/blackhole.log`, `logs/stall.log` |
 | `diskfull-vhd.ps1` | 6 resource exhaustion | a disposable 200 MB NTFS volume (diskpart; `New-VHD` tried first), `Fill` until real ENOSPC (HRESULT 0x80070070), `Status`, `Remove` | demo transcript in the matrix doc §3 |
 | `state-corrupter.py` | 2 aged state, 8 upgrade | week-old drift in the REAL file shapes: mixed CRLF, duplicated managed blocks, approximate markers, hand lines inside blocks, stale `bootstrap-failures.toml`, damaged/partial trees, registry attribution flips, broken TOML, pre-1.3.1 imperative-era state; `--op restore` rolls back | demo transcript in the matrix doc §3 |
-| `env-poisoner.py` | 7 weird-but-legal input | poisoned child environments: Git-Bash `PS1`+`MSYSTEM` (#117), HOME/USERPROFILE split or both unset, 64 KB values, CRLF+unicode values, `BASH_ENV` probe file, garbage `NIU_*` | demo transcript in the matrix doc §3 |
+| `env-poisoner.py` | 7 weird-but-legal input | poisoned child environments: Git-Bash `PS1`+`MSYSTEM` (#117), HOME/USERPROFILE split or both unset, 64 KB values, CRLF+unicode values, `BASH_ENV` probe file, garbage `NATIVE_SHELL_*` | demo transcript in the matrix doc §3 |
 | `file-locker.ps1` | 6 resource exhaustion | FileShare::None hold on a file (AV-style); `-Test` reports lockability (rc 9 = locked) | demo transcript in the matrix doc §3 |
 
 ## Deterministic offline git fixture (how the proxies are driven)
@@ -47,10 +47,10 @@ worktree; `--rate-kb-per-s 8` = 7.9 KB/s per connection; blackhole +
    drain and FIN. A control run through `--mode normal` must clone fine —
    if it doesn't, the fixture is broken, not the product.
 3. **Real file shapes.** state-corrupter writes the exact marker pair
-   (`# >>> niu source <id> (managed by …) >>>`), spec schema
-   (`niubash:plugin-spec@0.1.0`), registry schema
-   (`niubash:plugin-source-registry@0.3.0`) and bootstrap-failure schema
-   (`niubash:plugin-bootstrap-failures@1`) read from the product source —
+   (`# >>> native-shell source <id> (managed by …) >>>`), spec schema
+   (`native-shell:plugin-spec@0.1.0`), registry schema
+   (`native-shell:plugin-source-registry@0.3.0`) and bootstrap-failure schema
+   (`native-shell:plugin-bootstrap-failures@1`) read from the product source —
    lanes assert against shapes the product actually parses.
 4. **Everything backs up before mutating** (`.pre-corrupt`) and
    `--op restore` undoes a round, so a lane can heal state between probes.

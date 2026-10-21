@@ -1,7 +1,7 @@
-//! Static guard over the installer surface (`installer/niubash.iss`).
+//! Static guard over the installer surface (`installer/native-shell.iss`).
 //!
-//! niubash#398 found an unowned .NET shim occupying the
-//! `C:\Program Files\Git\bin\bash.exe` convention slot and suspected the niu
+//! native-shell#398 found an unowned .NET shim occupying the
+//! `C:\Program Files\Git\bin\bash.exe` convention slot and suspected the native-shell
 //! installer had put it there. The investigation (PR #414) overturned the
 //! premise — the installer runs with `PrivilegesRequired=lowest`, never
 //! elevates, and the slot directory is admin-walled — and ruled that the
@@ -21,14 +21,14 @@ use std::path::PathBuf;
 fn installer_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("installer")
-        .join("niubash.iss")
+        .join("native-shell.iss")
 }
 
 /// The whole script, lines attached, for failure messages that point at the
 /// offending line the way a review would.
 fn script_lines() -> Vec<(usize, String)> {
     let text = fs::read_to_string(installer_script())
-        .expect("installer/niubash.iss must exist next to the crate");
+        .expect("installer/native-shell.iss must exist next to the crate");
     text.lines()
         .enumerate()
         .map(|(i, line)| (i + 1, line.to_string()))
@@ -61,7 +61,7 @@ fn section_headers(lines: &[(usize, String)]) -> Vec<(usize, String)> {
 /// Expand Inno Setup's directory constants into their canonical absolute
 /// paths so constant-folded spellings like `{autopf}\Git` or
 /// `{syswow64}\cmd.exe` cannot sneak past the literal drive-path and
-/// `Program Files` scanners (niubash#442). Every constant that resolves
+/// `Program Files` scanners (native-shell#442). Every constant that resolves
 /// outside the sanctioned surface folds here — the exceptions are the
 /// sanctioned locations themselves ({app}, {localappdata}, the icon folders
 /// {group}/{autodesktop}/{userdesktop}, {%USERPROFILE}) and {sys}, which
@@ -239,7 +239,7 @@ fn section_entries(
     found
 }
 
-/// niubash#398 ruling, fact 1: the installer never elevates, so it can never
+/// native-shell#398 ruling, fact 1: the installer never elevates, so it can never
 /// write an admin-walled foreign slot such as `C:\Program Files\Git\bin`.
 #[test]
 fn installer_requires_lowest_privileges() {
@@ -263,13 +263,13 @@ fn check_lowest_privileges(lines: &[(usize, String)]) -> Result<(), String> {
         return Err(format!(
             "PrivilegesRequired must stay `lowest` — elevation is the only way this \
              installer could ever touch a foreign slot like C:\\Program Files\\Git\\bin, \
-             and niubash#398's ruling is that it never does: {declared:?}"
+             and native-shell#398's ruling is that it never does: {declared:?}"
         ));
     }
     Ok(())
 }
 
-/// niubash#442: `[Registry]`, `[INI]`, and `[UninstallRun]` sections are
+/// native-shell#442: `[Registry]`, `[INI]`, and `[UninstallRun]` sections are
 /// forbidden (fail-closed). The one sanctioned HKCU PATH update lives in
 /// `[Code]` (`registry_writes_confine_to_the_user_environment_path_value`);
 /// opening any of these declarative sections would create an unguarded write
@@ -296,17 +296,17 @@ fn check_forbidden_sections(lines: &[(usize, String)]) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "installer/niubash.iss must not declare [Registry], [INI], or [UninstallRun] \
-             sections (niubash#442 fail-closed guard):\n{}",
+            "installer/native-shell.iss must not declare [Registry], [INI], or [UninstallRun] \
+             sections (native-shell#442 fail-closed guard):\n{}",
             offenders.join("\n")
         ))
     }
 }
 
-/// niubash#398 ruling, fact 2: the script's world is Inno constants and
+/// native-shell#398 ruling, fact 2: the script's world is Inno constants and
 /// relative names. No absolute drive path and no `Program Files` reference
 /// may appear anywhere — including comments and constant-folded `{autopf}` /
-/// `{pf}` spellings (niubash#442) — so the Git Bash slot cannot be named, let
+/// `{pf}` spellings (native-shell#442) — so the Git Bash slot cannot be named, let
 /// alone written, from this surface.
 #[test]
 fn installer_never_names_an_absolute_foreign_location() {
@@ -348,8 +348,8 @@ fn check_no_foreign_locations(lines: &[(usize, String)]) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "installer/niubash.iss must not reference any absolute foreign location \
-             (niubash#398/#442: the Git Bash slot stays unclaimed; the app tree is reached \
+            "installer/native-shell.iss must not reference any absolute foreign location \
+             (native-shell#398/#442: the Git Bash slot stays unclaimed; the app tree is reached \
              through Inno constants like {{app}}/{{localappdata}}):\n{}",
             offenders.join("\n")
         ))
@@ -358,7 +358,7 @@ fn check_no_foreign_locations(lines: &[(usize, String)]) -> Result<(), String> {
 
 /// Every file the installer writes or deletes lives under `{app}` (or is an
 /// exact retired name under `{app}`), so an uninstall can never leave a
-/// dangling artifact in a directory niu does not own.
+/// dangling artifact in a directory native-shell does not own.
 #[test]
 fn file_write_and_delete_surfaces_stay_under_the_app_directory() {
     let lines = script_lines();
@@ -374,7 +374,7 @@ fn file_write_and_delete_surfaces_stay_under_the_app_directory() {
             assert!(
                 bare == "{app}" || bare.starts_with("{app}\\"),
                 "[{section}] line {number} writes outside the app tree: {value:?} — \
-                 niubash#398: the installer's filesystem surface is {{app}}-confined"
+                 native-shell#398: the installer's filesystem surface is {{app}}-confined"
             );
         }
     }
@@ -423,7 +423,7 @@ fn delete_entries_match_only_retired_shapes() {
     // Shapes the [InstallDelete] comment sanctions: generated backup shapes
     // only. An exact name must be a retired binary (allow-listed here).
     const SANCTIONED_SHAPES: [&str; 3] = ["*.bak-*", "*.old-*", "*.niu-old-*"];
-    const RETIRED_EXACT: [&str; 1] = ["{app}\\niubash.exe"];
+    const RETIRED_EXACT: [&str; 1] = ["{app}\\native-shell.exe"];
 
     for section in ["InstallDelete", "UninstallDelete"] {
         for (number, value) in section_entries(&lines, section, "Name") {
@@ -446,7 +446,7 @@ fn delete_entries_match_only_retired_shapes() {
     }
 }
 
-/// niubash#468: the upgrade path must reconcile the bundled package shims
+/// native-shell#468: the upgrade path must reconcile the bundled package shims
 /// (`usr\bin\awk.exe`, `gawk.exe`) — `wpm links rebuild` cannot reach them on
 /// a state-free bundled install, which is exactly how 1.4.1 left 1.4.0-era
 /// copies behind. This test pins the `[Run]` step so the reconcile cannot be
@@ -462,7 +462,7 @@ fn run_steps_reconcile_bundled_package_shims() {
         relink_steps.len(),
         1,
         "expected exactly one [Run] step invoking --relink-bundled-shims \
-         (the niubash#468 bundled-shim reconcile): {relink_steps:?}"
+         (the native-shell#468 bundled-shim reconcile): {relink_steps:?}"
     );
     assert!(
         relink_steps[0].1.contains("--force"),
@@ -473,10 +473,10 @@ fn run_steps_reconcile_bundled_package_shims() {
 }
 
 /// Every external process the installer launches comes from the app tree, so
-/// the [Run] steps execute the payload niu.exe (the #397 relink) and the
+/// the [Run] steps execute the payload native-shell.exe (the #397 relink) and the
 /// bundled winuxcmd dispatcher — never a downloaded or foreign binary.
 /// Across the entire script, `{sys}\taskkill.exe` is the ONLY sanctioned
-/// `{sys}` binary (niubash#442).
+/// `{sys}` binary (native-shell#442).
 #[test]
 fn run_steps_execute_only_app_tree_binaries() {
     let lines = script_lines();
@@ -494,7 +494,7 @@ fn check_run_and_sys_binaries(lines: &[(usize, String)]) -> Result<(), String> {
             return Err(format!(
                 "[Run] line {number} launches a binary from outside the app tree: {value:?} — \
                  only {{app}} payloads (and {{sys}}\\taskkill.exe for the silent-update \
-                 close) may run (niubash#398/#442: nothing reaches for a foreign slot)"
+                 close) may run (native-shell#398/#442: nothing reaches for a foreign slot)"
             ));
         }
     }
@@ -548,20 +548,20 @@ fn registry_writes_confine_to_the_user_environment_path_value() {
             "line {number}: registry write outside HKEY_CURRENT_USER: {line:?}"
         );
         assert!(
-            line.contains("NiubashEnvironmentKey") && line.contains("NiubashPathValueName"),
+            line.contains("NativeShellEnvironmentKey") && line.contains("NativeShellPathValueName"),
             "line {number}: registry write outside the Environment\\Path value: {line:?}"
         );
     }
     // The constants those writes go through pin the exact key and value.
-    let key_line = lines_matching(&lines, "NiubashEnvironmentKey =");
-    let value_line = lines_matching(&lines, "NiubashPathValueName =");
+    let key_line = lines_matching(&lines, "NativeShellEnvironmentKey =");
+    let value_line = lines_matching(&lines, "NativeShellPathValueName =");
     assert!(
         key_line.iter().any(|(_, l)| l.contains("'Environment'")),
-        "NiubashEnvironmentKey must name the HKCU 'Environment' key: {key_line:?}"
+        "NativeShellEnvironmentKey must name the HKCU 'Environment' key: {key_line:?}"
     );
     assert!(
         value_line.iter().any(|(_, l)| l.contains("'Path'")),
-        "NiubashPathValueName must name the 'Path' value: {value_line:?}"
+        "NativeShellPathValueName must name the 'Path' value: {value_line:?}"
     );
 }
 
@@ -591,8 +591,8 @@ fn shortcuts_point_into_the_app_tree() {
     }
 }
 
-/// niubash#442 adversarial mutation suite: verify that the CR mutation
-/// vectors against `installer/niubash.iss` are caught by the guards above —
+/// native-shell#442 adversarial mutation suite: verify that the CR mutation
+/// vectors against `installer/native-shell.iss` are caught by the guards above —
 /// and that each rejection names the surface that tripped it (the ticket's
 /// "guard failure message corresponds to the triggering section" clause).
 /// Vectors 8–10 extend the suite to the spelling variants the same
@@ -729,7 +729,7 @@ fn cr_adversarial_mutations_are_rejected() {
     // 9. `{sys}\taskkill.exe2` — a suffix continuing past the sanctioned
     // binary name is a different file, not taskkill.exe.
     let mut m9 = base.clone();
-    m9.push((999, r#"  Exec(ExpandConstant('{sys}\taskkill.exe2'), '/IM niu.exe /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);"#.to_string()));
+    m9.push((999, r#"  Exec(ExpandConstant('{sys}\taskkill.exe2'), '/IM native-shell.exe /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);"#.to_string()));
     let err = check_run_and_sys_binaries(&m9).unwrap_err();
     assert!(
         err.contains("{sys}"),

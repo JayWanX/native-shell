@@ -1,6 +1,6 @@
 name: pin-freshness
 
-# `scripts/release/preinstall.json` and `scripts/release/winuxcmd-pin.json` are
+# `scripts/release/preinstall.json` is
 # release policy: the release workflow refuses to bundle an engine or a
 # pre-install package whose digest does not match its pin. That check cannot
 # notice a pin that is merely *old* - the digest still matches the release it

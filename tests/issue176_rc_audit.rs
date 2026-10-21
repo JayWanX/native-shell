@@ -1,7 +1,7 @@
-//! Regression tests for the niubash#176 add/rc audit P2 batch:
+//! Regression tests for the native-shell#176 add/rc audit P2 batch:
 //!
-//! * `niu plugin add -h` is a usage request, not an unknown-option error;
-//! * `niu plugin --help` mentions `--url`;
+//! * `native-shell plugin add -h` is a usage request, not an unknown-option error;
+//! * `native-shell plugin --help` mentions `--url`;
 //! * a local directory that happens to be named `oh-my-bash` is adopted as
 //!   a local tree, never hijacked to the catalog's GitHub origin;
 //! * a cwd-relative path target is stored cwd-independent (absolute) in the
@@ -13,15 +13,19 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
@@ -38,7 +42,10 @@ fn temp_dir(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("niubash-{name}-{}-{nanos}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "native-shell-{name}-{}-{nanos}",
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -79,17 +86,17 @@ impl Sandbox {
         let home = temp.join("home");
         let sources_root = temp.join("sources");
         fs::create_dir_all(&home).unwrap();
-        fs::create_dir_all(home.join(".niubash")).unwrap();
+        fs::create_dir_all(home.join(".native-shell")).unwrap();
         let envs = vec![
             ("HOME", home.to_string_lossy().into_owned()),
             ("USERPROFILE", home.to_string_lossy().into_owned()),
             (
-                "NIU_PLUGIN_SOURCES_ROOT",
+                "NATIVE_SHELL_PLUGIN_SOURCES_ROOT",
                 sources_root.to_string_lossy().into_owned(),
             ),
             (
-                "NIU_PLUGIN_SPEC",
-                home.join(".niubash")
+                "NATIVE_SHELL_PLUGIN_SPEC",
+                home.join(".native-shell")
                     .join("plugins.toml")
                     .to_string_lossy()
                     .into_owned(),
@@ -108,7 +115,7 @@ impl Sandbox {
     }
 
     fn run_in(&self, args: &[&str], cwd: &Path) -> Output {
-        let mut command = Command::new(niu_binary());
+        let mut command = Command::new(native_shell_binary());
         command.args(args);
         command.current_dir(cwd);
         for (key, value) in &self.envs {
@@ -116,11 +123,11 @@ impl Sandbox {
         }
         command
             .output()
-            .unwrap_or_else(|err| panic!("failed to run niu {args:?}: {err}"))
+            .unwrap_or_else(|err| panic!("failed to run native-shell {args:?}: {err}"))
     }
 
     fn spec(&self) -> String {
-        fs::read_to_string(self.home.join(".niubash").join("plugins.toml")).unwrap_or_default()
+        fs::read_to_string(self.home.join(".native-shell").join("plugins.toml")).unwrap_or_default()
     }
 }
 
@@ -160,7 +167,7 @@ fn plugin_usage_mentions_url_option() {
     let _ = fs::remove_dir_all(&box_.temp);
 }
 
-/// The hijack (niubash#176): a cwd directory literally named `oh-my-bash`
+/// The hijack (native-shell#176): a cwd directory literally named `oh-my-bash`
 /// is adopted as a LOCAL tree — the spec target is its absolute path (not
 /// the raw relative spelling, not the catalog's GitHub URL) and the whole
 /// add succeeds offline, which a GitHub clone could not.
@@ -228,9 +235,9 @@ fn relative_path_targets_are_stored_absolute() {
     let _ = fs::remove_dir_all(&box_.temp);
 }
 
-/// The already-declared refusal (niubash#176): for a stranded declaration
-/// (declared, never installed) the hint is `niu plugin sync --prune` — the
-/// suggested `niu plugin source remove` command would only fail. For an
+/// The already-declared refusal (native-shell#176): for a stranded declaration
+/// (declared, never installed) the hint is `native-shell plugin sync --prune` — the
+/// suggested `native-shell plugin source remove` command would only fail. For an
 /// installed source the remove hint stays.
 #[test]
 fn already_declared_hint_matches_the_state() {
@@ -240,7 +247,7 @@ fn already_declared_hint_matches_the_state() {
 
     // A stranded declaration: hand-written spec entry, nothing installed.
     fs::write(
-        box_.home.join(".niubash").join("plugins.toml"),
+        box_.home.join(".native-shell").join("plugins.toml"),
         "[[sources]]\ntarget = './ghost'\n",
     )
     .unwrap();

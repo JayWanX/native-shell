@@ -12,17 +12,17 @@ Audits what EXISTS today (wt77's live preview is in flight elsewhere):
   insertion orders (add omb-then-bash-it vs bash-it-then-omb),
 - g03 theme count claims: gallery option count vs themes on disk vs
   discover/list asset counts,
-- g04 `niu plugin discover` vs gallery consistency (the wizard points at
+- g04 `native-shell plugin discover` vs gallery consistency (the wizard points at
   discover for "sources & themes" — does discover list themes?),
 - g05 preview/tree broken AFTER trust (themes dir deleted; whole tree
   deleted) — gallery honesty and recovery,
-- g06 zh/en translation completeness of every gallery string (NIU_LANG=zh
+- g06 zh/en translation completeness of every gallery string (NATIVE_SHELL_LANG=zh
   walk; mixed-language evidence).
 
 Offline throughout: sources install through the lane's local fixture
 mirror (fixtures.py), deterministic and network-independent.
 
-Usage: python scripts/audit/wt82-L02/run_l05.py <niu.exe> [--artifacts DIR]
+Usage: python scripts/audit/wt82-L02/run_l05.py <native-shell.exe> [--artifacts DIR]
        [--only NAME]
 Exit:  0 every assertion holds, 1 any fail, 2 environment skip.
 """
@@ -141,7 +141,7 @@ def g01_preview_truth(exe: Path, lane_root: Path, mirror_base: str):
     artifacts = lane_root / "g01-preview-truth"
     verdict = Verdict(artifacts, "l05-g01 preview truth + same-name + #168")
     home = sandbox_home(lane_root, "g01")
-    mirrors = home / ".niubash" / "mirrors.toml"
+    mirrors = home / ".native-shell" / "mirrors.toml"
     write_mirrors(mirrors, mirror_base)
     env = build_env(home, exe, mirrors_file=mirrors)
 
@@ -229,7 +229,7 @@ def g01_preview_truth(exe: Path, lane_root: Path, mirror_base: str):
     step = verdict.step("g01-rebind", "#168: second same-name source must "
                                       "not rebind the pick (wt72 in "
                                       "flight — documentation)")
-    rc_before = (home / ".niubashrc").read_text(encoding="utf-8")
+    rc_before = (home / ".native-shellrc").read_text(encoding="utf-8")
     env2 = build_env(home, exe, mirrors_file=mirrors)
     s2 = setup_gallery_session(exe, home, env2, verdict, "g01-rebind")
     try:
@@ -247,7 +247,7 @@ def g01_preview_truth(exe: Path, lane_root: Path, mirror_base: str):
         step.check("demox still listed exactly once after the second "
                    "source", len(demox_lines) == 1, str(demox_lines))
         cancel_wizard(s2)
-        rc_after = (home / ".niubashrc").read_text(encoding="utf-8")
+        rc_after = (home / ".native-shellrc").read_text(encoding="utf-8")
         step.check("Skip run left the rc untouched (no silent rebind)",
                    rc_after == rc_before)
     finally:
@@ -265,8 +265,8 @@ def g02_ordering(exe: Path, lane_root: Path, mirror_base: str):
     verdict = Verdict(artifacts, "l05-g02 gallery ordering stability")
     home_a = sandbox_home(lane_root, "g02a")
     home_b = sandbox_home(lane_root, "g02b")
-    mir_a = home_a / ".niubash" / "mirrors.toml"
-    mir_b = home_b / ".niubash" / "mirrors.toml"
+    mir_a = home_a / ".native-shell" / "mirrors.toml"
+    mir_b = home_b / ".native-shell" / "mirrors.toml"
     write_mirrors(mir_a, mirror_base)
     write_mirrors(mir_b, mirror_base)
     env_a = build_env(home_a, exe, mirrors_file=mir_a)
@@ -316,7 +316,7 @@ def g03_counts(exe: Path, lane_root: Path, mirror_base: str):
     artifacts = lane_root / "g03-counts"
     verdict = Verdict(artifacts, "l05-g03 theme count truth")
     home = sandbox_home(lane_root, "g03")
-    mirrors = home / ".niubash" / "mirrors.toml"
+    mirrors = home / ".native-shell" / "mirrors.toml"
     write_mirrors(mirrors, mirror_base)
     env = build_env(home, exe, mirrors_file=mirrors)
 
@@ -327,8 +327,8 @@ def g03_counts(exe: Path, lane_root: Path, mirror_base: str):
     step = verdict.step("g03-count", "gallery count == disk themes "
                                      "(dedup) == list asset rows")
     # Disk truth: omb themes dirs + bash-it themes dirs - shared names.
-    omb_dir = home / ".niubash" / "sources" / "oh-my-bash" / "themes"
-    bit_dir = home / ".niubash" / "sources" / "bash-it" / "themes"
+    omb_dir = home / ".native-shell" / "sources" / "oh-my-bash" / "themes"
+    bit_dir = home / ".native-shell" / "sources" / "bash-it" / "themes"
     omb_names = {p.name for p in omb_dir.iterdir() if p.is_dir()}
     bit_names = {p.name for p in bit_dir.iterdir() if p.is_dir()}
     unique = omb_names | bit_names
@@ -350,7 +350,7 @@ def g03_counts(exe: Path, lane_root: Path, mirror_base: str):
                    gallery_names == unique,
                    f"gallery={sorted(gallery_names)} "
                    f"disk={sorted(unique)}")
-        # niu plugin list asset rows: themes counted once per source.
+        # native-shell plugin list asset rows: themes counted once per source.
         listing = run_cli(exe, home, ["plugin", "list"], env, timeout=60)
         list_text = listing.stdout or ""
         verdict.save_text("g03-plugin-list.txt", list_text)
@@ -374,7 +374,7 @@ def g04_discover(exe: Path, lane_root: Path, mirror_base: str):
     artifacts = lane_root / "g04-discover"
     verdict = Verdict(artifacts, "l05-g04 discover vs gallery consistency")
     home = sandbox_home(lane_root, "g04")
-    mirrors = home / ".niubash" / "mirrors.toml"
+    mirrors = home / ".native-shell" / "mirrors.toml"
     write_mirrors(mirrors, mirror_base)
     env = build_env(home, exe, mirrors_file=mirrors)
 
@@ -395,7 +395,7 @@ def g04_discover(exe: Path, lane_root: Path, mirror_base: str):
                                     "powerline-multiline")
                   if name in text]
     # THE CONSISTENCY QUESTION: the wizard's finish screen advertises
-    # `niu plugin discover` as "(sources & themes, read-only)" and the
+    # `native-shell plugin discover` as "(sources & themes, read-only)" and the
     # empty-gallery note names it as the browse path for themes. If
     # discover lists no themes, the pointer is wrong.
     step.check(
@@ -403,7 +403,7 @@ def g04_discover(exe: Path, lane_root: Path, mirror_base: str):
         "(wizard advertises discover as 'sources & themes')",
         len(theme_hits) > 0,
         f"discover named 0 of the 4 gallery themes; hits={theme_hits}; "
-        "the wizard's finish screen line 'ecosystem  `niu plugin "
+        "the wizard's finish screen line 'ecosystem  `native-shell plugin "
         "discover`  (sources & themes, read-only)' and the "
         "empty-gallery note both point users at discover for themes")
     list_out = run_cli(exe, home, ["plugin", "list"], env, timeout=60)
@@ -422,7 +422,7 @@ def g05_broken_tree(exe: Path, lane_root: Path, mirror_base: str):
     artifacts = lane_root / "g05-broken-tree"
     verdict = Verdict(artifacts, "l05-g05 broken tree after trust")
     home = sandbox_home(lane_root, "g05")
-    mirrors = home / ".niubash" / "mirrors.toml"
+    mirrors = home / ".native-shell" / "mirrors.toml"
     write_mirrors(mirrors, mirror_base)
     env = build_env(home, exe, mirrors_file=mirrors)
 
@@ -431,7 +431,7 @@ def g05_broken_tree(exe: Path, lane_root: Path, mirror_base: str):
 
     step = verdict.step("g05-themes-deleted", "themes/ deleted under a "
                                               "trusted source")
-    themes_dir = home / ".niubash" / "sources" / "oh-my-bash" / "themes"
+    themes_dir = home / ".native-shell" / "sources" / "oh-my-bash" / "themes"
     shutil.rmtree(themes_dir)
     listing = run_cli(exe, home, ["plugin", "list"], env, timeout=60)
     verdict.save_text("g05-list-degraded.txt", listing.stdout or "")
@@ -459,7 +459,7 @@ def g05_broken_tree(exe: Path, lane_root: Path, mirror_base: str):
                        ("agnoster", "demox", "robbyrussell")))
         step.note("plugin list still reports the gutted source 'ready' "
                   "(layout-based state, not a live checksum check; "
-                  "'niu plugin source verify' is the detecting verb)")
+                  "'native-shell plugin source verify' is the detecting verb)")
         cancel_wizard(s1)
     finally:
         if s1.proc.isalive():
@@ -467,7 +467,7 @@ def g05_broken_tree(exe: Path, lane_root: Path, mirror_base: str):
 
     step = verdict.step("g05-whole-tree-deleted", "source tree deleted "
                                                   "outright")
-    tree = home / ".niubash" / "sources" / "oh-my-bash"
+    tree = home / ".native-shell" / "sources" / "oh-my-bash"
     shutil.rmtree(tree)
     s2 = Session([str(exe), "setup"], home, env,
                  raw_log=verdict.transcripts / "g05-gallery2.raw.ansi",
@@ -528,12 +528,12 @@ def g06_zh_i18n(exe: Path, lane_root: Path, mirror_base: str):
                  raw_log=verdict.transcripts / "g06-empty.raw.ansi",
                  label="g06-empty", delivery_log=verdict.delivery_events)
     try:
-        s1.wait_for("Niubash", timeout=90)
+        s1.wait_for("NativeShell", timeout=90)
         time.sleep(1.5)
         body = s1.raw_stripped()
         verdict.save_text("g06-empty.txt", body)
         step.check("zh mode active (welcome banner translated)",
-                   "欢迎来到 Niubash" in body, body[:400])
+                   "欢迎来到 NativeShell" in body, body[:400])
         # THE STALE KEY (setup_wizard.rs:950 vs the zh table's
         # "No themes installed yet — keeping the built-in default look."):
         # the actual English key is "No external themes installed yet -
@@ -552,7 +552,7 @@ def g06_zh_i18n(exe: Path, lane_root: Path, mirror_base: str):
 
     # Sandbox 2: populated gallery in zh mode.
     home2 = sandbox_home(lane_root, "g06b")
-    mirrors = home2 / ".niubash" / "mirrors.toml"
+    mirrors = home2 / ".native-shell" / "mirrors.toml"
     write_mirrors(mirrors, mirror_base)
     env2 = build_env(home2, exe, lang="zh", mirrors_file=mirrors)
     step = verdict.step("g06-install", "omb + bash-it for the zh gallery")
@@ -626,14 +626,14 @@ def main() -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("niu", type=Path)
+    parser.add_argument("native_shell", metavar="native-shell", type=Path)
     parser.add_argument("--artifacts", type=Path, default=None)
     parser.add_argument("--only", action="append", default=None)
     args = parser.parse_args()
 
-    exe = args.niu.resolve()
+    exe = args.native_shell.resolve()
     if not exe.is_file():
-        print(f"SKIP: niu binary not found: {exe}")
+        print(f"SKIP: native-shell binary not found: {exe}")
         return 2
     lane_root = (args.artifacts or
                  Path(__file__).resolve().parents[3] / "target"
@@ -643,7 +643,7 @@ def main() -> int:
     shutil.rmtree(Path(tempfile.gettempdir()) / "wt82-L02-sandboxes",
                   ignore_errors=True)
     (lane_root / "run-l05.json").write_text(json.dumps({
-        "niu": str(exe), "started_utc": now_utc(),
+        "native-shell": str(exe), "started_utc": now_utc(),
         "mirror_base": mirror_base}, indent=2) + "\n",
         encoding="utf-8", newline="\n")
 

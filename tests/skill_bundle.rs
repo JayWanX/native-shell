@@ -1,4 +1,4 @@
-//! `niu skill install` / `niu skill status` end-to-end (niubash#188).
+//! `native-shell skill install` / `native-shell skill status` end-to-end (native-shell#188).
 //!
 //! Runs the built launcher against a throwaway skills root so the real
 //! home (and any real agent skill dir) is never touched. The doctor row is
@@ -8,15 +8,15 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-fn niu_binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_niu"))
+fn native_shell_binary() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_native-shell"))
 }
 
 fn run_skill(args: &[&str]) -> (String, String, Option<i32>) {
-    let output = Command::new(niu_binary())
+    let output = Command::new(native_shell_binary())
         .args(args)
         .output()
-        .expect("spawn niu");
+        .expect("spawn native-shell");
     (
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -43,7 +43,7 @@ fn install_writes_bundle_and_status_reports_current() {
     assert_eq!(code, Some(0), "install failed: {stderr}");
     assert!(stdout.contains("installed 6 file(s)"), "stdout: {stdout}");
 
-    let bundle = root.join("niubash");
+    let bundle = root.join("native-shell");
     for rel in [
         "SKILL.md",
         "agents/openai.yaml",
@@ -79,7 +79,11 @@ fn status_reports_outdated_and_missing() {
     // Install, then hand-edit one file: installed but outdated.
     let (stdout, _, _) = run_skill(&["skill", "install", "--target", &target]);
     assert!(stdout.contains("installed"));
-    fs::write(root.join("niubash").join("SKILL.md"), "# hand-edited\n").unwrap();
+    fs::write(
+        root.join("native-shell").join("SKILL.md"),
+        "# hand-edited\n",
+    )
+    .unwrap();
     let (stdout, _, code) = run_skill(&["skill", "status", "--target", &target]);
     assert_eq!(code, Some(0));
     assert!(

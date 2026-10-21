@@ -2,7 +2,7 @@
 
 //! Interactive-mode regression tests.
 //!
-//! These exercise behavior that only exists when niu runs as an interactive
+//! These exercise behavior that only exists when native-shell runs as an interactive
 //! shell on a pseudo terminal: continuation prompts, Ctrl-C/Ctrl-D
 //! interruption and EOF, live history expansion, aliases, PS1 re-rendering,
 //! TAB completion, theme rendering, and input robustness. The non-interactive
@@ -26,7 +26,7 @@
 //! 5. Wizard/theme smoke — default themed prompt renders ANSI escapes.
 //! 6. Robustness — input bursts, multiline paste, resize.
 //!
-//! Run: `NIU_INTERACTIVE_TESTS=1 cargo test --test interactive --locked -- --nocapture`
+//! Run: `NATIVE_SHELL_INTERACTIVE_TESTS=1 cargo test --test interactive --locked -- --nocapture`
 //! (without the env var the target skips on hosts with no pseudo terminal).
 
 // Helper module lives beside the target: tests/interactive/driver.rs.
@@ -36,7 +36,7 @@ mod driver;
 use std::time::Duration;
 
 use driver::{
-    require_pty_or_skip, NiuSession, CTRL_C, CTRL_D, CTRL_D as EOF_KEY, DEFAULT_TIMEOUT,
+    require_pty_or_skip, NativeShellSession, CTRL_C, CTRL_D, CTRL_D as EOF_KEY, DEFAULT_TIMEOUT,
     HEAVY_TIMEOUT, TAB,
 };
 
@@ -55,7 +55,8 @@ fn continuation_double_quote_ps2_and_completes() {
         return;
     }
     let rc = format!("{}\nCONT_DQUOTE_OUT=double-line\n", driver::default_rc());
-    let mut s = NiuSession::spawn_custom("cont-dquote", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("cont-dquote", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     s.send_line("printf '%s\\n' \"$CONT_DQUOTE_OUT");
     s.expect_continuation();
@@ -72,17 +73,17 @@ fn continuation_double_quote_ps2_and_completes() {
 /// `'$CONT_SQUOTE_OUT<newline>closed'` is LITERAL — single quotes quote
 /// everything (GNU parse.y/make_word: no expansion inside `'…'`), so `$V`
 /// prints verbatim. (The old "GNU bash 5.3, msys, oracle run 2026-10-13"
-/// attribution here was the winuxcmd bash.exe shim — niu itself — so it
-/// proved only that niu is self-consistent; GNU's single-quote rule is the
+/// attribution here was the winuxcmd bash.exe shim — native-shell itself — so it
+/// proved only that native-shell is self-consistent; GNU's single-quote rule is the
 /// real authority.) The pre-fix expectation wanted expansion inside single
-/// quotes and failed byte-stable on every host (part of niubash#420's
-/// baseline five); the assertion pins the bash semantics niu implements.
+/// quotes and failed byte-stable on every host (part of native-shell#420's
+/// baseline five); the assertion pins the bash semantics native-shell implements.
 #[test]
 fn continuation_single_quote_ps2_and_completes() {
     if !require_pty_or_skip("continuation_single_quote_ps2_and_completes") {
         return;
     }
-    let mut s = NiuSession::spawn("cont-squote");
+    let mut s = NativeShellSession::spawn("cont-squote");
     s.wait_ready();
     s.send_line("printf '%s\\n' '$CONT_SQUOTE_OUT");
     s.expect_continuation();
@@ -102,7 +103,8 @@ fn continuation_brace_group_completes() {
         "{}\nCONT_BRACE_ONE=brace-one\nCONT_BRACE_TWO=brace-two\n",
         driver::default_rc()
     );
-    let mut s = NiuSession::spawn_custom("cont-brace", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("cont-brace", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     s.send_line("{ printf '%s\\n' \"$CONT_BRACE_ONE\";");
     s.expect_continuation();
@@ -117,8 +119,8 @@ fn continuation_brace_group_completes() {
 /// The closing line once ended `");)"` — a stray `)` after the list
 /// separator. The note that "GNU bash 5.3 (msys, oracle run 2026-10-13)
 /// tolerates that tail" was a MIS-ORACLE: the `winuxcmd/usr/bin/bash.exe`
-/// binary used as the "GNU" baseline is a launcher shim that spawns niu
-/// itself, so the tolerant verdict was niu's own behavior echoed back
+/// binary used as the "GNU" baseline is a launcher shim that spawns native-shell
+/// itself, so the tolerant verdict was native-shell's own behavior echoed back
 /// (rubash#852). The authority — WSL GNU bash 5.3.0, re-run 2026-10-19 —
 /// rejects the stray tail in every mode (`-c`, script, piped `-i`, real PTY
 /// `-i`: `syntax error near unexpected token ')'`, rc 2, subshell not run),
@@ -135,7 +137,8 @@ fn continuation_subshell_paren_completes() {
         "{}\nCONT_PAREN_ONE=sub-one\nCONT_PAREN_TWO=sub-two\n",
         driver::default_rc()
     );
-    let mut s = NiuSession::spawn_custom("cont-paren", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("cont-paren", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     s.send_line("(printf '%s\\n' \"$CONT_PAREN_ONE\";");
     s.expect_continuation();
@@ -159,7 +162,8 @@ fn continuation_subshell_stray_close_is_syntax_error() {
         "{}\nCONT_STRAY_OUT=stray-out-zznever\n",
         driver::default_rc()
     );
-    let mut s = NiuSession::spawn_custom("cont-stray", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("cont-stray", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     s.send_line("(printf '%s\\n' \"$CONT_STRAY_OUT\";");
     s.expect_continuation();
@@ -180,7 +184,7 @@ fn continuation_backslash_newline_joins() {
     if !require_pty_or_skip("continuation_backslash_newline_joins") {
         return;
     }
-    let mut s = NiuSession::spawn("cont-backslash");
+    let mut s = NativeShellSession::spawn("cont-backslash");
     s.wait_ready();
     s.send_line("echo backslash-first\\");
     s.expect_continuation();
@@ -200,7 +204,8 @@ fn continuation_heredoc_gathers_until_delimiter() {
         "{}\nCONT_HEREDOC_OUT=heredoc-body-line\n",
         driver::default_rc()
     );
-    let mut s = NiuSession::spawn_custom("cont-heredoc", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("cont-heredoc", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     s.send_line("cat <<HD");
     s.expect_continuation();
@@ -218,7 +223,8 @@ fn ctrl_c_during_continuation_abandons_construct() {
         return;
     }
     let rc = format!("{}\nCONT_C_OUT=never-zznever\n", driver::default_rc());
-    let mut s = NiuSession::spawn_custom("cont-ctrlc", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("cont-ctrlc", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     eprintln!("[T] ready");
     // The marker only exists in *output* if the construct executed: the
@@ -255,7 +261,8 @@ fn ctrl_c_on_empty_line_returns_new_prompt() {
         "{}\nCTRL_C_EMPTY_OUT=after-empty-ctrlc\n",
         driver::default_rc()
     );
-    let mut s = NiuSession::spawn_custom("ctrlc-empty", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("ctrlc-empty", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     s.send(CTRL_C);
     s.expect_prompt();
@@ -274,7 +281,8 @@ fn ctrl_c_midtyped_discards_line() {
         "{}\nCTRL_C_MID_OUT=discarded-marker\n",
         driver::default_rc()
     );
-    let mut s = NiuSession::spawn_custom("ctrlc-midtyped", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("ctrlc-midtyped", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     s.send("echo $CTRL_C_MID_OUT");
     s.send(CTRL_C);
@@ -295,7 +303,7 @@ fn ctrl_c_interrupts_external_command() {
     if !require_pty_or_skip("ctrl_c_interrupts_external_command") {
         return;
     }
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "ctrlc-external",
         &driver::default_rc(),
         &[],
@@ -326,7 +334,7 @@ fn ctrl_c_interrupts_builtin_sleep() {
     if !require_pty_or_skip("ctrl_c_interrupts_builtin_sleep") {
         return;
     }
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "ctrlc-sleep",
         &driver::default_rc(),
         &[],
@@ -349,7 +357,7 @@ fn ctrl_d_on_empty_line_exits() {
     if !require_pty_or_skip("ctrl_d_on_empty_line_exits") {
         return;
     }
-    let mut s = NiuSession::spawn("ctrld-exit");
+    let mut s = NativeShellSession::spawn("ctrld-exit");
     s.wait_ready();
     s.send(CTRL_D);
     let code = s.wait_exit();
@@ -358,7 +366,7 @@ fn ctrl_d_on_empty_line_exits() {
 
 /// Ctrl-D with text typed must not exit; the line stays editable.
 ///
-/// Echo-proof assertion discipline (niubash#367/#368): the expected marker
+/// Echo-proof assertion discipline (native-shell#367/#368): the expected marker
 /// must not appear verbatim in the submitted input, or the terminal echo of
 /// the typed text satisfies `expect` even when the completed line never
 /// executes. The probe therefore types `echo half-typed`, survives the
@@ -370,7 +378,7 @@ fn ctrl_d_midline_does_not_exit() {
     if !require_pty_or_skip("ctrl_d_midline_does_not_exit") {
         return;
     }
-    let mut s = NiuSession::spawn("ctrld-midline");
+    let mut s = NativeShellSession::spawn("ctrld-midline");
     s.wait_ready();
     s.send("echo half-typed");
     s.send(EOF_KEY);
@@ -389,7 +397,7 @@ fn ctrl_d_after_background_job_exits() {
     if !require_pty_or_skip("ctrl_d_after_background_job_exits") {
         return;
     }
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "ctrld-jobs",
         &driver::default_rc(),
         &[],
@@ -415,12 +423,12 @@ fn ctrl_d_after_background_job_exits() {
 /// job-control suspend (and therefore no "there are stopped jobs" warning
 /// path). The shell must at least stay alive and usable.
 #[test]
-#[ignore = "rubash#287 residual (post driver-send fix 2026-09-28): line editor swallows the line after 0x1a - the typed text plus Enter never submits; reedline keymap gap in niu, not a wedge"]
+#[ignore = "rubash#287 residual (post driver-send fix 2026-09-28): line editor swallows the line after 0x1a - the typed text plus Enter never submits; reedline keymap gap in native-shell, not a wedge"]
 fn ctrl_z_at_prompt_is_ignored_but_shell_survives() {
     if !require_pty_or_skip("ctrl_z_at_prompt_is_ignored_but_shell_survives") {
         return;
     }
-    let mut s = NiuSession::spawn("ctrlz-gap");
+    let mut s = NativeShellSession::spawn("ctrlz-gap");
     s.wait_ready();
     s.send("echo suspend-tried");
     s.send("\u{1a}");
@@ -436,12 +444,12 @@ fn ctrl_z_at_prompt_is_ignored_but_shell_survives() {
 
 /// `!!` re-executes the previous command live.
 #[test]
-#[ignore = "rubash#286: pre-existing on 688f224+f7a5b69 (reproduced on a baseline clone, 8/9 runs red) - interactive history expansion is dead; unaffected by the niubash#145 retirement"]
+#[ignore = "rubash#286: pre-existing on 688f224+f7a5b69 (reproduced on a baseline clone, 8/9 runs red) - interactive history expansion is dead; unaffected by the native-shell#145 retirement"]
 fn history_bang_bang_reexecutes_last_command() {
     if !require_pty_or_skip("history_bang_bang_reexecutes_last_command") {
         return;
     }
-    let mut s = NiuSession::spawn("hist-bangbang");
+    let mut s = NativeShellSession::spawn("hist-bangbang");
     s.wait_ready();
     s.send_line("echo bang-target");
     s.expect("bang-target");
@@ -455,12 +463,12 @@ fn history_bang_bang_reexecutes_last_command() {
 
 /// `!$` reuses the last argument of the previous command.
 #[test]
-#[ignore = "rubash#286: pre-existing on 688f224+f7a5b69 (reproduced on a baseline clone, 8/9 runs red) - interactive history expansion is dead; unaffected by the niubash#145 retirement"]
+#[ignore = "rubash#286: pre-existing on 688f224+f7a5b69 (reproduced on a baseline clone, 8/9 runs red) - interactive history expansion is dead; unaffected by the native-shell#145 retirement"]
 fn history_bang_dollar_reuses_last_argument() {
     if !require_pty_or_skip("history_bang_dollar_reuses_last_argument") {
         return;
     }
-    let mut s = NiuSession::spawn("hist-bangdollar");
+    let mut s = NativeShellSession::spawn("hist-bangdollar");
     s.wait_ready();
     s.send_line("echo first-arg second-arg");
     s.expect("first-arg second-arg");
@@ -470,7 +478,7 @@ fn history_bang_dollar_reuses_last_argument() {
     s.expect_prompt();
 }
 
-/// Echo-proof assertion discipline for every Matrix-3 case (niubash#367):
+/// Echo-proof assertion discipline for every Matrix-3 case (native-shell#367):
 /// the terminal echoes the submitted line, and `expect` matches the FIRST
 /// occurrence in the stream, so an expected marker that appears verbatim in
 /// the submitted input can be satisfied by that echo even when the command
@@ -485,7 +493,7 @@ fn alias_define_then_use_live() {
     if !require_pty_or_skip("alias_define_then_use_live") {
         return;
     }
-    let mut s = NiuSession::spawn("alias-live");
+    let mut s = NativeShellSession::spawn("alias-live");
     s.wait_ready();
     s.send_line("alias ll='printf \"alias-%s\\n\" done'");
     s.expect_prompt();
@@ -513,7 +521,7 @@ fn alias_quoted_and_unalias_use_function_live() {
     if !require_pty_or_skip("alias_quoted_and_unalias_use_function_live") {
         return;
     }
-    let mut session = NiuSession::spawn("alias-suppression-live");
+    let mut session = NativeShellSession::spawn("alias-suppression-live");
     session.wait_ready();
     session.send_line("ll() { printf \"function-%s\\n\" fallback; }");
     session.expect_prompt();
@@ -539,7 +547,7 @@ fn alias_quoted_and_unalias_use_function_live() {
 }
 
 /// The issue-367 headline shape, echo-proof: `alias` at one prompt, a bare
-/// use at the next. The interactive lines carry `$NIU_ALIAS_LIVE_OUT`, never
+/// use at the next. The interactive lines carry `$NATIVE_SHELL_ALIAS_LIVE_OUT`, never
 /// the value, so the echoed definition cannot satisfy the assertion — only
 /// expanding and executing the alias prints `alias-live-out`.
 #[test]
@@ -548,12 +556,13 @@ fn alias_use_at_next_prompt_executes_not_echo_matched() {
         return;
     }
     let rc = format!(
-        "{}\nNIU_ALIAS_LIVE_OUT=alias-live-out\n",
+        "{}\nNATIVE_SHELL_ALIAS_LIVE_OUT=alias-live-out\n",
         driver::default_rc()
     );
-    let mut s = NiuSession::spawn_custom("alias-live-strict", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("alias-live-strict", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
-    s.send_line("alias lx='echo $NIU_ALIAS_LIVE_OUT'");
+    s.send_line("alias lx='echo $NATIVE_SHELL_ALIAS_LIVE_OUT'");
     s.expect_prompt();
     s.send_line("lx");
     s.expect("alias-live-out");
@@ -576,9 +585,10 @@ fn rc_first_line_alias_expands_at_first_prompt() {
         "alias rc1='echo rc-line-one-out'\n",
         "PS1='P1> '\n",
         "PS2='P2> '\n",
-        "NIU_DISABLE_DEFAULT_PLUGINS=1\n",
+        "NATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n",
     );
-    let mut s = NiuSession::spawn_custom("alias-rc-line-one", rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("alias-rc-line-one", rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     s.send_line("rc1");
     s.expect("rc-line-one-out");
@@ -597,12 +607,13 @@ fn alias_same_line_definition_is_not_visible_until_next_prompt() {
         return;
     }
     let rc = format!(
-        "{}\nNIU_SAME_LINE_OUT=same-line-out\n",
+        "{}\nNATIVE_SHELL_SAME_LINE_OUT=same-line-out\n",
         driver::default_rc()
     );
-    let mut s = NiuSession::spawn_custom("alias-same-line", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("alias-same-line", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
-    s.send_line("alias sl='echo $NIU_SAME_LINE_OUT'; sl");
+    s.send_line("alias sl='echo $NATIVE_SHELL_SAME_LINE_OUT'; sl");
     s.expect("command not found");
     s.expect_absent("same-line-out", ABSENT_WINDOW);
     s.expect_prompt();
@@ -612,7 +623,7 @@ fn alias_same_line_definition_is_not_visible_until_next_prompt() {
     s.expect_prompt();
 }
 
-/// Matrix control for the value-dependence (niubash#367): an alias whose
+/// Matrix control for the value-dependence (native-shell#367): an alias whose
 /// value needs parser-level expansion (`;`/redirect) was exempt from the
 /// same-line suppression and worked even before the fix. It must keep
 /// working, so neither the fix nor a future suppression change regresses the
@@ -623,13 +634,18 @@ fn parser_level_alias_value_expands_across_prompts() {
         return;
     }
     let rc = format!(
-        "{}\nNIU_PARSE_ALIAS_A=parser-alias-a\nNIU_PARSE_ALIAS_B=parser-alias-b\n",
+        "{}\nNATIVE_SHELL_PARSE_ALIAS_A=parser-alias-a\nNATIVE_SHELL_PARSE_ALIAS_B=parser-alias-b\n",
         driver::default_rc()
     );
-    let mut s =
-        NiuSession::spawn_custom("alias-parser-value", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s = NativeShellSession::spawn_custom(
+        "alias-parser-value",
+        &rc,
+        &[],
+        (120, 30),
+        DEFAULT_TIMEOUT,
+    );
     s.wait_ready();
-    s.send_line("alias pa='echo $NIU_PARSE_ALIAS_A; echo $NIU_PARSE_ALIAS_B'");
+    s.send_line("alias pa='echo $NATIVE_SHELL_PARSE_ALIAS_A; echo $NATIVE_SHELL_PARSE_ALIAS_B'");
     s.expect_prompt();
     s.send_line("pa");
     s.expect("parser-alias-a");
@@ -642,12 +658,12 @@ fn parser_level_alias_value_expands_across_prompts() {
 /// `set -H` re-enables it.
 #[test]
 #[allow(non_snake_case)]
-#[ignore = "rubash#286: pre-existing on 688f224+f7a5b69 (reproduced on a baseline clone) - interactive history expansion/recording is dead; unaffected by the niubash#145 retirement"]
+#[ignore = "rubash#286: pre-existing on 688f224+f7a5b69 (reproduced on a baseline clone) - interactive history expansion/recording is dead; unaffected by the native-shell#145 retirement"]
 fn set_H_flips_history_expansion() {
     if !require_pty_or_skip("set_H_flips_history_expansion") {
         return;
     }
-    let mut s = NiuSession::spawn("set-H");
+    let mut s = NativeShellSession::spawn("set-H");
     s.wait_ready();
     s.send_line("echo flip-target");
     s.expect("flip-target");
@@ -676,9 +692,10 @@ fn ps1_parameter_expansion_rerenders_per_prompt() {
     if !require_pty_or_skip("ps1_parameter_expansion_rerenders_per_prompt") {
         return;
     }
-    let rc = "PS1='V[$V]> '\nPS2='P2> '\nNIU_DISABLE_DEFAULT_PLUGINS=1\n";
-    let mut s = NiuSession::spawn_custom("ps1-render", rc, &[], (120, 30), driver::DEFAULT_TIMEOUT);
-    s.expect("Niubash");
+    let rc = "PS1='V[$V]> '\nPS2='P2> '\nNATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n";
+    let mut s =
+        NativeShellSession::spawn_custom("ps1-render", rc, &[], (120, 30), driver::DEFAULT_TIMEOUT);
+    s.expect("Native Shell");
     s.expect("V[]> ");
     s.send_line("V=rendered");
     s.expect("V[rendered]> ");
@@ -687,7 +704,7 @@ fn ps1_parameter_expansion_rerenders_per_prompt() {
 }
 
 // ---------------------------------------------------------------------------
-// Matrix 3b: defaults-as-floor (oh-my-niu design §14.5) — the product's own
+// Matrix 3b: defaults-as-floor (oh-my-native-shell design §14.5) — the product's own
 // prompt is the lowest-priority floor; an enabled external framework claims
 // the slot through PS1, the floor yields without fighting, and releasing
 // the claim restores the floor.
@@ -700,15 +717,15 @@ fn floor_prompt_renders_when_ps1_unclaimed() {
     if !require_pty_or_skip("floor_prompt_renders_when_ps1_unclaimed") {
         return;
     }
-    let rc = "export NIU_FLOOR_PROBE=1\n";
-    let mut s = NiuSession::spawn_custom(
+    let rc = "export NATIVE_SHELL_FLOOR_PROBE=1\n";
+    let mut s = NativeShellSession::spawn_custom(
         "floor-unclaimed",
         rc,
         &[],
         (120, 30),
         driver::DEFAULT_TIMEOUT,
     );
-    s.expect("Niubash");
+    s.expect("Native Shell");
     // Floor shape: `{user}@{host} {cwd} %#` — the `@` join is the
     // structural marker (ANSI-styled pieces make full-prompt matching
     // brittle, same discipline as the other theme tests).
@@ -726,7 +743,7 @@ fn omb_theme_claim_renders_and_floor_returns_on_release() {
     if !require_pty_or_skip("omb_theme_claim_renders_and_floor_returns_on_release") {
         return;
     }
-    // Fixture oh-my-bash tree (same shape `niu plugin add --path` installs)
+    // Fixture oh-my-bash tree (same shape `native-shell plugin add --path` installs)
     // copied where the guarded loader's default lookup finds it.
     let sources_root = std::env::temp_dir().join(format!(
         "niu-floor-omb-{}-{}",
@@ -742,23 +759,23 @@ fn omb_theme_claim_renders_and_floor_returns_on_release() {
             .join("tests/fixtures/sources/oh-my-bash"),
         &omb,
     );
-    // The rc carries the managed-block shape `niu plugin enable` writes:
+    // The rc carries the managed-block shape `native-shell plugin enable` writes:
     // theme line + guarded loader for the fixture tree.
-    let base = "${NIU_PLUGIN_SOURCES_ROOT:-$HOME/.niubash/sources}/oh-my-bash";
+    let base = "${NATIVE_SHELL_PLUGIN_SOURCES_ROOT:-$HOME/.native-shell/sources}/oh-my-bash";
     let rc = format!(
         "OSH_THEME='agnoster'\nif [ -f \"{base}/oh-my-bash.sh\" ]; then\n  OSH=\"{base}\"\n  OSH=\"${{OSH//\\\\//}}\"\n  export OSH\n  . \"$OSH/oh-my-bash.sh\"\nfi\n"
     );
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "omb-claim",
         &rc,
         &[(
-            "NIU_PLUGIN_SOURCES_ROOT".to_string(),
+            "NATIVE_SHELL_PLUGIN_SOURCES_ROOT".to_string(),
             sources_root.to_string_lossy().into_owned(),
         )],
         (120, 30),
         HEAVY_TIMEOUT,
     );
-    s.expect("Niubash");
+    s.expect("Native Shell");
     // The theme's PS1 face renders through the bash-compatible channel.
     s.expect("agnoster-fixture-face");
     s.send_line("echo claim-alive");
@@ -797,7 +814,7 @@ fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
 
 /// TAB completes a command prefix from the builtin/PATH set.
 ///
-/// niubash#373: un-ignored. The pre-fix wiring spliced nothing into the
+/// native-shell#373: un-ignored. The pre-fix wiring spliced nothing into the
 /// line (the engine's partial completions were off) and the menu consumed
 /// follow-up input; with the partial completion the typed word's candidates
 /// commit their common prefix into the line and the Enter after the
@@ -807,7 +824,7 @@ fn tab_completes_command_name() {
     if !require_pty_or_skip("tab_completes_command_name") {
         return;
     }
-    let mut s = NiuSession::spawn("tab-cmd");
+    let mut s = NativeShellSession::spawn("tab-cmd");
     s.wait_ready();
     s.send("printf");
     s.send(TAB);
@@ -820,7 +837,7 @@ fn tab_completes_command_name() {
 
 /// TAB completes a unique file path prefix in the working directory.
 ///
-/// niubash#373 sub-item 2 (niubash#355 finding 4): un-ignored, and the
+/// native-shell#373 sub-item 2 (native-shell#355 finding 4): un-ignored, and the
 /// assertion is the execution-level one — a single Enter after the TAB must
 /// run the COMPLETED path (unique match commits outright, like bash
 /// readline); if the suffix stayed a menu preview, `cat uniqfix` would fail
@@ -830,7 +847,7 @@ fn tab_completes_unique_file_path() {
     if !require_pty_or_skip("tab_completes_unique_file_path") {
         return;
     }
-    let mut s = NiuSession::spawn("tab-path");
+    let mut s = NativeShellSession::spawn("tab-path");
     std::fs::write(s.start().join("uniqfix.dat"), "uniq-file-body\n").unwrap();
     s.wait_ready();
     s.send("cat uniqfix");
@@ -841,7 +858,7 @@ fn tab_completes_unique_file_path() {
     s.expect_absent("No such file", ABSENT_WINDOW);
 }
 
-/// niubash#373 F5 (the pre-fix rubash#287 shape): a TAB whose candidate set
+/// native-shell#373 F5 (the pre-fix rubash#287 shape): a TAB whose candidate set
 /// is EMPTY must not wedge the editor — whatever the completion machinery
 /// did (or didn't) splice, the Enter after it still submits the line.
 #[test]
@@ -849,7 +866,7 @@ fn tab_completion_empty_set_enter_still_submits() {
     if !require_pty_or_skip("tab_completion_empty_set_enter_still_submits") {
         return;
     }
-    let mut s = NiuSession::spawn("tab-empty");
+    let mut s = NativeShellSession::spawn("tab-empty");
     s.wait_ready();
     // The fresh sandbox start dir has no matching file and the word is not
     // in command position: the candidate set is empty.
@@ -860,14 +877,14 @@ fn tab_completion_empty_set_enter_still_submits() {
     s.expect_prompt();
 }
 
-/// The session history survives into `~/.niubash_history` and `history`
+/// The session history survives into `~/.native-shell_history` and `history`
 /// shows it live.
 #[test]
 fn history_file_persists_across_sessions() {
     if !require_pty_or_skip("history_file_persists_across_sessions") {
         return;
     }
-    let mut s = NiuSession::spawn("hist-persist");
+    let mut s = NativeShellSession::spawn("hist-persist");
     s.wait_ready();
     s.send_line("echo session-marker-one");
     s.expect("session-marker-one");
@@ -878,7 +895,8 @@ fn history_file_persists_across_sessions() {
     s.send_line("exit");
     let code = s.wait_exit();
     assert_eq!(code, 0);
-    let persisted = std::fs::read_to_string(s.home().join(".niubash_history")).unwrap_or_default();
+    let persisted =
+        std::fs::read_to_string(s.home().join(".native-shell_history")).unwrap_or_default();
     assert!(
         persisted.contains("session-marker-one"),
         "history file missing session marker; content: {persisted:?}"
@@ -887,12 +905,12 @@ fn history_file_persists_across_sessions() {
 
 /// `set +o history` stops recording new entries into the history file.
 #[test]
-#[ignore = "rubash#286: pre-existing on 688f224+f7a5b69 (reproduced on a baseline clone) - interactive history expansion/recording is dead; unaffected by the niubash#145 retirement"]
+#[ignore = "rubash#286: pre-existing on 688f224+f7a5b69 (reproduced on a baseline clone) - interactive history expansion/recording is dead; unaffected by the native-shell#145 retirement"]
 fn set_plus_o_history_stops_recording() {
     if !require_pty_or_skip("set_plus_o_history_stops_recording") {
         return;
     }
-    let mut s = NiuSession::spawn("hist-off");
+    let mut s = NativeShellSession::spawn("hist-off");
     s.wait_ready();
     s.send_line("set +o history");
     s.expect_prompt();
@@ -902,7 +920,8 @@ fn set_plus_o_history_stops_recording() {
     s.send_line("exit");
     let code = s.wait_exit();
     assert_eq!(code, 0);
-    let persisted = std::fs::read_to_string(s.home().join(".niubash_history")).unwrap_or_default();
+    let persisted =
+        std::fs::read_to_string(s.home().join(".native-shell_history")).unwrap_or_default();
     assert!(
         !persisted.contains("secret-not-recorded"),
         "command recorded despite `set +o history`; content: {persisted:?}"
@@ -921,9 +940,10 @@ fn default_theme_prompt_renders_with_ansi_escapes() {
         return;
     }
     // No PS1 in the rc: the built-in themed prompt is used.
-    let rc = "NIU_DISABLE_DEFAULT_PLUGINS=1\n";
-    let mut s = NiuSession::spawn_custom("theme-ansi", rc, &[], (120, 30), driver::DEFAULT_TIMEOUT);
-    s.expect("Niubash");
+    let rc = "NATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n";
+    let mut s =
+        NativeShellSession::spawn_custom("theme-ansi", rc, &[], (120, 30), driver::DEFAULT_TIMEOUT);
+    s.expect("Native Shell");
     std::thread::sleep(Duration::from_millis(500));
     s.send_line("echo theme-roundtrip");
     s.expect("theme-roundtrip");
@@ -939,7 +959,7 @@ fn default_theme_prompt_renders_with_ansi_escapes() {
 // Matrix 6: robustness
 // ---------------------------------------------------------------------------
 
-/// niubash#167: keystrokes typed while the prompt rebuilds must survive
+/// native-shell#167: keystrokes typed while the prompt rebuilds must survive
 /// into the edit line.
 ///
 /// Between two prompts the console sits in the cooked baseline while
@@ -962,7 +982,7 @@ fn typeahead_survives_prompt_rebuild_window() {
     }
     let rc = concat!(
         "PS1='P1> '\n",
-        "NIU_DISABLE_DEFAULT_PLUGINS=1\n",
+        "NATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n",
         "__eat(){ C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
         " -NoProfile -Command 'Start-Sleep -m 500;",
         " if([Console]::KeyAvailable){[void][Console]::ReadKey($true)}'",
@@ -970,7 +990,8 @@ fn typeahead_survives_prompt_rebuild_window() {
         "__p(){ __eat; PS1='P1> '; }\n",
         "PROMPT_COMMAND=__p\n",
     );
-    let mut s = NiuSession::spawn_custom("wt167-typeahead", rc, &[], (120, 30), HEAVY_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("wt167-typeahead", rc, &[], (120, 30), HEAVY_TIMEOUT);
     s.wait_ready();
     // One sacrificial cycle so the first PROMPT_COMMAND (eater) runs.
     s.send_line("true");
@@ -993,9 +1014,9 @@ fn typeahead_survives_prompt_rebuild_window() {
 ///
 /// The burst arrives as one ConPTY write with CRLF line breaks, so every
 /// break carries its LF partner (`Enter + CONTROL`) — the structural paste
-/// signature (niubash#252/#284). The chunk must not repaint or execute per
+/// signature (native-shell#252/#284). The chunk must not repaint or execute per
 /// line (the pre-#252 Windows behavior executed 186 of 200 pasted lines
-/// mid-paste, niubash#202); nothing runs until the submitting Enter, then
+/// mid-paste, native-shell#202); nothing runs until the submitting Enter, then
 /// every line runs in order.
 ///
 /// The markers are rc variables on purpose: the echoed edit buffer shows
@@ -1011,7 +1032,7 @@ fn rapid_input_burst_all_lines_execute() {
         .map(|i| format!("RB{i:02}=burst-{i:02}-OUT\n"))
         .collect();
     let rc = format!("{}\n{}", driver::default_rc(), vars);
-    let mut s = NiuSession::spawn_custom("burst", &rc, &[], (120, 30), HEAVY_TIMEOUT);
+    let mut s = NativeShellSession::spawn_custom("burst", &rc, &[], (120, 30), HEAVY_TIMEOUT);
     s.wait_ready();
     let burst: String = (1..=12).map(|i| format!("echo $RB{i:02}\r\n")).collect();
     s.send(&burst);
@@ -1027,7 +1048,7 @@ fn rapid_input_burst_all_lines_execute() {
     s.expect_prompt();
 }
 
-/// niubash#202: a bracketed multiline paste must land in the edit buffer as
+/// native-shell#202: a bracketed multiline paste must land in the edit buffer as
 /// ONE unit (GNU bash paste semantics) — nothing executes until the user
 /// submits the buffer, no matter how many newlines the chunk carries.
 ///
@@ -1051,7 +1072,8 @@ fn multiline_bracketed_paste_buffers_whole_chunk() {
         return;
     }
     let rc = format!("{}\nV1=PX1_DONE\nV2=PX2_DONE\n", driver::default_rc());
-    let mut s = NiuSession::spawn_custom("paste-bracketed", &rc, &[], (120, 30), HEAVY_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("paste-bracketed", &rc, &[], (120, 30), HEAVY_TIMEOUT);
     s.wait_ready();
     // One bracketed paste chunk, two commands, internal newlines, no
     // trailing Enter inside the markers.
@@ -1066,7 +1088,7 @@ fn multiline_bracketed_paste_buffers_whole_chunk() {
     s.expect_prompt();
 }
 
-/// Windows raw-input semantics after niubash#252/#284: ConPTY strips the
+/// Windows raw-input semantics after native-shell#252/#284: ConPTY strips the
 /// bracketed-paste markers, so a feed's intent is carried by its line
 /// breaks. A CRLF-separated feed (what a terminal paste from clipboard
 /// text looks like) carries the LF partner of every break — the structural
@@ -1092,7 +1114,8 @@ fn multiline_raw_paste_windows_crlf_buffers_and_cr_executes_per_line() {
         "{}\nPF1=RAWPASTE-ONE-DONE\nPF2=RAWPASTE-TWO-DONE\n",
         driver::default_rc()
     );
-    let mut s = NiuSession::spawn_custom("paste-raw-win", &rc, &[], (120, 30), HEAVY_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("paste-raw-win", &rc, &[], (120, 30), HEAVY_TIMEOUT);
     s.wait_ready();
     // CRLF-separated: the paste shape. Nothing executes while the chunk
     // buffers; one Enter runs the whole buffered script.
@@ -1110,7 +1133,7 @@ fn multiline_raw_paste_windows_crlf_buffers_and_cr_executes_per_line() {
     s.expect_prompt();
 }
 
-/// niubash#284, the regression itself: the first Enter of every
+/// native-shell#284, the regression itself: the first Enter of every
 /// `send_line` — the "text + Enter within one burst" shape every ConPTY
 /// driver, expect script, `send-keys` automation and fast human typist
 /// feeds — must submit with no second Enter. The back-to-back half is the
@@ -1122,7 +1145,7 @@ fn send_line_first_enter_submits_and_typeahead_executes() {
     if !require_pty_or_skip("send_line_first_enter_submits_and_typeahead_executes") {
         return;
     }
-    let mut s = NiuSession::spawn("paste-enter-284");
+    let mut s = NativeShellSession::spawn("paste-enter-284");
     s.wait_ready();
     s.send_line("echo probe284-first");
     s.expect("probe284-first");
@@ -1139,7 +1162,7 @@ fn send_line_first_enter_submits_and_typeahead_executes() {
     s.expect_prompt();
 }
 
-/// niubash#202/#252/#284 Windows paste contract at issue scale: a long
+/// native-shell#202/#252/#284 Windows paste contract at issue scale: a long
 /// CRLF paste (the issue author pasted 257 lines) must not execute a
 /// single line mid-paste and must run the whole buffered script on the
 /// user's one Enter. The in-suite load is 60 lines of rc-variable echoes;
@@ -1159,7 +1182,7 @@ fn multiline_crlf_paste_buffers_whole_chunk_and_executes_once() {
         .map(|i| format!("PB{i:02}=ISSUESCALE-{i:02}-DONE\n"))
         .collect();
     let rc = format!("{}\n{}", driver::default_rc(), vars);
-    let mut s = NiuSession::spawn_custom("paste-scale", &rc, &[], (120, 30), HEAVY_TIMEOUT);
+    let mut s = NativeShellSession::spawn_custom("paste-scale", &rc, &[], (120, 30), HEAVY_TIMEOUT);
     s.wait_ready();
     let paste: String = (1..=60).map(|i| format!("echo $PB{i:02}\r\n")).collect();
     s.send(&paste);
@@ -1175,7 +1198,7 @@ fn multiline_crlf_paste_buffers_whole_chunk_and_executes_once() {
     s.expect_prompt();
 }
 
-/// niubash#308: the paste and its submit Enter land in ONE burst —
+/// native-shell#308: the paste and its submit Enter land in ONE burst —
 /// `send(paste_crlf + "\r")`, a single write, the Enter <50 ms after the
 /// last paste key. The trailing bare CR carries no LF partner, so it is the
 /// submit, not paste data: the whole buffered chunk must execute on that
@@ -1200,8 +1223,13 @@ fn paste_with_same_burst_enter_submits_on_first_enter() {
         "{}\nTS1=BURSTENTER-ONE-DONE\nTS2=BURSTENTER-TWO-DONE\n",
         driver::default_rc()
     );
-    let mut s =
-        NiuSession::spawn_custom("paste-burst-enter-308", &rc, &[], (120, 30), HEAVY_TIMEOUT);
+    let mut s = NativeShellSession::spawn_custom(
+        "paste-burst-enter-308",
+        &rc,
+        &[],
+        (120, 30),
+        HEAVY_TIMEOUT,
+    );
     s.wait_ready();
     // One write — paste body plus the submit Enter, no gap, no second send.
     s.send("echo $TS1\r\necho $TS2\r\n\r");
@@ -1213,7 +1241,7 @@ fn paste_with_same_burst_enter_submits_on_first_enter() {
     s.expect_prompt();
 }
 
-/// The owner's niubash#341 pasted script (2026-10-14), sent with the
+/// The owner's native-shell#341 pasted script (2026-10-14), sent with the
 /// Windows Terminal KEY_EVENT line-break shape: a bare CR per line break,
 /// `\r\r` for empty lines, no LF anywhere — the record shape a real WT
 /// paste synthesizes behind ConPTY (record-level evidence and method:
@@ -1229,7 +1257,7 @@ fn paste_with_same_burst_enter_submits_on_first_enter() {
 /// probe-pushback/batch-boundary interleaving the corruption needs. The
 /// deterministic RED/GREEN reproduction lives at the protocol layer:
 /// `wt_bare_cr_paste_survives_reedline_batch_protocol_341` and the slice
-/// sweeps in `crates/niubash-runtime/src/repl.rs` go red on 6332f99 and
+/// sweeps in `crates/native-shell-runtime/src/repl.rs` go red on 6332f99 and
 /// pin the mechanism byte for byte.
 ///
 /// What this guard pins: the full script runs end to end over the
@@ -1248,7 +1276,7 @@ fn wt_paste_bare_cr_key_event_shape_runs_owner_script_341() {
     if !require_pty_or_skip("wt_paste_bare_cr_key_event_shape_runs_owner_script_341") {
         return;
     }
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "paste-wt-keyevent-341",
         &driver::default_rc(),
         &[],
@@ -1258,7 +1286,7 @@ fn wt_paste_bare_cr_key_event_shape_runs_owner_script_341() {
     s.wait_ready();
     // One write, as the earlier paste regressions feed. (Chunked writes
     // were tried and are WORSE here: this dev box routinely carries a
-    // dozen-plus live interactive niu sessions, and the extra batch
+    // dozen-plus live interactive native-shell sessions, and the extra batch
     // boundaries multiply exposure to that host noise — the same family
     // as the continuation/ctrl_d cases this host fails on master too.
     // CI's clean runner is the gate for this guard.)
@@ -1296,15 +1324,20 @@ fn wt_paste_bare_cr_single_line_still_submits_341() {
         return;
     }
     let rc = format!("{}\nWT341=KEYEVENT-OK\n", driver::default_rc());
-    let mut s =
-        NiuSession::spawn_custom("paste-wt-single-341", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s = NativeShellSession::spawn_custom(
+        "paste-wt-single-341",
+        &rc,
+        &[],
+        (120, 30),
+        DEFAULT_TIMEOUT,
+    );
     s.wait_ready();
     s.send("echo $WT341\r");
     s.expect("KEYEVENT-OK");
     s.expect_prompt();
 }
 
-/// niubash#420, the minimal wedge: a typeahead burst ending in a bare
+/// native-shell#420, the minimal wedge: a typeahead burst ending in a bare
 /// `\r\r` — "submit the line, submit the empty line" in GNU typeahead
 /// semantics (two send_line Enters written in one pty write; an expect
 /// script's back-to-back Enters). The bytes are identical to the WT
@@ -1320,14 +1353,15 @@ fn typeahead_bare_cr_pair_submits_per_line_420() {
         return;
     }
     let rc = format!("{}\nW420A=CR-PAIR-OUT\n", driver::default_rc());
-    let mut s = NiuSession::spawn_custom("w420-cr-pair", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("w420-cr-pair", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     s.send("echo $W420A\r\r");
     s.expect("CR-PAIR-OUT");
     s.expect_prompt();
 }
 
-/// niubash#420, the PR #418 shape that found the wedge: the Ctrl+R
+/// native-shell#420, the PR #418 shape that found the wedge: the Ctrl+R
 /// reverse-search accept-Enter and the submit-Enter land as ONE burst
 /// (`\r\r` after the query). The accepting Enter must LOAD the match and
 /// the requeued second Enter must SUBMIT it — no second send, no pacing.
@@ -1341,7 +1375,8 @@ fn ctrl_r_accept_submit_in_one_burst_420() {
         return;
     }
     let rc = format!("{}\nW420SEED=CR-SEED-OUT\n", driver::default_rc());
-    let mut s = NiuSession::spawn_custom("w420-ctrlr", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("w420-ctrlr", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     s.send_line("echo $W420SEED");
     s.expect("CR-SEED-OUT");
@@ -1355,7 +1390,7 @@ fn ctrl_r_accept_submit_in_one_burst_420() {
     s.expect_prompt();
 }
 
-/// niubash#417, the wedge this fix closes: the Enter signature probe reads
+/// native-shell#417, the wedge this fix closes: the Enter signature probe reads
 /// the queue's next record to decide a bare Enter, and with typeahead
 /// behind it (the next line of a fast burst) that record used to PARK
 /// in-process while the accepted command ran — the command's engine `read`
@@ -1369,7 +1404,7 @@ fn probe_parked_typeahead_reaches_engine_read_417() {
     if !require_pty_or_skip("probe_parked_typeahead_reaches_engine_read_417") {
         return;
     }
-    let mut s = NiuSession::spawn("w417-read");
+    let mut s = NativeShellSession::spawn("w417-read");
     s.wait_ready();
     // ONE write: the submit Enter with its typeahead 'Z' immediately
     // behind it — the probe must consume 'Z' to see it is not an LF
@@ -1380,7 +1415,7 @@ fn probe_parked_typeahead_reaches_engine_read_417() {
     s.expect_prompt();
 }
 
-/// niubash#417, the typeahead-burst form (the #420 pair test's shape, one
+/// native-shell#417, the typeahead-burst form (the #420 pair test's shape, one
 /// line further): three back-to-back lines in one write. Line 2's submit
 /// probe parks the 'W' of line 3; the accepted `read -n1` must get exactly
 /// that key — and the head writeback must NOT let line 2's own text run
@@ -1390,7 +1425,7 @@ fn typeahead_burst_read_line_gets_parked_key_417() {
     if !require_pty_or_skip("typeahead_burst_read_line_gets_parked_key_417") {
         return;
     }
-    let mut s = NiuSession::spawn("w417-burst");
+    let mut s = NativeShellSession::spawn("w417-burst");
     s.wait_ready();
     s.send("echo ONE417\rread -n1 R417B; echo \"B=[$R417B]\"\rW");
     s.expect("ONE417");
@@ -1398,7 +1433,7 @@ fn typeahead_burst_read_line_gets_parked_key_417() {
     s.expect_prompt();
 }
 
-/// niubash#434, the discriminating probe: a parked CONTROL chord must ride
+/// native-shell#434, the discriminating probe: a parked CONTROL chord must ride
 /// the #417 submit writeback as the conhost control-code record — uChar
 /// 0x12 for Ctrl+R — because the accepted command's engine `read` is a
 /// raw-byte reader: it gets the re-injected record's uChar as-is. The
@@ -1417,7 +1452,7 @@ fn parked_ctrl_r_writeback_reaches_engine_read_as_control_byte_434() {
         return;
     }
     let rc = format!("{}\nW434OK=CTRL12-BYTE\n", driver::default_rc());
-    let mut s = NiuSession::spawn_custom("w434-read", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s = NativeShellSession::spawn_custom("w434-read", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     // ONE write: the submit Enter with the Ctrl+R byte (0x12) immediately
     // behind it. ConPTY synthesizes the control-code record (the channel
@@ -1432,7 +1467,7 @@ fn parked_ctrl_r_writeback_reaches_engine_read_as_control_byte_434() {
     s.expect_prompt();
 }
 
-/// niubash#434, the event-level round trip through the REAL crossterm
+/// native-shell#434, the event-level round trip through the REAL crossterm
 /// parser: the chord parked behind a submit must come back out of the
 /// writeback as an event reedline still reads as Ctrl+R — reverse history
 /// search opens at the next prompt, exactly like a freshly typed chord.
@@ -1447,7 +1482,8 @@ fn parked_ctrl_r_writeback_replays_as_history_search_434() {
         return;
     }
     let rc = format!("{}\nW434SEED=REPLAY-OUT\n", driver::default_rc());
-    let mut s = NiuSession::spawn_custom("w434-replay", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("w434-replay", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     s.send_line("echo $W434SEED");
     s.expect("REPLAY-OUT");
@@ -1465,7 +1501,7 @@ fn parked_ctrl_r_writeback_replays_as_history_search_434() {
     s.expect_prompt();
 }
 
-/// The niubash#341 owner script (issue #341, Windows Terminal,
+/// The native-shell#341 owner script (issue #341, Windows Terminal,
 /// 2026-10-14): 76 non-empty lines of bash with 16 empty-line boundaries,
 /// including the two `if is_even` blocks whose line starts were shredded.
 /// One deviation, documented: section 3's multiline
@@ -1616,7 +1652,7 @@ fi
 echo "===== 测试结束 ====="
 "###;
 
-/// niubash#277/#280 adjacency: ESC-sequenced arrow keys (ConPTY synthesizes
+/// native-shell#277/#280 adjacency: ESC-sequenced arrow keys (ConPTY synthesizes
 /// them into arrow KEY_EVENTs from the pty's ESC[A..D stream) ride the
 /// input path untouched by paste-chunk detection — no chunk opens, no
 /// keystroke or the final Enter is absorbed, and the edits land.
@@ -1625,7 +1661,7 @@ fn esc_sequenced_arrow_keys_edit_without_absorption() {
     if !require_pty_or_skip("esc_sequenced_arrow_keys_edit_without_absorption") {
         return;
     }
-    let mut s = NiuSession::spawn("arrow-277");
+    let mut s = NativeShellSession::spawn("arrow-277");
     s.wait_ready();
     // A hot burst into the buffer, then cursor motion, then an insert.
     s.send("echo abc");
@@ -1641,7 +1677,7 @@ fn esc_sequenced_arrow_keys_edit_without_absorption() {
     s.expect_prompt();
 }
 
-/// niubash#202 (Windows path): Ctrl+V (EditCommand::PasteSystem) inserts the
+/// native-shell#202 (Windows path): Ctrl+V (EditCommand::PasteSystem) inserts the
 /// whole clipboard into the edit buffer as one unit — no line executes
 /// until Enter — restoring GNU bash paste semantics on Windows where
 /// bracketed paste cannot reach the shell.
@@ -1664,7 +1700,7 @@ fn ctrl_v_clipboard_paste_single_buffer_execution() {
     // (`echo $V1`) can never satisfy the "not executed" assertions — only
     // the executed output text can.
     let rc = format!("{}\nV1=CBX1_DONE\nV2=CBX2_DONE\n", driver::default_rc());
-    let mut s = NiuSession::spawn_custom("paste-ctrlv", &rc, &[], (120, 30), HEAVY_TIMEOUT);
+    let mut s = NativeShellSession::spawn_custom("paste-ctrlv", &rc, &[], (120, 30), HEAVY_TIMEOUT);
     s.wait_ready();
     let mut set = std::process::Command::new(PS);
     set.args([
@@ -1697,7 +1733,7 @@ fn resize_does_not_crash_shell() {
     if !require_pty_or_skip("resize_does_not_crash_shell") {
         return;
     }
-    let mut s = NiuSession::spawn("resize");
+    let mut s = NativeShellSession::spawn("resize");
     s.wait_ready();
     s.resize(60, 20);
     std::thread::sleep(Duration::from_millis(200));
@@ -1712,61 +1748,61 @@ fn resize_does_not_crash_shell() {
 }
 
 // ---------------------------------------------------------------------------
-// niubash#145: interactive startup must reach the prompt when an rc carries
+// native-shell#145: interactive startup must reach the prompt when an rc carries
 // the retired built-in plugin/theme stack lines. The original bug: the host
-// spawned the 'niubash-gitstatus' worker thread for the async git prompt and
+// spawned the 'native-shell-gitstatus' worker thread for the async git prompt and
 // the main thread waited on it before the first prompt render, so a shell
-// whose rc loaded the framework (non-empty NIU_PLUGINS) hung forever after
+// whose rc loaded the framework (non-empty NATIVE_SHELL_PLUGINS) hung forever after
 // the banner. The whole machinery is deleted; these tests pin the fix by
 // driving the real interactive (PTY) path with timeout-bounded asserts.
 // ---------------------------------------------------------------------------
 
 /// The legacy rc exactly as the old setup wizard wrote it (stack variables,
-/// export block, oh-my-niu discovery loop), plus the sentinels.
+/// export block, oh-my-native-shell discovery loop), plus the sentinels.
 fn legacy_stack_rc() -> String {
-    r#"NIU_THEME='spaceship'
-NIU_THEME_PLUGIN='theme-spaceship'
-NIU_PROMPT_SYMBOL='❯'
-NIU_DISABLE_DEFAULT_PLUGINS=1
-export NIU_THEME NIU_THEME_PLUGIN NIU_PROMPT_SYMBOL
-export NIU_DISABLE_DEFAULT_PLUGINS
-NIU_PLUGINS=(prompt-core git starship common-aliases path-tools extract zoxide fzf thefuck command-not-found direnv dotenv kubectl npm keybindings env-sync)
-if [ -z "${NIUBASH:-}" ]; then
-  for __niubash_bundle in "$HOME/.oh-my-niu" "$HOME/.niubash/oh-my-niu" "$HOME/.niubash/bundles/oh-my-niu"/* "$NIU_APP_BUNDLE_PATH"; do
-    if [ -f "$__niubash_bundle/oh-my-niu.niu" ]; then
-      NIUBASH="$__niubash_bundle"
-      export NIUBASH
+    r#"NATIVE_SHELL_THEME='spaceship'
+NATIVE_SHELL_THEME_PLUGIN='theme-spaceship'
+NATIVE_SHELL_PROMPT_SYMBOL='❯'
+NATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1
+export NATIVE_SHELL_THEME NATIVE_SHELL_THEME_PLUGIN NATIVE_SHELL_PROMPT_SYMBOL
+export NATIVE_SHELL_DISABLE_DEFAULT_PLUGINS
+NATIVE_SHELL_PLUGINS=(prompt-core git starship common-aliases path-tools extract zoxide fzf thefuck command-not-found direnv dotenv kubectl npm keybindings env-sync)
+if [ -z "${NATIVE_SHELL:-}" ]; then
+  for __native_shell_bundle in "$HOME/.oh-my-native_shell" "$HOME/.native_shell/oh-my-native_shell" "$HOME/.native_shell/bundles/oh-my-native_shell"/* "$NATIVE_SHELL_APP_BUNDLE_PATH"; do
+    if [ -f "$__native_shell_bundle/oh-my-native_shell.nsh" ]; then
+      NATIVE_SHELL="$__native_shell_bundle"
+      export NATIVE_SHELL
       break
     fi
   done
 fi
-if [ -f "$NIUBASH/oh-my-niu.niu" ]; then
-  . "$NIUBASH/oh-my-niu.niu"
+if [ -f "$NATIVE_SHELL/oh-my-native_shell.nsh" ]; then
+  . "$NATIVE_SHELL/oh-my-native_shell.nsh"
 fi
-unset __niubash_bundle
+unset __native_shell_bundle
 PS1='P1> '
 PS2='P2> '
 "#
     .to_string()
 }
 
-/// A minimal oh-my-niu-shaped framework entry the legacy discovery loop can
+/// A minimal oh-my-native-shell-shaped framework entry the legacy discovery loop can
 /// find: it defines the hook-runner functions the old host dispatched. If the
 /// async git-status machinery ever comes back, sourcing this plus the
-/// non-empty NIU_PLUGINS list is what used to hang startup.
+/// non-empty NATIVE_SHELL_PLUGINS list is what used to hang startup.
 fn write_legacy_framework_fixture(root: &std::path::Path) -> std::path::PathBuf {
-    let bundle = root.join("oh-my-niu");
+    let bundle = root.join("oh-my-native-shell");
     std::fs::create_dir_all(&bundle).expect("create fixture bundle dir");
     std::fs::write(
-        bundle.join("oh-my-niu.niu"),
-        r#"# legacy framework fixture (niubash#145 regression)
-niubash_run_precmd_hooks() {
-  NIU_PROMPT_GIT="SNAPSHOT:precmd:${NIU_LAST_EXIT_CODE:-0} "
-  export NIU_PROMPT_GIT
+        bundle.join("oh-my-native-shell.nsh"),
+        r#"# legacy framework fixture (native-shell#145 regression)
+native_shell_run_precmd_hooks() {
+  NATIVE_SHELL_PROMPT_GIT="SNAPSHOT:precmd:${NATIVE_SHELL_LAST_EXIT_CODE:-0} "
+  export NATIVE_SHELL_PROMPT_GIT
   return 0
 }
-niubash_run_startup_hooks() { :; }
-niubash_run_preexec_hooks() { :; }
+native_shell_run_startup_hooks() { :; }
+native_shell_run_preexec_hooks() { :; }
 "#,
     )
     .expect("write framework fixture");
@@ -1777,11 +1813,11 @@ niubash_run_preexec_hooks() { :; }
 /// driver timeout) with the legacy stack rc, and interactive commands must
 /// keep working afterwards.
 #[test]
-fn legacy_niu_plugins_rc_reaches_prompt() {
-    if !require_pty_or_skip("legacy_niu_plugins_rc_reaches_prompt") {
+fn legacy_native_shell_plugins_rc_reaches_prompt() {
+    if !require_pty_or_skip("legacy_native_shell_plugins_rc_reaches_prompt") {
         return;
     }
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "legacy-plugins",
         &legacy_stack_rc(),
         &[],
@@ -1795,8 +1831,8 @@ fn legacy_niu_plugins_rc_reaches_prompt() {
 }
 
 /// Same rc, but the discovery loop actually finds a framework entry through
-/// $NIU_APP_BUNDLE_PATH — the exact shape of the owner-machine hang (rc
-/// sourced the framework, NIU_PLUGINS non-empty, prompt never rendered).
+/// $NATIVE_SHELL_APP_BUNDLE_PATH — the exact shape of the owner-machine hang (rc
+/// sourced the framework, NATIVE_SHELL_PLUGINS non-empty, prompt never rendered).
 #[test]
 fn legacy_framework_rc_reaches_prompt() {
     if !require_pty_or_skip("legacy_framework_rc_reaches_prompt") {
@@ -1811,11 +1847,11 @@ fn legacy_framework_rc_reaches_prompt() {
             .as_nanos()
     ));
     let bundle = write_legacy_framework_fixture(&fixture_root);
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "legacy-framework",
         &legacy_stack_rc(),
         &[(
-            "NIU_APP_BUNDLE_PATH".to_string(),
+            "NATIVE_SHELL_APP_BUNDLE_PATH".to_string(),
             bundle.to_string_lossy().into_owned(),
         )],
         (120, 30),
@@ -1823,7 +1859,7 @@ fn legacy_framework_rc_reaches_prompt() {
     );
     s.wait_ready();
     // The framework entry was really sourced (rc-side effect survives).
-    s.send_line("command -v niubash_run_precmd_hooks >/dev/null && echo fw-loaded");
+    s.send_line("command -v native_shell_run_precmd_hooks >/dev/null && echo fw-loaded");
     s.expect("fw-loaded");
     s.expect_prompt();
     s.send_line("echo still-alive");
@@ -1834,7 +1870,7 @@ fn legacy_framework_rc_reaches_prompt() {
 }
 
 // ---------------------------------------------------------------------------
-// niubash#147: after `cd` under a paren-bearing theme prompt (robbyrussell's
+// native-shell#147: after `cd` under a paren-bearing theme prompt (robbyrussell's
 // `git:(branch)`), the shell must not report
 // `unexpected EOF while looking for matching ')'` and the next prompt must
 // not carry a stray literal `)` as echoed input. The owner report (build
@@ -1852,7 +1888,7 @@ fn paren_theme_rc() -> String {
     format!(
         "PS1='{e}[1;92m\u{279c}{e}[97m  {e}[96m\\W{e}[97m {e}[94mgit:({e}[91mmaster{e}[94m){e}[97m '\n\
          PS2='P2> '\n\
-         NIU_DISABLE_DEFAULT_PLUGINS=1\n"
+         NATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n"
     )
 }
 
@@ -1863,14 +1899,14 @@ fn cd_with_paren_theme_prompt_leaks_nothing_into_input() {
     if !require_pty_or_skip("cd_with_paren_theme_prompt_leaks_nothing_into_input") {
         return;
     }
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "paren-cd",
         &paren_theme_rc(),
         &[],
         (120, 30),
         DEFAULT_TIMEOUT,
     );
-    s.expect("Niubash");
+    s.expect("Native Shell");
     s.expect("git:(");
 
     let repo = s.start().join("repo");
@@ -1925,14 +1961,14 @@ fn cd_with_cdpath_prints_directory_like_gnu() {
     if !require_pty_or_skip("cd_with_cdpath_prints_directory_like_gnu") {
         return;
     }
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "cdpath-print",
         &paren_theme_rc(),
         &[],
         (120, 30),
         DEFAULT_TIMEOUT,
     );
-    s.expect("Niubash");
+    s.expect("Native Shell");
     s.expect("git:(");
     std::fs::create_dir_all(s.start().join("repo")).unwrap();
 
@@ -1952,7 +1988,7 @@ fn cd_with_cdpath_prints_directory_like_gnu() {
 }
 
 // ---------------------------------------------------------------------------
-// Matrix 7: multi-line theme cursor placement (niubash#169)
+// Matrix 7: multi-line theme cursor placement (native-shell#169)
 // ---------------------------------------------------------------------------
 
 /// PS1 of the oh-my-bash/bash-it powerline-multiline family: the right-aligned
@@ -1973,12 +2009,13 @@ fn multiline_right_align_theme_renders_tail_without_cursor_surgery() {
     }
     let rc = concat!(
         r"PS1='\[\e[34;1m\]left-seg \[\e[0m\]\e[500C\e[6D\[\e[33;1m\] RIGHT \[\e[0m\]\ni7> '",
-        "\nPS2='P2> '\nNIU_DISABLE_DEFAULT_PLUGINS=1\n",
+        "\nPS2='P2> '\nNATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n",
     );
     // 80 columns: ` RIGHT ` is 7 visible columns, so the editor's right
     // prompt is placed at column 73 (0-based).
-    let mut s = NiuSession::spawn_custom("i169-right-align", rc, &[], (80, 24), DEFAULT_TIMEOUT);
-    s.expect("Niubash");
+    let mut s =
+        NativeShellSession::spawn_custom("i169-right-align", rc, &[], (80, 24), DEFAULT_TIMEOUT);
+    s.expect("Native Shell");
     // Both halves render: the left segment inline, the aligned tail through
     // the editor's right prompt.
     s.expect("left-seg");
@@ -2019,11 +2056,16 @@ fn multiline_right_align_theme_cjk_tail_width_matches_editor_columns() {
     }
     let rc = concat!(
         r"PS1='\[\e[34;1m\]left-seg \[\e[0m\]\e[500C\e[6D\[\e[33;1m\] 项目 \[\e[0m\]\ni7> '",
-        "\nPS2='P2> '\nNIU_DISABLE_DEFAULT_PLUGINS=1\n",
+        "\nPS2='P2> '\nNATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n",
     );
-    let mut s =
-        NiuSession::spawn_custom("i169-right-align-cjk", rc, &[], (80, 24), DEFAULT_TIMEOUT);
-    s.expect("Niubash");
+    let mut s = NativeShellSession::spawn_custom(
+        "i169-right-align-cjk",
+        rc,
+        &[],
+        (80, 24),
+        DEFAULT_TIMEOUT,
+    );
+    s.expect("Native Shell");
     s.expect("left-seg");
     s.expect("项目");
     let transcript = s.transcript();
@@ -2049,7 +2091,7 @@ fn multiline_right_align_theme_cjk_tail_width_matches_editor_columns() {
 }
 
 // ---------------------------------------------------------------------------
-// Matrix 8: vi editing mode (niubash#184)
+// Matrix 8: vi editing mode (native-shell#184)
 // ---------------------------------------------------------------------------
 //
 // `set -o vi` / `set -o emacs` must switch the LIVE line editor, like GNU
@@ -2076,7 +2118,7 @@ const ESC_KEY: &str = "\u{1b}";
 /// A lone ESC byte that shares one read chunk with the following key is
 /// parsed by crossterm as Alt+<key>, not as the vi ESC — the separate
 /// write (and the gap) is what makes it a standalone Esc key event.
-fn send_esc(s: &mut NiuSession) {
+fn send_esc(s: &mut NativeShellSession) {
     s.send(ESC_KEY);
     std::thread::sleep(Duration::from_millis(200));
 }
@@ -2085,19 +2127,24 @@ fn send_esc(s: &mut NiuSession) {
 /// rebuild) and consume every pending paint, so the next keystrokes land
 /// on a settled prompt and no later assertion depends on which repaint a
 /// consuming match lands in.
-fn settle_and_drain(s: &mut NiuSession) {
+fn settle_and_drain(s: &mut NativeShellSession) {
     std::thread::sleep(Duration::from_millis(400));
     s.drain_screen();
 }
 
 /// Count occurrences of `needle` in everything seen so far.
-fn transcript_count(s: &NiuSession, needle: &str) -> usize {
+fn transcript_count(s: &NativeShellSession, needle: &str) -> usize {
     s.transcript().matches(needle).count()
 }
 
 /// Wait until `needle` has been seen at least `at_least` times and return
 /// the count; panics with the transcript on timeout.
-fn wait_for_count(s: &NiuSession, needle: &str, at_least: usize, timeout: Duration) -> usize {
+fn wait_for_count(
+    s: &NativeShellSession,
+    needle: &str,
+    at_least: usize,
+    timeout: Duration,
+) -> usize {
     let deadline = std::time::Instant::now() + timeout;
     loop {
         let count = transcript_count(s, needle);
@@ -2125,7 +2172,8 @@ fn vi_rc_set_o_vi_recalls_history_with_k_at_startup() {
     }
     let mut rc = driver::default_rc();
     rc.push_str("set -o vi\n");
-    let mut s = NiuSession::spawn_custom("vi-rc-startup", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
+    let mut s =
+        NativeShellSession::spawn_custom("vi-rc-startup", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
     s.wait_ready();
     s.send_line("echo vi_rc_m1");
     // Typed-buffer paint + echo output.
@@ -2151,10 +2199,15 @@ fn vi_floor_indicator_follows_esc_live() {
     if !require_pty_or_skip("vi_floor_indicator_follows_esc_live") {
         return;
     }
-    let rc = "set -o vi\nNIU_DISABLE_DEFAULT_PLUGINS=1\n".to_string();
-    let mut s =
-        NiuSession::spawn_custom("vi-floor-indicator", &rc, &[], (120, 30), DEFAULT_TIMEOUT);
-    s.expect("Niubash");
+    let rc = "set -o vi\nNATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n".to_string();
+    let mut s = NativeShellSession::spawn_custom(
+        "vi-floor-indicator",
+        &rc,
+        &[],
+        (120, 30),
+        DEFAULT_TIMEOUT,
+    );
+    s.expect("Native Shell");
     // Shrink the cwd so the prompt cannot wrap: ConPTY re-renders wrapped
     // lines with injected breaks, which would split `% ` from the
     // indicator.
@@ -2191,7 +2244,7 @@ fn vi_set_o_live_switch_vi_emacs_vi_journey() {
     if !require_pty_or_skip("vi_set_o_live_switch_vi_emacs_vi_journey") {
         return;
     }
-    let mut s = NiuSession::spawn("vi-live-switch");
+    let mut s = NativeShellSession::spawn("vi-live-switch");
     s.wait_ready();
 
     // Enter vi mode mid-session.
@@ -2255,7 +2308,7 @@ fn vi_normal_dd_kills_line_before_insert() {
     if !require_pty_or_skip("vi_normal_dd_kills_line_before_insert") {
         return;
     }
-    let mut s = NiuSession::spawn("vi-dd");
+    let mut s = NativeShellSession::spawn("vi-dd");
     s.wait_ready();
     s.send_line("set -o vi");
     settle_and_drain(&mut s);
@@ -2289,7 +2342,7 @@ fn vi_default_emacs_keeps_k_typing() {
     if !require_pty_or_skip("vi_default_emacs_keeps_k_typing") {
         return;
     }
-    let mut s = NiuSession::spawn("vi-default-emacs");
+    let mut s = NativeShellSession::spawn("vi-default-emacs");
     s.wait_ready();
     s.send_line("echo emacs_m5");
     let baseline = wait_for_count(&s, "emacs_m5", 2, DEFAULT_TIMEOUT);
@@ -2307,7 +2360,7 @@ fn vi_default_emacs_keeps_k_typing() {
 }
 
 // ---------------------------------------------------------------------------
-// Matrix 7: PROMPT_COMMAND exit-jump consumption (niubash#191)
+// Matrix 7: PROMPT_COMMAND exit-jump consumption (native-shell#191)
 // ---------------------------------------------------------------------------
 //
 // `PROMPT_COMMAND='exit'` must end the session: the engine re-arms the
@@ -2323,7 +2376,7 @@ fn prompt_command_exit_ends_repl_session_with_status() {
     if !require_pty_or_skip("prompt_command_exit_ends_repl_session_with_status") {
         return;
     }
-    let mut s = NiuSession::spawn("pc-exit-jump");
+    let mut s = NativeShellSession::spawn("pc-exit-jump");
     s.wait_ready();
     s.send_line("PROMPT_COMMAND='exit 5'");
     s.expect_prompt();
@@ -2345,7 +2398,7 @@ fn prompt_command_plain_failure_keeps_session_alive() {
     if !require_pty_or_skip("prompt_command_plain_failure_keeps_session_alive") {
         return;
     }
-    let mut s = NiuSession::spawn("pc-fail-survive");
+    let mut s = NativeShellSession::spawn("pc-fail-survive");
     s.wait_ready();
     s.send_line("PROMPT_COMMAND='false'");
     s.expect_prompt();
@@ -2365,10 +2418,10 @@ fn prompt_command_exit_ends_noediting_repl_session() {
     let rc = concat!(
         "PS1='P1> '\n",
         "PS2='P2> '\n",
-        "NIU_DISABLE_DEFAULT_PLUGINS=1\n",
+        "NATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n",
         "PROMPT_COMMAND='exit 7'\n",
     );
-    let mut s = NiuSession::spawn_custom_with_args(
+    let mut s = NativeShellSession::spawn_custom_with_args(
         "pc-exit-noedit",
         rc,
         &["--noediting"],
@@ -2376,7 +2429,7 @@ fn prompt_command_exit_ends_noediting_repl_session() {
         (120, 30),
         HEAVY_TIMEOUT,
     );
-    s.expect("Niubash");
+    s.expect("Native Shell");
     let code = s.wait_exit();
     assert_eq!(code, 7, "the jump's status is the session status");
     let transcript = s.transcript();
@@ -2387,7 +2440,7 @@ fn prompt_command_exit_ends_noediting_repl_session() {
     );
 }
 
-/// niubash: the Windows factory-default "Git Bash compatible" prompt.
+/// native-shell: the Windows factory-default "Git Bash compatible" prompt.
 ///
 /// Real-ConPTY proof for the owner adjudication (2026-10-12): with no rc
 /// theme and no PS1 claim, the interactive prompt on Windows renders the
@@ -2429,7 +2482,7 @@ fn gitbash_factory_prompt_renders_and_tracks_the_branch() {
     // The branch segment is rendered by git_prompt spawning `git` through
     // the session PATH; the sandbox PATH (System32 + Windows) has no git,
     // so the branch could never render and the tail of this test failed
-    // byte-stable on every host (part of niubash#420's baseline five — a
+    // byte-stable on every host (part of native-shell#420's baseline five — a
     // test-design gap, not a wedge: the `cd` submit itself always ran).
     // Discover the host git the same way the `run` helper above does and
     // prepend its dir to the session PATH.
@@ -2457,7 +2510,7 @@ fn gitbash_factory_prompt_renders_and_tracks_the_branch() {
         system_root.display()
     );
     let extra_env = vec![("PATH".to_string(), session_path)];
-    let mut session = driver::NiuSession::spawn_custom(
+    let mut session = driver::NativeShellSession::spawn_custom(
         "gitbash-floor",
         "", // empty rc: no theme, no PS1 claim — the factory floor shows
         &extra_env,
@@ -2504,10 +2557,10 @@ fn gitbash_factory_prompt_renders_and_tracks_the_branch() {
 }
 
 // ---------------------------------------------------------------------------
-// Matrix 6b: multiline paste across EMPTY lines (niubash#291, #309 surface)
+// Matrix 6b: multiline paste across EMPTY lines (native-shell#291, #309 surface)
 // ---------------------------------------------------------------------------
 
-/// Execution-level markers for paste fidelity assertions (niubash#291
+/// Execution-level markers for paste fidelity assertions (native-shell#291
 /// discipline): the pasted body carries `echo RES_$((40+2))`-shaped lines,
 /// so the OUTPUT (`RES_42`) is a string that appears NOWHERE in the echoed
 /// input (the echo renders the unexpanded `$((40+2))`). `RES_42` on screen
@@ -2516,7 +2569,7 @@ fn gitbash_factory_prompt_renders_and_tracks_the_branch() {
 /// Substring checks against the screen are banned here: the scratch probe
 /// this suite replaces asserted `!screen.contains("cho two")`, which fails
 /// on a CORRECT run too ("cho two" is a substring of the intact rendering
-/// "echo two") — a false positive that masqueraded as niubash#291.
+/// "echo two") — a false positive that masqueraded as native-shell#291.
 const PASTE_MARKER_A: &str = "echo RES_$((40+2))";
 const PASTE_MARKER_A_OUT: &str = "RES_42";
 const PASTE_MARKER_B: &str = "echo RES_$((50+8))";
@@ -2526,7 +2579,7 @@ fn marker_rc() -> String {
     driver::default_rc()
 }
 
-/// niubash#291, the reported shape: a pasted block containing an EMPTY line
+/// native-shell#291, the reported shape: a pasted block containing an EMPTY line
 /// must keep the following line's leading bytes. The exact reported burst —
 /// `echo one\r\n\r\necho two\r\n\n` in one write, then the user's Enter
 /// after the burst settles — with execution-marker lines: both markers on
@@ -2542,7 +2595,7 @@ fn empty_line_paste_keeps_the_next_line_intact() {
     if !require_pty_or_skip("empty_line_paste_keeps_the_next_line_intact") {
         return;
     }
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "paste-empty-line",
         &marker_rc(),
         &[],
@@ -2559,7 +2612,7 @@ fn empty_line_paste_keeps_the_next_line_intact() {
     s.expect_prompt();
 }
 
-/// niubash#309 coverage on the #291 shape: the submit Enter lands INSIDE
+/// native-shell#309 coverage on the #291 shape: the submit Enter lands INSIDE
 /// the burst window (one write — `send(paste + "\r")`, the owner's
 /// paste-then-Enter-at-once rhythm). The trailing bare CR has no LF
 /// partner behind it, so it is the submit: the whole block (empty line
@@ -2573,7 +2626,7 @@ fn empty_line_paste_same_burst_enter_submits_on_first_enter() {
     if !require_pty_or_skip("empty_line_paste_same_burst_enter_submits_on_first_enter") {
         return;
     }
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "paste-empty-line-same-burst",
         &marker_rc(),
         &[],
@@ -2597,7 +2650,7 @@ fn empty_line_paste_two_consecutive_empty_lines_execute_both_lines() {
     if !require_pty_or_skip("empty_line_paste_two_consecutive_empty_lines_execute_both_lines") {
         return;
     }
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "paste-two-empty-lines",
         &marker_rc(),
         &[],
@@ -2625,7 +2678,7 @@ fn empty_line_paste_indented_line_after_empty_line_executes() {
     if !require_pty_or_skip("empty_line_paste_indented_line_after_empty_line_executes") {
         return;
     }
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "paste-indented-after-empty",
         &marker_rc(),
         &[],
@@ -2652,7 +2705,7 @@ fn crlf_paste_without_empty_lines_control_executes_every_line() {
     if !require_pty_or_skip("crlf_paste_without_empty_lines_control_executes_every_line") {
         return;
     }
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "paste-no-empty-control",
         &marker_rc(),
         &[],
@@ -2682,9 +2735,9 @@ fn empty_line_paste_under_claimed_prompt_executes_both_lines() {
     let rc = concat!(
         "PS1='\\[\\e[1;36m\\]user@host ~ %\\[\\e[0m\\] '\n",
         "PS2='> '\n",
-        "NIU_DISABLE_DEFAULT_PLUGINS=1\n",
+        "NATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n",
     );
-    let mut s = NiuSession::spawn_custom(
+    let mut s = NativeShellSession::spawn_custom(
         "paste-empty-line-claimed",
         rc,
         &[],
@@ -2693,7 +2746,7 @@ fn empty_line_paste_under_claimed_prompt_executes_both_lines() {
     );
     // A claimed PS1 renders itself, not the P1> sentinel — wait for the
     // claimed prompt text instead of wait_ready().
-    s.expect("Niubash");
+    s.expect("Native Shell");
     s.expect("user@host");
     s.send(&format!("{PASTE_MARKER_A}\r\n\r\n{PASTE_MARKER_B}\r\n\n"));
     std::thread::sleep(Duration::from_millis(200));
@@ -2703,7 +2756,7 @@ fn empty_line_paste_under_claimed_prompt_executes_both_lines() {
 }
 
 // ---------------------------------------------------------------------------
-// niubash#399: the login profile chain (and every remaining startup-file
+// native-shell#399: the login profile chain (and every remaining startup-file
 // face) honors a top-level `exit` by ending the invocation with its status.
 // Oracle: WSL GNU Bash 5.3.0 over stdin (`bash -l -c ...` against a scratch
 // HOME): a profile `exit 9` prints the profile's marker and exits 9, the
@@ -2742,7 +2795,7 @@ fn issue399_login_profile_exit_terminates_command_line() {
     }
     let root = login_sandbox("bp-exit");
     stage_login_file(&root, ".bash_profile", "echo BP-RAN-$((40/4))\nexit 9\n");
-    let mut s = NiuSession::spawn_shared_home_with_args(
+    let mut s = NativeShellSession::spawn_shared_home_with_args(
         &root,
         &driver::default_rc(),
         &["-l", "-c", "echo AFTER-$((3*3))"],
@@ -2770,7 +2823,7 @@ fn issue399_login_profile_chain_first_existing_wins() {
     stage_login_file(&root, ".bash_profile", "echo FROM-BP-$((5*2))\n");
     stage_login_file(&root, ".bash_login", "echo FROM-BL\n");
     stage_login_file(&root, ".profile", "echo FROM-PROF\n");
-    let mut s = NiuSession::spawn_shared_home_with_args(
+    let mut s = NativeShellSession::spawn_shared_home_with_args(
         &root,
         &driver::default_rc(),
         &["-l", "-c", "echo AFTER-$((2*5))"],
@@ -2793,7 +2846,7 @@ fn issue399_login_profile_chain_falls_back_to_profile() {
     }
     let root = login_sandbox("chain-prof");
     stage_login_file(&root, ".profile", "echo FROM-PROF-$((9-3))\n");
-    let mut s = NiuSession::spawn_shared_home_with_args(
+    let mut s = NativeShellSession::spawn_shared_home_with_args(
         &root,
         &driver::default_rc(),
         &["-l", "-c", "echo AFTER-OK"],
@@ -2815,7 +2868,7 @@ fn issue399_login_noprofile_skips_chain_and_nonlogin_ignores_it() {
     }
     let root = login_sandbox("noprofile");
     stage_login_file(&root, ".bash_profile", "echo FROM-BP-$((8-8))\n");
-    let mut s = NiuSession::spawn_shared_home_with_args(
+    let mut s = NativeShellSession::spawn_shared_home_with_args(
         &root,
         &driver::default_rc(),
         // GNU 5.3 parses `-l --noprofile` as `--` (option-word quirk); the
@@ -2831,7 +2884,7 @@ fn issue399_login_noprofile_skips_chain_and_nonlogin_ignores_it() {
 
     let root2 = login_sandbox("nonlogin-control");
     stage_login_file(&root2, ".bash_profile", "echo FROM-BP-$((8-8))\n");
-    let mut s2 = NiuSession::spawn_shared_home_with_args(
+    let mut s2 = NativeShellSession::spawn_shared_home_with_args(
         &root2,
         &driver::default_rc(),
         &["-c", "echo AFTER-$((4+4))"],
@@ -2860,10 +2913,10 @@ fn issue399_login_sources_profile_not_rc_or_bash_env() {
         "BASH_ENV".to_string(),
         env_file.to_string_lossy().into_owned(),
     );
-    let mut s = NiuSession::spawn_shared_home_with_args(
+    let mut s = NativeShellSession::spawn_shared_home_with_args(
         &root,
         // The rc content must not run on the login face.
-        "echo FROM-RC\nPS1='P1> '\nPS2='P2> '\nNIU_DISABLE_DEFAULT_PLUGINS=1\n",
+        "echo FROM-RC\nPS1='P1> '\nPS2='P2> '\nNATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n",
         &["-l", "-i", "-c", "echo AFTER-$((2*6))"],
         &[bash_env],
         (120, 30),
@@ -2887,7 +2940,7 @@ fn issue399_login_profile_exit_terminates_before_script() {
     let root = login_sandbox("bp-script");
     stage_login_file(&root, ".bash_profile", "echo BP-X-$((9+8))\nexit 9\n");
     let script = stage_login_file(&root, "late.sh", "echo SCRIPT-RAN\n");
-    let mut s = NiuSession::spawn_shared_home_with_args(
+    let mut s = NativeShellSession::spawn_shared_home_with_args(
         &root,
         &driver::default_rc(),
         &["-l", script.to_string_lossy().as_ref()],
@@ -2906,7 +2959,7 @@ fn issue399_login_profile_exit_terminates_before_script() {
 
 /// The argv[0] login marker (a leading `-`, the same face the shims
 /// forward) sources the profile chain too — GNU 5.2 honors the marker
-/// (`-bash`); the niu contract carries it through `__RUBASH_LOGIN_SHELL`.
+/// (`-bash`); the native-shell contract carries it through `__RUBASH_LOGIN_SHELL`.
 #[test]
 fn issue399_login_argv0_marker_sources_profile() {
     if !require_pty_or_skip("issue399_login_argv0_marker_sources_profile") {
@@ -2914,8 +2967,8 @@ fn issue399_login_argv0_marker_sources_profile() {
     }
     let root = login_sandbox("argv0-marker");
     stage_login_file(&root, ".bash_profile", "echo FROM-BP-$((7+7))\n");
-    let marker = ("NIU_INVOKED_AS".to_string(), "-niu".to_string());
-    let mut s = NiuSession::spawn_shared_home_with_args(
+    let marker = ("NATIVE_SHELL_INVOKED_AS".to_string(), "-niu".to_string());
+    let mut s = NativeShellSession::spawn_shared_home_with_args(
         &root,
         &driver::default_rc(),
         &["-c", "echo AFTER-$((3*4))"],
@@ -2941,7 +2994,7 @@ fn issue399_bash_env_exit_terminates_command_line() {
         "BASH_ENV".to_string(),
         env_file.to_string_lossy().into_owned(),
     );
-    let mut s = NiuSession::spawn_shared_home_with_args(
+    let mut s = NativeShellSession::spawn_shared_home_with_args(
         &root,
         &driver::default_rc(),
         &["-c", "echo AFTER-$((11-11))"],
@@ -2968,7 +3021,7 @@ fn issue399_posix_env_exit_terminates_interactive_command() {
     let root = login_sandbox("posix-env-exit");
     let env_file = stage_login_file(&root, "env2.src", "echo ENV2-RAN-$((2+3))\nexit 5\n");
     let env = ("ENV".to_string(), env_file.to_string_lossy().into_owned());
-    let mut s = NiuSession::spawn_shared_home_with_args(
+    let mut s = NativeShellSession::spawn_shared_home_with_args(
         &root,
         &driver::default_rc(),
         &["--posix", "-i", "-c", "echo AFTER-$((5*5))"],
@@ -2994,16 +3047,16 @@ fn issue399_login_repl_profile_exit_ends_session_before_prompt() {
     }
     let root = login_sandbox("repl-login");
     stage_login_file(&root, ".bash_profile", "echo BP-REPL-$((20-20))\nexit 4\n");
-    let marker = ("NIU_INVOKED_AS".to_string(), "-niu".to_string());
-    let mut s = NiuSession::spawn_shared_home(
+    let marker = ("NATIVE_SHELL_INVOKED_AS".to_string(), "-niu".to_string());
+    let mut s = NativeShellSession::spawn_shared_home(
         &root,
-        "echo FROM-RC\nPS1='P1> '\nPS2='P2> '\nNIU_DISABLE_DEFAULT_PLUGINS=1\n",
+        "echo FROM-RC\nPS1='P1> '\nPS2='P2> '\nNATIVE_SHELL_DISABLE_DEFAULT_PLUGINS=1\n",
         &[marker],
         &[],
         (120, 30),
         HEAVY_TIMEOUT,
     );
-    s.expect("Niubash");
+    s.expect("Native Shell");
     s.expect("BP-REPL-0");
     let code = s.wait_exit();
     let transcript = s.transcript();
@@ -3022,7 +3075,7 @@ fn issue399_login_repl_profile_exit_ends_session_before_prompt() {
     );
 }
 
-/// niubash#422: on the `sh -l -i` REPL face (the argv[0] `sh` face flips
+/// native-shell#422: on the `sh -l -i` REPL face (the argv[0] `sh` face flips
 /// posix mode, `-l` flips login), an `exit` in the `$ENV` file ends the
 /// session BEFORE the login startup tail — no prompt, no greeting output,
 /// the ENV's status is the session status. Oracle: WSL GNU Bash 5.3.0
@@ -3047,7 +3100,7 @@ fn issue422_sh_login_repl_env_exit_ends_session_before_startup_tail() {
         "PS1='P1> '\necho ENV-RAN-$((2+5))\nexit 7\n",
     );
     let env = ("ENV".to_string(), env_file.to_string_lossy().into_owned());
-    let mut s = NiuSession::spawn_face_in_root(
+    let mut s = NativeShellSession::spawn_face_in_root(
         &root,
         "sh",
         &driver::default_rc(),
@@ -3058,7 +3111,7 @@ fn issue422_sh_login_repl_env_exit_ends_session_before_startup_tail() {
         (120, 30),
         HEAVY_TIMEOUT,
     );
-    s.expect("Niubash");
+    s.expect("Native Shell");
     s.expect("BP-RAN-7");
     s.expect("ENV-RAN-7");
     let code = s.wait_exit();
@@ -3088,7 +3141,7 @@ fn issue422_sh_login_repl_env_without_exit_reaches_the_prompt() {
     stage_login_file(&root, ".bash_profile", "PS1='P1> '\necho BP-RAN-$((6+1))\n");
     let env_file = stage_login_file(&root, "env422ctl.src", "echo ENV-RAN-$((4+4))\n");
     let env = ("ENV".to_string(), env_file.to_string_lossy().into_owned());
-    let mut s = NiuSession::spawn_face_in_root(
+    let mut s = NativeShellSession::spawn_face_in_root(
         &root,
         "sh",
         &driver::default_rc(),
@@ -3097,7 +3150,7 @@ fn issue422_sh_login_repl_env_without_exit_reaches_the_prompt() {
         (120, 30),
         HEAVY_TIMEOUT,
     );
-    s.expect("Niubash");
+    s.expect("Native Shell");
     s.expect("BP-RAN-7");
     s.expect("ENV-RAN-8");
     s.expect_prompt();
@@ -3111,11 +3164,11 @@ fn issue422_sh_login_repl_env_without_exit_reaches_the_prompt() {
 }
 
 // ---------------------------------------------------------------------------
-// niubash#400: a shell invoked under the name `rbash` starts restricted.
+// native-shell#400: a shell invoked under the name `rbash` starts restricted.
 // Oracle: WSL GNU Bash 5.3.0 via an `rbash` symlink over stdin — `$-` reads
 // `hrBc`, `cd` is refused ("cd: restricted"), PATH/SHELL turn read-only,
 // command names with `/` are refused, `set +r` cannot lift the mode, and a
-// plain `bash`/`niu` name stays unrestricted. The engine's own binary keys
+// plain `bash`/`native-shell` name stays unrestricted. The engine's own binary keys
 // the same face off argv[0] (rubash shell.c:1258-1299 derivation, #598);
 // the host face must assemble the identical executor state.
 // ---------------------------------------------------------------------------
@@ -3138,13 +3191,13 @@ const RBASH_PROBE: &str = concat!(
     "echo DONE-$((6*7))",
 );
 
-/// The argv[0] face: a niu copy invoked as `rbash.exe` starts restricted.
+/// The argv[0] face: a native-shell copy invoked as `rbash.exe` starts restricted.
 #[test]
 fn issue400_rbash_argv0_face_is_restricted() {
     if !require_pty_or_skip("issue400_rbash_argv0_face_is_restricted") {
         return;
     }
-    let mut s = NiuSession::spawn_face_with_args(
+    let mut s = NativeShellSession::spawn_face_with_args(
         "issue400-rbash-argv0",
         "rbash",
         &driver::default_rc(),
@@ -3164,7 +3217,7 @@ fn issue400_rbash_argv0_face_is_restricted() {
     assert_eq!(s.wait_exit(), 0);
 }
 
-/// The flag form and the argv0 face assemble the same state: plain `niu -r`
+/// The flag form and the argv0 face assemble the same state: plain `native-shell -r`
 /// refuses the same probes the `rbash` name does (the flag surface was the
 /// earlier half of this contract; the name must not diverge from it).
 #[test]
@@ -3172,7 +3225,7 @@ fn issue400_flag_form_matches_the_argv0_face() {
     if !require_pty_or_skip("issue400_flag_form_matches_the_argv0_face") {
         return;
     }
-    let mut s = NiuSession::spawn_custom_with_args(
+    let mut s = NativeShellSession::spawn_custom_with_args(
         "issue400-rbash-flag",
         &driver::default_rc(),
         &["-r", "-c", RBASH_PROBE],
@@ -3189,7 +3242,7 @@ fn issue400_flag_form_matches_the_argv0_face() {
     assert_eq!(s.wait_exit(), 0);
 }
 
-/// The shim-forwarded face (`NIU_INVOKED_AS=rbash`, how the rubash bash
+/// The shim-forwarded face (`NATIVE_SHELL_INVOKED_AS=rbash`, how the rubash bash
 /// shim hands its argv[0] stem to the host) is restricted too, and `$0`
 /// keeps reading the invocation name like GNU set_shell_name.
 #[test]
@@ -3197,8 +3250,8 @@ fn issue400_shim_forwarded_face_is_restricted() {
     if !require_pty_or_skip("issue400_shim_forwarded_face_is_restricted") {
         return;
     }
-    let invoked = ("NIU_INVOKED_AS".to_string(), "rbash".to_string());
-    let mut s = NiuSession::spawn_custom_with_args(
+    let invoked = ("NATIVE_SHELL_INVOKED_AS".to_string(), "rbash".to_string());
+    let mut s = NativeShellSession::spawn_custom_with_args(
         "issue400-rbash-shim",
         &driver::default_rc(),
         &[
@@ -3224,7 +3277,7 @@ fn issue400_plain_name_and_exe_spelling_control() {
     if !require_pty_or_skip("issue400_plain_name_and_exe_spelling_control") {
         return;
     }
-    let mut s = NiuSession::spawn_custom_with_args(
+    let mut s = NativeShellSession::spawn_custom_with_args(
         "issue400-plain-control",
         &driver::default_rc(),
         &[
@@ -3240,7 +3293,7 @@ fn issue400_plain_name_and_exe_spelling_control() {
     s.expect("PATHRC=0");
     assert_eq!(s.wait_exit(), 0);
 
-    let mut s2 = NiuSession::spawn_face_with_args(
+    let mut s2 = NativeShellSession::spawn_face_with_args(
         "issue400-rbash-upper",
         "RBASH",
         &driver::default_rc(),
@@ -3258,7 +3311,7 @@ fn issue400_plain_name_and_exe_spelling_control() {
 }
 
 // ---------------------------------------------------------------------------
-// niubash#413 review round: the rbash face must activate at the same point
+// native-shell#413 review round: the rbash face must activate at the same point
 // as the `-r` flag (after the startup files), and the #399 login face must
 // leave the env-file gates independent of login, exactly like GNU.
 // ---------------------------------------------------------------------------
@@ -3272,7 +3325,7 @@ fn stage_face_file(root: &std::path::Path, name: &str, content: &str) -> String 
     path.to_string_lossy().into_owned()
 }
 
-/// The startup-file line is face-equivalent (niubash#413 review): the rbash
+/// The startup-file line is face-equivalent (native-shell#413 review): the rbash
 /// argv0 face and the `-r` flag both source a BASH_ENV file and the login
 /// profile chain UNRESTRICTED (GNU `rbash -c` loads BASH_ENV; `rbash -l -c`
 /// loads the chain), and the command line after the files runs restricted.
@@ -3287,7 +3340,7 @@ fn issue400_startup_files_load_unrestricted_like_the_flag_form() {
     let root = login_sandbox("face-bashenv");
     let env_file = stage_face_file(&root, "env.src", "echo ENV-M-$((2*4))\n");
     let bash_env = ("BASH_ENV".to_string(), env_file);
-    let mut s = NiuSession::spawn_face_in_root(
+    let mut s = NativeShellSession::spawn_face_in_root(
         &root,
         "rbash",
         &driver::default_rc(),
@@ -3306,7 +3359,7 @@ fn issue400_startup_files_load_unrestricted_like_the_flag_form() {
     let root2 = login_sandbox("flag-bashenv");
     let env_file2 = stage_face_file(&root2, "env.src", "echo ENV-M-$((2*4))\n");
     let bash_env2 = ("BASH_ENV".to_string(), env_file2);
-    let mut s2 = NiuSession::spawn_shared_home_with_args(
+    let mut s2 = NativeShellSession::spawn_shared_home_with_args(
         &root2,
         &driver::default_rc(),
         &["-r", "-c", probe],
@@ -3322,7 +3375,7 @@ fn issue400_startup_files_load_unrestricted_like_the_flag_form() {
     // argv0 face + login profile chain: the chain loads unrestricted.
     let root3 = login_sandbox("face-profile");
     stage_face_file(&root3, ".bash_profile", "echo BP-M-$((5*2))\n");
-    let mut s3 = NiuSession::spawn_face_in_root(
+    let mut s3 = NativeShellSession::spawn_face_in_root(
         &root3,
         "rbash",
         &driver::default_rc(),
@@ -3338,7 +3391,7 @@ fn issue400_startup_files_load_unrestricted_like_the_flag_form() {
     // flag form + login profile chain: identical.
     let root4 = login_sandbox("flag-profile");
     stage_face_file(&root4, ".bash_profile", "echo BP-M-$((5*2))\n");
-    let mut s4 = NiuSession::spawn_shared_home_with_args(
+    let mut s4 = NativeShellSession::spawn_shared_home_with_args(
         &root4,
         &driver::default_rc(),
         &["-r", "-l", "-c", "echo BODY-$((7+7))"],
@@ -3366,7 +3419,7 @@ fn issue399_login_noninteractive_sources_bash_env_after_the_chain() {
         "BASH_ENV".to_string(),
         env_file.to_string_lossy().into_owned(),
     );
-    let mut s = NiuSession::spawn_shared_home_with_args(
+    let mut s = NativeShellSession::spawn_shared_home_with_args(
         &root,
         &driver::default_rc(),
         &["-l", "-c", "echo BODY"],
@@ -3393,8 +3446,8 @@ fn issue399_posix_login_interactive_sources_env_after_the_chain() {
     stage_login_file(&root, ".bash_profile", "echo BP-M-$((5+5))\n");
     let env_file = stage_login_file(&root, "env2.src", "echo ENV2-M-$((4+4))\n");
     let env = ("ENV".to_string(), env_file.to_string_lossy().into_owned());
-    let sh_face = ("NIU_INVOKED_AS".to_string(), "sh".to_string());
-    let mut s = NiuSession::spawn_shared_home_with_args(
+    let sh_face = ("NATIVE_SHELL_INVOKED_AS".to_string(), "sh".to_string());
+    let mut s = NativeShellSession::spawn_shared_home_with_args(
         &root,
         &driver::default_rc(),
         &["-l", "-i", "-c", "echo BODY"],
@@ -3411,8 +3464,8 @@ fn issue399_posix_login_interactive_sources_env_after_the_chain() {
     stage_login_file(&root2, ".bash_profile", "echo BP-X\nexit 9\n");
     let env_file2 = stage_login_file(&root2, "env2.src", "echo ENV2-M\n");
     let env2 = ("ENV".to_string(), env_file2.to_string_lossy().into_owned());
-    let sh_face2 = ("NIU_INVOKED_AS".to_string(), "sh".to_string());
-    let mut s2 = NiuSession::spawn_shared_home_with_args(
+    let sh_face2 = ("NATIVE_SHELL_INVOKED_AS".to_string(), "sh".to_string());
+    let mut s2 = NativeShellSession::spawn_shared_home_with_args(
         &root2,
         &driver::default_rc(),
         &["-l", "-i", "-c", "echo AFTER"],
@@ -3440,8 +3493,9 @@ fn repl_rc_exit_carries_status_without_panic() {
         return;
     }
     let rc = format!("{}\nexit 5\n", driver::default_rc());
-    let mut s = NiuSession::spawn_custom("repl-rc-exit-status", &rc, &[], (120, 30), HEAVY_TIMEOUT);
-    s.expect("Niubash");
+    let mut s =
+        NativeShellSession::spawn_custom("repl-rc-exit-status", &rc, &[], (120, 30), HEAVY_TIMEOUT);
+    s.expect("Native Shell");
     let code = s.wait_exit();
     let transcript = s.transcript();
     assert_eq!(

@@ -10,7 +10,7 @@ and read directly:
 
 Line numbers are from those checkouts. Verdict per mechanism:
 **[portable]** we can adopt the shape · **[nvim-only]** tied to the Neovim runtime ·
-**[have-it]** niu already has the equivalent (cite ours).
+**[have-it]** native-shell already has the equivalent (cite ours).
 
 ---
 
@@ -70,9 +70,9 @@ specs are lists of data units, later units win, and resolution is a fixpoint.
   — i.e. *the lockfile lives with the user's config, not the manager's data*,
   so it can be committed to dotfiles.
 
-**Verdict [have-it].** Our `~/.niubash/sources/registry.toml`
+**Verdict [have-it].** Our `~/.native-shell/sources/registry.toml`
 (`sources.rs:32 SOURCE_REGISTRY_SCHEMA @0.2.0`) already pins
-`commit_sha` + `checksum_sha256` per source and `niu plugin restore` refetches
+`commit_sha` + `checksum_sha256` per source and `native-shell plugin restore` refetches
 exactly that state — same role as lazy-lock.json. Deltas worth adopting:
 sorted keys (we have them via TOML table) and "lock survives disabled state"
 (ours records regardless — fine). Mason-style version fields: see §6.
@@ -87,7 +87,7 @@ sorted keys (we have them via TOML table) and "lock survives disabled state"
   specs[#specs+1] = { "folke/lazy.nvim" }`) so the manager is managed by
   itself; its own `config` is neutered (`plugin.lua:338-346`).
 
-**Verdict [have-it]** — niu is a shipped binary, not a git clone; the
+**Verdict [have-it]** — native-shell is a shipped binary, not a git clone; the
 equivalent of "bootstrap" is the installer/self-update path (`src/self_update.rs`).
 
 ## 4. lazy.nvim — the view (TUI information architecture)
@@ -123,7 +123,7 @@ Rendering is vim-buffer-based (float + `vim.diagnostic` virtual text) — the
 - **Async tasks** — every mutation runs as a task (`manage/task/*`),
   the view re-renders on `LazyRender` autocommands; nothing blocks.
 
-**Verdict [portable] as information architecture only.** For `niu plugin ui`
+**Verdict [portable] as information architecture only.** For `native-shell plugin ui`
 we adopt: the command-table pattern, sections-by-state, row = state-icon +
 name + status + hint, per-item vs global verbs — rendered with our
 `interactive_menu` (menu level, no float/ncurses). Async task streaming stays
@@ -140,7 +140,7 @@ out of the MVP: our verbs are synchronous git/wpm calls.
   M.hererocks.build`), with hardcoded rewrites (`plenary.nvim`).
 
 **Verdict [nvim-only].** This whole layer exists to bridge Lua package
-ecosystems into the nvim runtime. For niu, the analogous bridge is wpm
+ecosystems into the nvim runtime. For native-shell, the analogous bridge is wpm
 (see §7) and it is a *driver*, not a manifest parser.
 
 ## 6. mason — registry data form (the recipe pattern)
@@ -185,7 +185,7 @@ ecosystems into the nvim runtime. For niu, the analogous bridge is wpm
 **Verdict [portable — this is the core pattern for our recipe registry].**
 Key transferable ideas: (1) the registry is *pure data*, one file per package;
 (2) the `source` field picks the installer *driver* and pins a version;
-(3) `bin` maps exposed names. For niu the driver set collapses to two:
+(3) `bin` maps exposed names. For native-shell the driver set collapses to two:
 `git-clone source adapter` (what `sources.rs` does today) and **wpm** for
 executables — because wpm already owns per-platform artifact download with
 sha256 (see §7). We deliberately do **not** port npm/pypi/cargo compilers:
@@ -203,8 +203,8 @@ Checked against the local WinuxCmd checkout (wpm = `winuxcmd wpm`,
   urls[], files[{from,to}], layout }` plus exposed `commands[]` — i.e. wpm
   already implements mason's `generic`/`github` download compilers with
   integrity and layout handling.
-- niu already invokes wpm as a driver elsewhere:
-  `crates/niubash-runtime/src/winuxcmd.rs:386` (`wpm links rebuild --root …`)
+- native-shell already invokes wpm as a driver elsewhere:
+  `crates/native-shell-runtime/src/winuxcmd.rs:386` (`wpm links rebuild --root …`)
   and the setup wizard's `setup_wizard.rs:1227 wpm_command()` — "`wpm` on PATH,
   else `winuxcmd.exe wpm`". The recipe registry should reuse exactly that
   resolution, not reinvent it.
@@ -245,17 +245,17 @@ Checked against the local WinuxCmd checkout (wpm = `winuxcmd wpm`,
   user's machine); releases via release-please tags. Extras are *not*
   individually pinned — they ship as part of the distro version.
 
-**Verdict [portable — this is the pattern for `niu plugin distro`]**: a
+**Verdict [portable — this is the pattern for `native-shell plugin distro`]**: a
 collection is a *data manifest* (list of recipe ids + optional preset picks);
 built-in collections live in the product, user collections are the same format
-imported from a repo/path; enable state persists in niu's own state file with
+imported from a repo/path; enable state persists in native-shell's own state file with
 a schema version; "apply" installs untrusted and defers activation to the
 existing trust protocol. LazyVim's one-of defaults map to our wizard's
 preset choice.
 
 ## 9. Mapping to the four wt47 candidates
 
-| Candidate | Source pattern | niu owner module |
+| Candidate | Source pattern | native-shell owner module |
 | --- | --- | --- |
 | 1. Recipe registry | mason `package.yaml` (§6) + independent pure-Rust download driver (§10.4) | new `plugins/recipes.rs` + `plugins/download.rs`; data in `assets/plugins/` |
 | 2. Distro/collections | LazyVim extras + lazyvim.json (§8) | new `plugins/distros.rs` + wizard hook |
@@ -264,15 +264,15 @@ preset choice.
 
 ### Explicitly rejected / deferred (with reasons)
 
-- ~~**Binary direct download in niu** — rejected: wpm's index already carries
+- ~~**Binary direct download in native-shell** — rejected: wpm's index already carries
   per-platform artifact tables with sha256 (§7); duplicating mason's download
-  compilers in niu would fork integrity handling. Recipes reference
+  compilers in native-shell would fork integrity handling. Recipes reference
   `driver = "wpm"`.~~ **SUPERSEDED by owner ruling 2026-10-03** (see §10):
-  executable installs are implemented *inside* niubash-runtime with pure Rust
+  executable installs are implemented *inside* native-shell-runtime with pure Rust
   HTTP + unpack (ureq/flate2/tar), cross-platform, binding to no external
   package manager. §7 stays as environment background only.
 - **npm/pypi/cargo/gem/… drivers** — rejected: language-package-manager
-  installers are out of scope for niu's plugin system; the independent driver
+  installers are out of scope for native-shell's plugin system; the independent driver
   covers git trees and direct binary downloads only (the two forms bash
   ecosystem assets actually ship).
 - **Fragment metatable merge, `opts` merging, handlers (event/ft/cmd/keys
@@ -287,7 +287,7 @@ preset choice.
 ## 10. Addendum (owner corrections 2026-10-03) — design philosophy & UX
 
 Owner corrections for this lane: (1) executable installs are implemented
-independently inside niubash-runtime (pure Rust HTTP + unpack, cross-platform)
+independently inside native-shell-runtime (pure Rust HTTP + unpack, cross-platform)
 — *never* by driving wpm/apt; (2) the recipe seed must scale to the whole
 popular bash ecosystem; (3) this philosophy/UX section; (4) docs and `--help`
 ship with the implementation. What the sources say about *why* the lazy family
@@ -309,7 +309,7 @@ feels good, with citations:
   missing dependency in health output is a *warning with the found version vs
   needed version* (`health.lua:47 "`%s` version `%s` needed, but found `%s`"),
   and health *detects a foreign plugin manager on the rtp and names it*
-  (`health.lua:96`). Lesson for niu: every failure mode should name the exact
+  (`health.lua:96`). Lesson for native-shell: every failure mode should name the exact
   object and the exact repair verb.
 - **The manager manages itself.** lazy.nvim inserts itself into its own spec
   (`core/plugin.lua:333`), so update/lockfile/restore treat the manager as
@@ -341,7 +341,7 @@ feels good, with citations:
   LazyVim!" and opens NEWS.md only when it changed (`util/news.lua:24
   M.welcome`, `:16 M.setup` gating on the stored hash). Import-order mistakes
   produce a *warning listing the correct order* (`config/init.lua:229-241`),
-  not a crash. Lesson for niu: hint at the moment of need, with the fix in
+  not a crash. Lesson for native-shell: hint at the moment of need, with the fix in
   the message.
 
 ### 10.3 mason — "the registry is the product; the installer is a table walk"
@@ -352,7 +352,7 @@ feels good, with citations:
   change. This is the single most portable idea in the family.
 - **The driver set is closed and small.** 600 packages collapse to 12 source
   schemes, and the census is heavily skewed (github 288 / npm 133 / pypi 101
-  = 87%). niu's driver set is smaller still: `git` (tree sources, existing
+  = 87%). native-shell's driver set is smaller still: `git` (tree sources, existing
   adapters) and `download` (direct binary, §10.4). A small closed set is what
   makes "no behavior code per recipe" sustainable.
 - **Failure UX.** Every async outcome becomes one notify line naming the
@@ -363,7 +363,7 @@ feels good, with citations:
   mid-unpack.
 - **PATH as policy, not accident.** `PATH = "prepend"|"append"|"skip"` is a
   *setting* (`lua/mason/settings.lua:12-17`) and shims land in one predictable bin dir
-  (`InstallLocation.lua:44`). Lesson for niu: executable installs must state
+  (`InstallLocation.lua:44`). Lesson for native-shell: executable installs must state
   where they put binaries and how PATH changes, as data.
 
 ### 10.4 CLI verbs vs TUI — what the family teaches
@@ -372,11 +372,11 @@ feels good, with citations:
   keys call the *same* command table the CLI/API uses (`view/config.lua:42`,
   dispatched via `view/commands.lua cmd()`); Mason's UI buttons call the same
   installer the `:MasonInstall` command uses. Zero UI-only logic. Our
-  `niu plugin ui` must only call `plugins::sources/assets/recipes` functions
+  `native-shell plugin ui` must only call `plugins::sources/assets/recipes` functions
   that the CLI verbs already call.
 - **Per-item verbs + global verbs.** lazy's key split (`key` global, e.g.
   `S`=sync; `key_plugin` on cursor, e.g. `u`=update this one) matches two CLI
-  shapes: `niu plugin sync` vs `niu plugin update <id>`. Keep both verb forms
+  shapes: `native-shell plugin sync` vs `native-shell plugin update <id>`. Keep both verb forms
   in the menu.
 - **State-first listing.** Sections order plugins by *what needs attention*
   (`view/sections.lua`: Failed → Working → … → Disabled), not alphabetically;
@@ -384,17 +384,17 @@ feels good, with citations:
   (`render.lua:444`). Our menu rows adopt: `[state] id — hint`.
 - **Progress only while in flight** (`render.lua:168-182`): no fake bars.
 
-### 10.5 What this dictates for niu (decisions carried into implementation)
+### 10.5 What this dictates for native-shell (decisions carried into implementation)
 
 1. Recipes are pure data (TOML), one registry file, generator-composable,
    no behavior code per recipe (§6/§10.3).
 2. Driver set: `git` + `download` only; `download` is pure Rust in
-   niubash-runtime (ureq + flate2/tar + zip + sha256), cross-platform,
+   native-shell-runtime (ureq + flate2/tar + zip + sha256), cross-platform,
    calling no external package manager (owner ruling; §7 demoted to
    background).
 3. Executable installs state their bin dir and PATH plan as data, mason
    `bin:`-style.
-4. `niu plugin ui` = thin view over the same functions the CLI verbs call,
+4. `native-shell plugin ui` = thin view over the same functions the CLI verbs call,
    state-first rows, per-item + global verbs (§10.4).
 5. Collections are the same manifest shape built-in or imported from a repo
    (LazyVim §10.2 first-class rule); apply never auto-trusts (owner ruling
@@ -425,16 +425,16 @@ What the lane shipped against §10.5's decisions, with the owning modules:
    collision refused, different-origin-under-same-name refused with the
    repair verb, same-origin re-import = refresh. `apply` collects
    per-entry failures (Spec:log pattern) instead of aborting.
-   CLI: `niu plugin distro list|import|remove|apply`.
+   CLI: `native-shell plugin distro list|import|remove|apply`.
 3. **Wizard hook (§10.2 progressive disclosure)** — Q2.5 asks for a
    collection only when the ecosystem is empty, Skip default, applied
    after the explicit Apply gate; the setup journal records what landed
    and the finish screen prints one undo command per source/tool
-   (`niu plugin source remove <id>` / `niu plugin tool remove <id>`).
+   (`native-shell plugin source remove <id>` / `native-shell plugin tool remove <id>`).
 4. **Tool channel (§10.3 PATH-as-policy)** — `download::remove_tool`
-   (PATH block + dir + record) and `niu plugin tool list|remove`; this is
+   (PATH block + dir + record) and `native-shell plugin tool list|remove`; this is
    the undo verb for download recipes and collection applies.
-5. **Menu UI (§4/§10.4)** — `plugins/ui.rs`: `niu plugin ui`, menu-level
+5. **Menu UI (§4/§10.4)** — `plugins/ui.rs`: `native-shell plugin ui`, menu-level
    over `interactive_menu`. Command table `UI_VERBS` generates both the
    verb menus and the help footer (one table = UI and help cannot drift);
    sections ordered attention-first (untrusted → ready → tools →
@@ -447,7 +447,7 @@ What the lane shipped against §10.5's decisions, with the owning modules:
    don't reach the app through the harness; rendering, counts, and the
    non-tty guard were verified.)
 6. **Docs** — `docs/src/plugins.md` (user guide + AI quick reference,
-   SUMMARY updated); `niu plugin --help` now lists recipe/distro/tool/ui.
+   SUMMARY updated); `native-shell plugin --help` now lists recipe/distro/tool/ui.
 
 Citation audit 2026-10-02: 14 file:line references spot-checked against the
 `target/refs/` trees; four were off and corrected (LazyVim

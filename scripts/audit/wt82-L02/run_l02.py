@@ -21,7 +21,7 @@ option N (1-based) but does NOT confirm — Enter confirms. Esc on an
 ordinary question = UseDefault (fast-forward); Esc on the Apply gate =
 Cancel; Ctrl+C = Abort.
 
-Usage: python scripts/audit/wt82-L02/run_l02.py <niu.exe> [--artifacts DIR]
+Usage: python scripts/audit/wt82-L02/run_l02.py <native-shell.exe> [--artifacts DIR]
        [--only NAME]  (scenario filter, repeatable)
 Exit:  0 every assertion holds, 1 any fail, 2 environment skip.
 """
@@ -49,13 +49,13 @@ CLONE_TIMEOUT = 180
 
 
 def open_first_contact(exe, home, env, verdict, label, session_label):
-    """Spawn bare `niu` on a fresh sandbox and wait for the wizard front
+    """Spawn bare `native-shell` on a fresh sandbox and wait for the wizard front
     matter (welcome banner, environment panel, empty-gallery note)."""
     session = Session([str(exe)], home, env,
                       raw_log=verdict.transcripts / f"{label}.raw.ansi",
                       label=session_label,
                       delivery_log=verdict.delivery_events)
-    session.wait_for("Welcome to Niubash", timeout=90)
+    session.wait_for("Welcome to NativeShell", timeout=90)
     session.wait_for("Environment", timeout=30)
     session.wait_for("No external themes installed yet", timeout=30)
     verdict.capture(f"{label}-contact", session)
@@ -80,18 +80,18 @@ def assert_untouched(step: StepRecorder, before: dict, home: Path,
     return after
 
 
-def wizard_answer_set(session: Session, collection: str, niu_git: str):
+def wizard_answer_set(session: Session, collection: str, native_shell_git: str):
     """Drive collection + niu-git menus. collection: skip|minimal|
-    recommended|full; niu_git: skip|install|never|none (none = the
+    recommended|full; native_shell_git: skip|install|never|none (none = the
     question is suppressed by a lasting answer)."""
     session.wait_for("Plugin collection?", timeout=60)
     col_digit = {"skip": "1", "minimal": "2", "recommended": "3",
                  "full": "4"}[collection]
     session.answer(f"{col_digit}\r")
-    if niu_git == "none":
+    if native_shell_git == "none":
         return
     session.wait_for("Windows-native git experience", timeout=60)
-    git_digit = {"skip": "1", "install": "2", "never": "3"}[niu_git]
+    git_digit = {"skip": "1", "install": "2", "never": "3"}[native_shell_git]
     session.answer(f"{git_digit}\r")
     session.wait_for("Apply this configuration?", timeout=60)
 
@@ -141,19 +141,19 @@ def journal_undo_commands(journal_text: str, home: Path) -> list:
             _, _, value = line.partition("=")
             path = value.strip().strip("'").strip('"')
             if path:
-                commands.append(f"cp {path} {home / '.niubashrc'}")
+                commands.append(f"cp {path} {home / '.native_shellrc'}")
     return commands
 
 
 def run_undo_line(exe: Path, home: Path, env: dict, command: str):
-    """Run one printed undo command (bounded). `niu ...` lines run the
+    """Run one printed undo command (bounded). `native-shell ...` lines run the
     tested binary directly; non-niu lines (`cp ...`) go through the
-    engine's command-string route (`niu -c`), because bare-argv fallback
-    is SCRIPT mode (`niu cp x y` would try to run cp as a script file —
+    engine's command-string route (`native-shell -c`), because bare-argv fallback
+    is SCRIPT mode (`native-shell cp x y` would try to run cp as a script file —
     the same thing GNU bash does with a binary) and the receipt is a
     shell line, not an argv."""
     args = command.split()
-    if args and args[0] == "niu":
+    if args and args[0] == "native-shell":
         return run_cli(exe, home, args[1:], env)
     return run_cli(exe, home, ["-c", command], env)
 
@@ -165,7 +165,7 @@ def m01_full_trust_pick(exe: Path, root: Path, mirror_base: str):
     verdict = Verdict(artifacts, "l02-m01 full -> trust -> pick -> undo")
     home = sandbox_for(root, "m01") / "home"
     home.mkdir(parents=True, exist_ok=True)
-    mirrors = home / ".niubash" / "mirrors.toml"
+    mirrors = home / ".native-shell" / "mirrors.toml"
     write_mirrors(mirrors, mirror_base)
     env = build_env(home, exe, mirrors_file=mirrors)
     before = fresh_state(home)
@@ -177,8 +177,8 @@ def m01_full_trust_pick(exe: Path, root: Path, mirror_base: str):
         wizard_answer_set(session, "full", "skip")
         body = session.raw_stripped()
         step.check("collection full option wording keeps the retraction "
-                   "promise (niu downloads nothing)",
-                   "niu downloads nothing" in body)
+                   "promise (native-shell downloads nothing)",
+                   "native-shell downloads nothing" in body)
         step.check("summary printed with untouched-row honesty",
                    "Summary" in body and "everything else stays untouched"
                    in body)
@@ -239,7 +239,7 @@ def m01_full_trust_pick(exe: Path, root: Path, mirror_base: str):
         step.check("rc theme guard is an existence check (fallback-safe)",
                    "[ -r " in rc)
         step.check("rc carries the bootstrap line",
-                   "niu plugin sync --bootstrap" in rc)
+                   "native-shell plugin sync --bootstrap" in rc)
         step.check("no BASH_IT_THEME leak for an omb pick",
                    "BASH_IT_THEME" not in rc)
 
@@ -256,7 +256,7 @@ def m01_full_trust_pick(exe: Path, root: Path, mirror_base: str):
         step.check("journal records no failure (fixtures install clean)",
                    "collection_failed" not in journal, journal)
         step.check("journal keeps the transient niu-git Skip out "
-                   "(no niu_git key)", "niu_git" not in journal, journal)
+                   "(no native_shell_git key)", "native_shell_git" not in journal, journal)
         step.check("transient answers leave NO wizard-answers.toml",
                    after["wizard_answers"] == "")
         step.check("spec adopted (the run ends spec-managed)",
@@ -264,11 +264,11 @@ def m01_full_trust_pick(exe: Path, root: Path, mirror_base: str):
                    and "bash-preexec" in after["spec"])
 
         undo = extract_undo_commands(finish)
-        for needle in ("niu plugin disable robbyrussell",
-                       "niu plugin source remove oh-my-bash",
-                       "niu plugin source remove bash-it",
-                       "niu plugin source remove bash-completion",
-                       "niu plugin source remove bash-preexec"):
+        for needle in ("native-shell plugin disable robbyrussell",
+                       "native-shell plugin source remove oh-my-bash",
+                       "native-shell plugin source remove bash-it",
+                       "native-shell plugin source remove bash-completion",
+                       "native-shell plugin source remove bash-preexec"):
             step.check(f"undo receipt printed: {needle}",
                        any(cmd.startswith(needle) for cmd in undo),
                        f"receipts: {undo}")
@@ -350,11 +350,11 @@ def m02_skip_never_rerun(exe: Path, root: Path, mirror_base: str):
         step.check("rc written (theme-less)",
                    after["rc_exists"] and "OSH_THEME" not in after["rc"])
         step.check("wizard-answers.toml records the lasting answer",
-                   journal_has(after["wizard_answers"], "niu_git",
+                   journal_has(after["wizard_answers"], "native_shell_git",
                                "never"),
                    after["wizard_answers"])
-        step.check("journal records niu_git = never, no collection",
-                   journal_has(after["journal"], "niu_git", "never")
+        step.check("journal records native_shell_git = never, no collection",
+                   journal_has(after["journal"], "native_shell_git", "never")
                    and "collection" not in after["journal"],
                    after["journal"])
         step.check("no spec materialized without a collection",
@@ -381,7 +381,7 @@ def m02_skip_never_rerun(exe: Path, root: Path, mirror_base: str):
     step = verdict.step("m02-rerun", "re-run: never honored, backup + "
                                      "restore receipt")
     marker = "USER MARKER do not lose\n"
-    rc_path = home / ".niubashrc"
+    rc_path = home / ".native-shellrc"
     rc_path.write_text(rc_path.read_text(encoding="utf-8") + marker,
                        encoding="utf-8", newline="\n")
     pre_rerun_rc = rc_path.read_text(encoding="utf-8")
@@ -410,7 +410,7 @@ def m02_skip_never_rerun(exe: Path, root: Path, mirror_base: str):
         # channel drops output written in the final moments before process
         # exit (a trivial 12-line child lost its last 4 lines at exit —
         # see conpty-exit-flush-control artifacts). The undo receipts of a
-        # `niu setup` run are therefore asserted from the durable state
+        # `native-shell setup` run are therefore asserted from the durable state
         # (journal + backup), which the finish screen renders verbatim;
         # first-contact runs (REPL stays alive) assert the on-screen
         # receipts (m01, m02 run-1).
@@ -425,7 +425,7 @@ def m02_skip_never_rerun(exe: Path, root: Path, mirror_base: str):
         step.check("journal records the backup for undo",
                    "rc_backup" in after["journal"], after["journal"])
         step.check("backup content is the pre-run rc byte-identical",
-                   any((home / ".niubash" / "backups" / name)
+                   any((home / ".native-shell" / "backups" / name)
                        .read_text(encoding="utf-8", errors="replace")
                        == pre_rerun_rc
                        for name in after["backups"]),
@@ -434,7 +434,7 @@ def m02_skip_never_rerun(exe: Path, root: Path, mirror_base: str):
                    "backup — the documented backup-and-rewrite contract)",
                    marker not in after["rc"])
         step.check("wizard-answers still honest after re-run",
-                   journal_has(after["wizard_answers"], "niu_git",
+                   journal_has(after["wizard_answers"], "native_shell_git",
                                "never"))
         undo2 = journal_undo_commands(after["journal"], home)
         step.check("journal yields exactly one cp undo receipt",
@@ -489,7 +489,7 @@ def m03_esc_fast_forward(exe: Path, root: Path, mirror_base: str):
                    and after["spec"] == "")
         step.check("journal: no collection, no lasting niu-git",
                    "collection" not in after["journal"]
-                   and "niu_git" not in after["journal"],
+                   and "native_shell_git" not in after["journal"],
                    after["journal"])
         try:
             session.wait_for("press any key to continue", timeout=30)
@@ -567,7 +567,7 @@ def m05_esc_niugit(exe: Path, root: Path, mirror_base: str):
     """Esc at the niu-git question only: collection answered Skip first,
     then Esc fast-forwards the REST (Apply gate still explicit). Apply
     must produce a coherent theme-less rc with no lasting answers."""
-    artifacts = root / "m05-esc-niugit"
+    artifacts = root / "m05-esc-native-git"
     verdict = Verdict(artifacts, "l02-m05 Esc at niu-git -> fast-forward")
     home = sandbox_for(root, "m05") / "home"
     home.mkdir(parents=True, exist_ok=True)
@@ -592,9 +592,9 @@ def m05_esc_niugit(exe: Path, root: Path, mirror_base: str):
         after = state_snapshot(home)
         step.check("rc written and theme-less", after["rc_exists"]
                    and "OSH_THEME" not in after["rc"])
-        step.check("journal: no collection, no lasting niu_git",
+        step.check("journal: no collection, no lasting native_shell_git",
                    "collection" not in after["journal"]
-                   and "niu_git" not in after["journal"],
+                   and "native_shell_git" not in after["journal"],
                    after["journal"])
         step.check("no wizard-answers.toml (Esc defaults are transient)",
                    after["wizard_answers"] == "")
@@ -765,7 +765,7 @@ def m09_ctrlc_mid_clone(exe: Path, root: Path, mirror_base: str):
     verdict = Verdict(artifacts, "l02-m09 Ctrl+C mid-clone (post-Apply)")
     home = sandbox_for(root, "m09") / "home"
     home.mkdir(parents=True, exist_ok=True)
-    mirrors = home / ".niubash" / "mirrors.toml"
+    mirrors = home / ".native-shell" / "mirrors.toml"
     write_mirrors(mirrors, mirror_base)
     env = build_env(home, exe, mirrors_file=mirrors)
 
@@ -798,7 +798,7 @@ def m09_ctrlc_mid_clone(exe: Path, root: Path, mirror_base: str):
                    "(partial trees / staging dirs — visible, not hidden)",
                    after["sources"] != [], str(after["sources"]))
         clean = run_cli(exe, home, ["plugin", "clean"], env, timeout=120)
-        step.check("niu plugin clean exits 0 after the interrupted run",
+        step.check("native-shell plugin clean exits 0 after the interrupted run",
                    clean.returncode == 0,
                    ((clean.stdout or "") + (clean.stderr or ""))[:300])
         after_clean = state_snapshot(home)
@@ -811,7 +811,7 @@ def m09_ctrlc_mid_clone(exe: Path, root: Path, mirror_base: str):
                      label="m09-restart",
                      delivery_log=verdict.delivery_events)
         try:
-            s2.wait_for("Niubash", timeout=120)
+            s2.wait_for("NativeShell", timeout=120)
             s2.send_line("echo M09_RESTART_ALIVE")
             try:
                 s2.wait_for("M09_RESTART_ALIVE", timeout=60)
@@ -879,7 +879,7 @@ def m11_theme_fallback(exe: Path, root: Path, mirror_base: str):
         s1.close()
 
     # Delete the tree out from under the rc's guarded block.
-    tree = home / ".niubash" / "sources" / "oh-my-bash"
+    tree = home / ".native-shell" / "sources" / "oh-my-bash"
     shutil.rmtree(tree, ignore_errors=True)
     step.check("source tree deleted", not tree.exists())
 
@@ -887,7 +887,7 @@ def m11_theme_fallback(exe: Path, root: Path, mirror_base: str):
                  raw_log=verdict.transcripts / "m11-boot.raw.ansi",
                  label="m11-boot", delivery_log=verdict.delivery_events)
     try:
-        s2.wait_for("Niubash", timeout=120)
+        s2.wait_for("NativeShell", timeout=120)
         time.sleep(1.5)
         body = s2.raw_stripped()
         verdict.save_text("m11-boot-screen.txt", body)
@@ -939,14 +939,14 @@ def main() -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("niu", type=Path)
+    parser.add_argument("native_shell", metavar="native-shell", type=Path)
     parser.add_argument("--artifacts", type=Path, default=None)
     parser.add_argument("--only", action="append", default=None)
     args = parser.parse_args()
 
-    exe = args.niu.resolve()
+    exe = args.native_shell.resolve()
     if not exe.is_file():
-        print(f"SKIP: niu binary not found: {exe}")
+        print(f"SKIP: native-shell binary not found: {exe}")
         return 2
     lane_root = (args.artifacts or
                  Path(__file__).resolve().parents[3] / "target"
@@ -954,7 +954,7 @@ def main() -> int:
     lane_root.mkdir(parents=True, exist_ok=True)
     mirror_base = build_fixtures(lane_root / "fixtures")
     (lane_root / "run.json").write_text(json.dumps({
-        "niu": str(exe), "started_utc": now_utc(),
+        "native-shell": str(exe), "started_utc": now_utc(),
         "mirror_base": mirror_base}, indent=2) + "\n",
         encoding="utf-8", newline="\n")
 

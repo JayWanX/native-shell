@@ -1,6 +1,6 @@
 # Built-ins & Fast Paths
 
-Niubash resolves a command word through three layers, in priority order. This
+Native Shell resolves a command word through three layers, in priority order. This
 page documents what lives in each layer, how the inventory is kept honest, and
 where the inventory overlaps with WinuxCmd.
 
@@ -15,7 +15,7 @@ where the inventory overlaps with WinuxCmd.
 All **61 GNU Bash 5.2 built-ins are covered — none missing**. The entries
 below that are not part of Bash are deliberate extensions:
 
-<!-- niubash-docs: builtins list (64). Do not edit without updating
+<!-- native-shell-docs: builtins list (64). Do not edit without updating
      src/executor/builtin_names.rs in unixwin/rubash; a doc-sync test
      enforces the match. -->
 <!-- builtins-list

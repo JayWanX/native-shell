@@ -37,9 +37,9 @@ macro_rules! println {
     };
 }
 
-const DEFAULT_REPO: &str = "unixwin/niubash";
+const DEFAULT_REPO: &str = "JayWanX/native-shell";
 #[cfg(windows)]
-const USER_AGENT: &str = concat!("niubash/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("native-shell/", env!("CARGO_PKG_VERSION"));
 const HTTP_TIMEOUT_MS: i32 = 30_000;
 const UPDATE_CHECK_TIMEOUT_MS: i32 = 2_500;
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -101,10 +101,10 @@ pub fn run(args: &[String]) -> Result<()> {
 
     if !options.force && !release_is_newer(&release.tag_name, &current_tag) {
         if release.tag_name == current_tag {
-            println!("Niubash is already up to date ({current_tag})");
+            println!("NativeShell is already up to date ({current_tag})");
         } else {
             println!(
-                "Current Niubash {current_tag} is newer than latest published release {}",
+                "Current NativeShell {current_tag} is newer than latest published release {}",
                 release.tag_name
             );
         }
@@ -113,7 +113,7 @@ pub fn run(args: &[String]) -> Result<()> {
 
     let arch = release_arch();
     println!(
-        "Latest Niubash release: {} ({})",
+        "Latest NativeShell release: {} ({})",
         release.tag_name, release.html_url
     );
 
@@ -138,7 +138,7 @@ pub fn run(args: &[String]) -> Result<()> {
     validate_installer_payload(&installer_path)?;
     launch_installer(&installer_path)?;
 
-    println!("Installer started. Niubash will finish updating after open Niubash sessions close.");
+    println!("Installer started. NativeShell will finish updating after open NativeShell sessions close.");
     Ok(())
 }
 
@@ -175,14 +175,14 @@ pub fn maybe_print_update_hint() {
                     let _ = write_update_check_stamp();
                     let current_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
                     if release_is_newer(&release.tag_name, &current_tag) {
-                        niubash_runtime::repl::set_pending_notice(format!(
-                            "niubash: update available: {} (run 'self-update' in the REPL, or 'niu --self-update' outside it)",
+                        native_shell_runtime::repl::set_pending_notice(format!(
+                            "native-shell: update available: {} (run 'self-update' in the REPL, or 'native-shell --self-update' outside it)",
                             release.tag_name
                         ));
                     }
                 }
                 Err(err) => {
-                    log::debug!("niubash update check failed: {err}");
+                    log::debug!("native-shell update check failed: {err}");
                     let _ = write_update_check_stamp();
                 }
             }
@@ -213,10 +213,10 @@ fn parse_options(args: &[String]) -> Result<SelfUpdateOptions> {
 }
 
 fn print_self_update_usage() {
-    println!("Usage: niu --self-update [--check|--dry-run] [--force] [--repo owner/name]");
+    println!("Usage: native-shell --self-update [--check|--dry-run] [--force] [--repo owner/name]");
     println!("       self-update [--check|--dry-run] [--force] [--repo owner/name]");
     println!();
-    println!("Inside the Niubash REPL, run `self-update` or `update-niubash`; the current shell exits after handing off the update.");
+    println!("Inside the NativeShell REPL, run `self-update` or `update-native-shell`; the current shell exits after handing off the update.");
 }
 
 fn validate_installer_payload(path: &Path) -> Result<()> {
@@ -240,7 +240,7 @@ fn active_install_dir() -> Option<PathBuf> {
 fn install_root_for_executable(executable: &Path) -> Option<PathBuf> {
     let mut candidate = executable.parent()?.to_path_buf();
     for _ in 0..5 {
-        if candidate.join("niu.exe").is_file() && candidate.join("winuxcmd").is_dir() {
+        if candidate.join("native-shell.exe").is_file() && candidate.join("winuxcmd").is_dir() {
             return Some(candidate);
         }
         candidate = candidate.parent()?.to_path_buf();
@@ -312,7 +312,7 @@ pub fn github_release_asset_url(repo: &str, tag: &str, asset_name: &str) -> Stri
 
 fn download_asset(repo: &str, tag: &str, asset: &GitHubAsset) -> Result<PathBuf> {
     let dir = std::env::temp_dir()
-        .join("niubash-self-update")
+        .join("native-shell-self-update")
         .join(tag.trim_start_matches('v'));
     std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
     let path = dir.join(safe_asset_name(&asset.name));
@@ -335,7 +335,7 @@ fn download_asset(repo: &str, tag: &str, asset: &GitHubAsset) -> Result<PathBuf>
 }
 
 /// Download the first installer asset that fetches, then prove it is the
-/// published artifact before it may run (niubash#311). The installer keeps
+/// published artifact before it may run (native-shell#311). The installer keeps
 /// the existing stable-name-first, versioned-fallback contract; integrity is
 /// mandatory and FAIL-CLOSED: the `.sha256` sidecar published beside the
 /// same asset must download and match, otherwise the update aborts — a
@@ -366,7 +366,7 @@ fn download_verified_installer(repo: &str, tag: &str, assets: &[GitHubAsset]) ->
         let digest_path = download_asset(repo, tag, &digest_asset).with_context(|| {
             format!(
                 "SHA-256 digest asset '{}' could not be downloaded; refusing to run an \
-                 unverifiable installer (fail-closed, niubash#311). Download the \
+                 unverifiable installer (fail-closed, native-shell#311). Download the \
                  installer manually from https://github.com/{repo}/releases/tag/{tag} \
                  and check it against the release's SHA256SUMS before installing",
                 digest_asset.name
@@ -390,7 +390,7 @@ fn download_verified_installer(repo: &str, tag: &str, assets: &[GitHubAsset]) ->
 
 /// The digest sidecar always travels under the SAME name and URL as its
 /// installer asset, plus a `.sha256` suffix (`releases/latest/download/
-/// niubash-win-<arch>-setup.exe.sha256` for the stable alias).
+/// native-shell-win-<arch>-setup.exe.sha256` for the stable alias).
 fn digest_asset_for(installer: &GitHubAsset) -> GitHubAsset {
     GitHubAsset {
         name: format!("{}.sha256", installer.name),
@@ -404,7 +404,7 @@ fn verify_installer_digest(path: &Path, expected_hex: &str) -> Result<()> {
         anyhow::bail!(
             "SHA-256 mismatch for {}: expected {expected_hex}, got {actual}. The \
              downloaded installer is not the published artifact and will NOT be run \
-             (niubash#311); re-download from the GitHub release page",
+             (native-shell#311); re-download from the GitHub release page",
             path.display()
         );
     }
@@ -798,7 +798,7 @@ fn latest_tag_from_url(url: &str) -> Option<String> {
 }
 
 fn installer_assets(repo: &str, tag: &str, arch: &str) -> Vec<GitHubAsset> {
-    let stable_name = format!("niubash-win-{arch}-setup.exe");
+    let stable_name = format!("native-shell-win-{arch}-setup.exe");
     vec![
         GitHubAsset {
             name: stable_name.clone(),
@@ -812,7 +812,7 @@ fn installer_assets(repo: &str, tag: &str, arch: &str) -> Vec<GitHubAsset> {
 
 fn versioned_installer_asset(repo: &str, tag: &str, arch: &str) -> GitHubAsset {
     let version = tag.trim_start_matches('v');
-    let name = format!("niubash-v{version}-win-{arch}-setup.exe");
+    let name = format!("native-shell-v{version}-win-{arch}-setup.exe");
     GitHubAsset {
         name: name.clone(),
         browser_download_url: github_release_asset_url(repo, tag, &name),
@@ -820,8 +820,8 @@ fn versioned_installer_asset(repo: &str, tag: &str, arch: &str) -> GitHubAsset {
 }
 
 fn update_check_disabled() -> bool {
-    env_flag_is_disabled("NIU_UPDATE_CHECK")
-        || env_flag_is_enabled("NIU_NO_UPDATE_CHECK")
+    env_flag_is_disabled("NATIVE_SHELL_UPDATE_CHECK")
+        || env_flag_is_enabled("NATIVE_SHELL_NO_UPDATE_CHECK")
         || std::env::var_os("CI").is_some()
 }
 
@@ -877,11 +877,11 @@ fn write_update_check_stamp() -> Result<()> {
 fn update_check_stamp_path() -> PathBuf {
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
         return PathBuf::from(local_app_data)
-            .join("Niubash")
+            .join("NativeShell")
             .join("update-check.stamp");
     }
     std::env::temp_dir()
-        .join("niubash")
+        .join("native-shell")
         .join("update-check.stamp")
 }
 
@@ -1021,32 +1021,32 @@ mod tests {
 
     #[test]
     fn builds_versioned_installer_asset() {
-        let asset = versioned_installer_asset("unixwin/niubash", "v0.8.2", "x64");
+        let asset = versioned_installer_asset("JayWanX/native-shell", "v0.8.2", "x64");
 
-        assert_eq!(asset.name, "niubash-v0.8.2-win-x64-setup.exe");
+        assert_eq!(asset.name, "native-shell-v0.8.2-win-x64-setup.exe");
         assert_eq!(
             asset.browser_download_url,
-            "https://github.com/unixwin/niubash/releases/download/v0.8.2/niubash-v0.8.2-win-x64-setup.exe"
+            "https://github.com/JayWanX/native-shell/releases/download/v0.8.2/native-shell-v0.8.2-win-x64-setup.exe"
         );
     }
 
     #[test]
     fn builds_stable_installer_asset_before_versioned_fallback() {
-        let assets = installer_assets("unixwin/niubash", "v0.8.2", "x64");
+        let assets = installer_assets("JayWanX/native-shell", "v0.8.2", "x64");
 
-        assert_eq!(assets[0].name, "niubash-win-x64-setup.exe");
+        assert_eq!(assets[0].name, "native-shell-win-x64-setup.exe");
         assert_eq!(
             assets[0].browser_download_url,
-            "https://github.com/unixwin/niubash/releases/latest/download/niubash-win-x64-setup.exe"
+            "https://github.com/JayWanX/native-shell/releases/latest/download/native-shell-win-x64-setup.exe"
         );
-        assert_eq!(assets[1].name, "niubash-v0.8.2-win-x64-setup.exe");
+        assert_eq!(assets[1].name, "native-shell-v0.8.2-win-x64-setup.exe");
     }
 
     #[test]
     fn builds_generic_github_release_asset_url() {
         assert_eq!(
-            github_release_asset_url("unixwin/oh-my-niu", "v1.0.0", "oh-my-niu-1.0.0.zip"),
-            "https://github.com/unixwin/oh-my-niu/releases/download/v1.0.0/oh-my-niu-1.0.0.zip"
+            github_release_asset_url("unixwin/oh-my-native-shell", "v1.0.0", "oh-my-native-shell-1.0.0.zip"),
+            "https://github.com/unixwin/oh-my-native-shell/releases/download/v1.0.0/oh-my-native-shell-1.0.0.zip"
         );
     }
 
@@ -1057,22 +1057,22 @@ mod tests {
 
     #[test]
     fn digest_sidecar_shares_the_installer_asset_name_and_url() {
-        let stable = installer_assets("unixwin/niubash", "v0.8.2", "x64");
+        let stable = installer_assets("JayWanX/native-shell", "v0.8.2", "x64");
         let stable_digest = digest_asset_for(&stable[0]);
-        assert_eq!(stable_digest.name, "niubash-win-x64-setup.exe.sha256");
+        assert_eq!(stable_digest.name, "native-shell-win-x64-setup.exe.sha256");
         assert_eq!(
             stable_digest.browser_download_url,
-            "https://github.com/unixwin/niubash/releases/latest/download/niubash-win-x64-setup.exe.sha256"
+            "https://github.com/JayWanX/native-shell/releases/latest/download/native-shell-win-x64-setup.exe.sha256"
         );
 
         let versioned_digest = digest_asset_for(&stable[1]);
         assert_eq!(
             versioned_digest.name,
-            "niubash-v0.8.2-win-x64-setup.exe.sha256"
+            "native-shell-v0.8.2-win-x64-setup.exe.sha256"
         );
         assert_eq!(
             versioned_digest.browser_download_url,
-            "https://github.com/unixwin/niubash/releases/download/v0.8.2/niubash-v0.8.2-win-x64-setup.exe.sha256"
+            "https://github.com/JayWanX/native-shell/releases/download/v0.8.2/native-shell-v0.8.2-win-x64-setup.exe.sha256"
         );
     }
 
@@ -1088,18 +1088,18 @@ mod tests {
         let hex = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
         // coreutils sha256sum text mode
         assert_eq!(
-            parse_sha256_digest(&format!("{hex}  niubash-win-x64-setup.exe")).unwrap(),
+            parse_sha256_digest(&format!("{hex}  native-shell-win-x64-setup.exe")).unwrap(),
             hex
         );
         // coreutils binary mode marker
         assert_eq!(
-            parse_sha256_digest(&format!("{hex}*niubash-win-x64-setup.exe")).unwrap(),
+            parse_sha256_digest(&format!("{hex}*native-shell-win-x64-setup.exe")).unwrap(),
             hex
         );
         // PowerShell Get-FileHash, uppercase with CRLF
         assert_eq!(
             parse_sha256_digest(&format!(
-                "SHA256 (niubash-win-x64-setup.exe) = {} \r\n",
+                "SHA256 (native-shell-win-x64-setup.exe) = {} \r\n",
                 hex.to_ascii_uppercase()
             ))
             .unwrap(),
@@ -1217,7 +1217,7 @@ mod tests {
     fn request_headers_include_generic_download_defaults() {
         let headers = request_headers_for_token(None);
 
-        assert!(headers.contains("User-Agent: niubash/"));
+        assert!(headers.contains("User-Agent: native-shell/"));
         assert!(headers.contains("Accept: application/octet-stream"));
         assert!(!headers.contains("Authorization:"));
     }
@@ -1249,17 +1249,17 @@ mod tests {
     #[test]
     fn extracts_latest_release_tag_from_redirect_url() {
         assert_eq!(
-            latest_tag_from_url("https://github.com/unixwin/niubash/releases/tag/v0.8.2"),
+            latest_tag_from_url("https://github.com/JayWanX/native-shell/releases/tag/v0.8.2"),
             Some("v0.8.2".to_string())
         );
         assert_eq!(
             latest_tag_from_url(
-                "https://github.com/unixwin/niubash/releases/tag/v0.8.2?expanded=true"
+                "https://github.com/JayWanX/native-shell/releases/tag/v0.8.2?expanded=true"
             ),
             Some("v0.8.2".to_string())
         );
         assert_eq!(
-            latest_tag_from_url("https://github.com/unixwin/niubash/releases/latest"),
+            latest_tag_from_url("https://github.com/JayWanX/native-shell/releases/latest"),
             None
         );
     }
@@ -1268,13 +1268,13 @@ mod tests {
     #[test]
     fn finds_install_root_from_winuxcmd_shim_path() {
         let root = std::env::temp_dir().join(format!(
-            "niubash-self-update-root-test-{}",
+            "native-shell-self-update-root-test-{}",
             std::process::id()
         ));
         let shim = root.join("winuxcmd").join("bin").join("sh.exe");
         std::fs::create_dir_all(shim.parent().unwrap()).unwrap();
         std::fs::create_dir_all(root.join("winuxcmd")).unwrap();
-        std::fs::write(root.join("niu.exe"), b"MZ").unwrap();
+        std::fs::write(root.join("native-shell.exe"), b"MZ").unwrap();
         std::fs::write(&shim, b"MZ").unwrap();
 
         assert_eq!(install_root_for_executable(&shim), Some(root.clone()));
@@ -1284,14 +1284,18 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn parses_https_url_for_winhttp() {
-        let parsed =
-            ParsedUrl::parse("https://api.github.com/repos/unixwin/niubash/releases/latest?x=1")
-                .unwrap();
+        let parsed = ParsedUrl::parse(
+            "https://api.github.com/repos/JayWanX/native-shell/releases/latest?x=1",
+        )
+        .unwrap();
 
         assert!(parsed.secure);
         assert_eq!(parsed.host, "api.github.com");
         assert_eq!(parsed.port, 443);
-        assert_eq!(parsed.path, "/repos/unixwin/niubash/releases/latest?x=1");
+        assert_eq!(
+            parsed.path,
+            "/repos/JayWanX/native-shell/releases/latest?x=1"
+        );
     }
 
     #[cfg(windows)]
@@ -1322,7 +1326,7 @@ mod tests {
             .map(|duration| duration.as_nanos())
             .unwrap_or(0);
         std::env::temp_dir().join(format!(
-            "niubash-{name}-installer-{}-{nanos}.exe",
+            "native-shell-{name}-installer-{}-{nanos}.exe",
             std::process::id()
         ))
     }

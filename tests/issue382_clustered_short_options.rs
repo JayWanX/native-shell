@@ -1,34 +1,38 @@
-//! rubash#382 / niubash#382: GNU clustered invocation options.
+//! rubash#382 / native-shell#382: GNU clustered invocation options.
 //!
 //! `bash -eo pipefail -c '...'` is a common CI / Makefile invocation: GNU
 //! shell.c parse_shell_options (shell.c:931-943) reads `-eo` as `-e` plus
-//! `-o` whose value is the NEXT argv word. niu used to reject the cluster
+//! `-o` whose value is the NEXT argv word. native-shell used to reject the cluster
 //! with `bash: -eo: invalid option`, so any tool that invoked the shell that
 //! way failed. These tests pin the clustered form to the separated one.
 
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-fn niu_binary() -> PathBuf {
-    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+fn native_shell_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_native-shell"));
     if p.exists() {
         return p;
     }
     let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fallback.push("target");
     fallback.push("debug");
-    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback.push(if cfg!(windows) {
+        "native-shell.exe"
+    } else {
+        "native-shell"
+    });
     fallback
 }
 
 fn run(args: &[&str]) -> Output {
-    Command::new(niu_binary())
+    Command::new(native_shell_binary())
         .args(args)
-        .env_remove("NIU_ENV")
+        .env_remove("NATIVE_SHELL_ENV")
         .env_remove("BASH_ENV")
         .stdin(Stdio::null())
         .output()
-        .expect("spawn niu")
+        .expect("spawn native-shell")
 }
 
 #[test]
@@ -37,7 +41,7 @@ fn clustered_eo_pipefail_matches_the_separated_form() {
     let separated = run(&["-e", "-o", "pipefail", "-c", "true"]);
     assert!(
         clustered.status.success(),
-        "`niu -eo pipefail -c true` failed: status {:?}, stderr: {}",
+        "`native-shell -eo pipefail -c true` failed: status {:?}, stderr: {}",
         clustered.status.code(),
         String::from_utf8_lossy(&clustered.stderr)
     );
@@ -71,7 +75,7 @@ fn clustered_shopt_option_matches_the_separated_form() {
     let separated = run(&["-e", "-O", "extglob", "-c", "true"]);
     assert!(
         clustered.status.success(),
-        "`niu -eO extglob -c true` failed: status {:?}, stderr: {}",
+        "`native-shell -eO extglob -c true` failed: status {:?}, stderr: {}",
         clustered.status.code(),
         String::from_utf8_lossy(&clustered.stderr)
     );

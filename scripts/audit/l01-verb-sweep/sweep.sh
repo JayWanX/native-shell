@@ -44,7 +44,7 @@ SB="$OUT/sandbox"
 
 rm -rf "$SB"
 mkdir -p "$SB/home" "$SB/fakepath"
-export HOME="$SB/home" USERPROFILE="$SB/home" NIU_LANG=en
+export HOME="$SB/home" USERPROFILE="$SB/home" NATIVE_SHELL_LANG=en
 export MSYS_NO_PATHCONV=1
 
 PASS=0
@@ -114,7 +114,7 @@ probe doctor 0 "niubash doctor" 30 doctor
 probe font 0 "" 30 font
 # internal-yes streams forever; cap the capture (head closes the pipe so the
 # 8s probe stays a few KB, not 600MB of `yes` output). Accepted exits: 0
-# (closed-pipe policy, niubash#140 — same as `--version | head`) or 124
+# (closed-pipe policy, native-shell#140 — same as `--version | head`) or 124
 # (timeout kill on the still-streaming writer).
 o="$OUT/internal-yes.out" e="$OUT/internal-yes.err"
 timeout 8 "$NIU" --internal-yes 2>"$e" | head -c 1000 >"$o"
@@ -262,7 +262,7 @@ fi
 # (`command -v niu … && niu plugin sync --bootstrap`) resolved and ran it on
 # EVERY startup, printing `niu: unknown plugin subcommand 'sync'` (real
 # 1.2.5) or its own output/noise (synthetic stand-in). The fixed rc pins the
-# reconcile to NIU_SHELL (the running exe; exported at src/main.rs
+# reconcile to NATIVE_SHELL_BIN (the running exe; exported at src/main.rs
 # run_main from current_exe), so a PATH-shadowed stale install must not run
 # — and doctor must surface the mismatch.
 STALE="${STALE_NIU:-}"
@@ -286,7 +286,7 @@ if [ -n "$STALE" ] && [ -f "$STALE" ]; then
 
     timeout 60 "$NIU" setup --preset minimal >"$OUT/v1-wizard.out" 2>"$OUT/v1-wizard.err"
     ok_if v1-wizard-exit-0 test "$?" -eq 0
-    ok_if v1-wizard-emits-niu-shell-line command grep -q 'command -v "\${NIU_SHELL:-niu}"' "$SB/home/.niubashrc"
+    ok_if v1-wizard-emits-niu-shell-line command grep -q 'command -v "\${NATIVE_SHELL_BIN:-niu}"' "$SB/home/.niubashrc"
 
     o="$OUT/v1-startup.out" e="$OUT/v1-startup.err"
     timeout 60 "$NIU" -C 'echo v1-probe-marker' >"$o" 2>"$e" </dev/null

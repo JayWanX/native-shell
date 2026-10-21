@@ -3,7 +3,7 @@
     [int]$Seconds = 12,
     [string]$Hwnd = ""
 )
-# Record the user's already-open Niubash terminal playing an animated
+# Record the user's already-open NativeShell terminal playing an animated
 # termflag (./flags/qiu-dance.sh), then convert to a GIF.
 # The window is NEVER closed or moved - we only capture its region.
 $ErrorActionPreference = "Stop"
@@ -44,7 +44,7 @@ public class QiuWin32 {
 "@
 [void][QiuWin32]::SetProcessDpiAwareness(2)
 
-# Resolve the target window: explicit -Hwnd, else exact title "Niubash".
+# Resolve the target window: explicit -Hwnd, else exact title "NativeShell".
 $targetHwnd = [IntPtr]::Zero
 if ($Hwnd) {
     $targetHwnd = New-Object System.IntPtr([long]$Hwnd)
@@ -55,7 +55,7 @@ if ($Hwnd) {
         if ([QiuWin32]::IsWindowVisible($h)) {
             $sb = New-Object System.Text.StringBuilder 512
             [void][QiuWin32]::GetWindowText($h, $sb, 512)
-            if ($sb.ToString().Trim() -eq "Niubash") { $script:found = $h }
+            if ($sb.ToString().Trim() -eq "NativeShell") { $script:found = $h }
         }
         return $true
     }

@@ -84,7 +84,7 @@ def make_history_screen(cols: int, rows: int):
 
 
 class Session:
-    """A niu.exe (or other argv) under ConPTY with a pyte screen."""
+    """A native-shell.exe (or other argv) under ConPTY with a pyte screen."""
 
     def __init__(self, argv, cwd, env, cols=COLS, rows=ROWS, raw_log=None,
                  label="session", delivery_log=None):
@@ -426,17 +426,17 @@ class StepRecorder:
 
 # ── Sandbox + environment ───────────────────────────────────────────────────
 
-ENV_POP = ("NIU_PLUGIN_SOURCES_ROOT", "NIU_PLUGIN_SPEC", "NIU_MIRRORS",
-           "NIU_PLUGIN_BOOTSTRAP", "NIU_REPL_STARTUP", "BASH_ENV",
-           "WINUXSH_ROOT", "NIU_THEME", "OSH_THEME", "BASH_IT_THEME",
-           "MSYSTEM", "WT_SESSION", "NIU_SETUP_TIMEOUT")
+ENV_POP = ("NATIVE_SHELL_PLUGIN_SOURCES_ROOT", "NATIVE_SHELL_PLUGIN_SPEC", "NATIVE_SHELL_MIRRORS",
+           "NATIVE_SHELL_PLUGIN_BOOTSTRAP", "NATIVE_SHELL_REPL_STARTUP", "BASH_ENV",
+           "WINUXSH_ROOT", "NATIVE_SHELL_THEME", "OSH_THEME", "BASH_IT_THEME",
+           "MSYSTEM", "WT_SESSION", "NATIVE_SHELL_SETUP_TIMEOUT")
 
 
 def build_env(home: Path, exe: Path, lang: str = "en",
               mirrors_file: Path | None = None) -> dict:
     """Sandboxed environment: USERPROFILE and HOME both redirected (the
     USERPROFILE-wins pitfall), the tested exe FIRST on PATH (a stale PATH
-    niu would poison the rc bootstrap line), git available for fixtures."""
+    native-shell would poison the rc bootstrap line), git available for fixtures."""
     env = dict(os.environ)
     system_root = env.get("SystemRoot", r"C:\Windows")
     env.update({
@@ -449,13 +449,13 @@ def build_env(home: Path, exe: Path, lang: str = "en",
         "TEMP": str(home / "tmp"),
         "TMP": str(home / "tmp"),
         "TERM": "xterm",
-        "NIU_LANG": lang,
-        "NIU_NO_UPDATE_CHECK": "1",
+        "NATIVE_SHELL_LANG": lang,
+        "NATIVE_SHELL_NO_UPDATE_CHECK": "1",
     })
     for key in ENV_POP:
         env.pop(key, None)
     if mirrors_file is not None:
-        env["NIU_MIRRORS"] = str(mirrors_file)
+        env["NATIVE_SHELL_MIRRORS"] = str(mirrors_file)
     path_parts = [str(exe.parent)]
     if shutil.which("git") is None:
         for guess in (r"C:\Program Files\Git\cmd",
@@ -484,7 +484,7 @@ def new_sandbox(scenarios_root: Path, name: str) -> Path:
 
 def state_snapshot(home: Path) -> dict:
     """Existence + salient content of every file a wizard run may write."""
-    niu_dir = home / ".niubash"
+    native_shell_dir = home / ".native-shell"
 
     def read(path: Path) -> str:
         try:
@@ -493,26 +493,26 @@ def state_snapshot(home: Path) -> dict:
             return ""
 
     sources = []
-    sources_dir = niu_dir / "sources"
+    sources_dir = native_shell_dir / "sources"
     if sources_dir.is_dir():
         sources = sorted(child.name for child in sources_dir.iterdir())
     backups = []
-    backups_dir = niu_dir / "backups"
+    backups_dir = native_shell_dir / "backups"
     if backups_dir.is_dir():
         backups = sorted(child.name for child in backups_dir.iterdir())
     return {
-        "rc": read(home / ".niubashrc"),
-        "rc_exists": (home / ".niubashrc").is_file(),
+        "rc": read(home / ".native-shellrc"),
+        "rc_exists": (home / ".native-shellrc").is_file(),
         "compat_rc_exists": (home / ".winuxshrc").is_file(),
-        "setup_done": (niu_dir / ".setup-done").is_file(),
-        "wizard_answers": read(niu_dir / "wizard-answers.toml"),
-        "journal": read(niu_dir / "setup-journal.toml"),
-        "spec": read(niu_dir / "plugins.toml"),
-        "mirrors": read(niu_dir / "mirrors.toml"),
-        "registry": read(niu_dir / "registry.toml"),
+        "setup_done": (native_shell_dir / ".setup-done").is_file(),
+        "wizard_answers": read(native_shell_dir / "wizard-answers.toml"),
+        "journal": read(native_shell_dir / "setup-journal.toml"),
+        "spec": read(native_shell_dir / "plugins.toml"),
+        "mirrors": read(native_shell_dir / "mirrors.toml"),
+        "registry": read(native_shell_dir / "registry.toml"),
         "sources": sources,
         "backups": backups,
-        "niu_dir_exists": niu_dir.is_dir(),
+        "native_shell_dir_exists": native_shell_dir.is_dir(),
     }
 
 
@@ -526,7 +526,7 @@ def state_diff_label(before: dict, after: dict) -> str:
 
 
 def run_cli(exe: Path, home: Path, args: list, env: dict, timeout=120):
-    """Bounded non-interactive CLI probe (niu -c / plugin verbs)."""
+    """Bounded non-interactive CLI probe (native-shell -c / plugin verbs)."""
     proc = subprocess.run(
         [str(exe), *args], env=env, cwd=str(home), timeout=timeout,
         capture_output=True, text=True, encoding="utf-8", errors="replace")
