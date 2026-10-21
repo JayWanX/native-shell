@@ -1,0 +1,2107 @@
+//! Windows-native host contract tests for the `niu -c` surface.
+//!
+//! These tests intentionally exercise the built binary instead of internal
+//! helpers: this is the contract humans and agents rely on.
+
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+fn niu_binary() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_BIN_EXE_niu"));
+    if p.exists() {
+        return p;
+    }
+
+    let mut fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    fallback.push("target");
+    fallback.push("debug");
+    fallback.push(if cfg!(windows) { "niu.exe" } else { "niubash" });
+    fallback
+}
+
+#[test]
+fn cwd_cd_pwd_and_windows_child_process_agree() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-cwd");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    let target = temp.join("target");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    std::fs::create_dir_all(&target).unwrap();
+
+    let target_shell_path = shell_path(&target);
+    let script = format!("cd {}; pwd; cmd.exe /C cd", shell_quote(&target_shell_path));
+    let output = run_niu(&script, &start, &home, &[]);
+    assert_success(&output, "cwd contract");
+
+    let stdout = stdout_lines(&output);
+    assert_eq!(stdout.len(), 2, "stdout was {stdout:?}");
+    // rubash#556 (P0 rubash#537): `pwd` renders the POSIX persona form
+    // unconditionally; the Win32 child still reports its own native cwd —
+    // the spawn boundary keeps native spelling (path contract).
+    let Some(target_persona_path) = slash_drive_path(&target) else {
+        let _ = std::fs::remove_dir_all(temp);
+        return;
+    };
+    assert_same_path(&stdout[0], &target_persona_path);
+    assert_same_path(&stdout[1], &target_shell_path);
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn noninteractive_history_does_not_load_or_write_the_host_history_file() {
+    let temp = unique_temp_dir("niubash-host-history-provider");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    let history = home.join(".niubash_history");
+    std::fs::write(&history, "first command\nsecond command\n").unwrap();
+
+    let output = run_niu("history; echo rc=$?", &start, &home, &[]);
+    assert_success(&output, "noninteractive history");
+    assert_eq!(normalize_text(&output.stdout), "rc=0");
+    assert!(output.stderr.is_empty(), "{output:?}");
+
+    let saved = run_niu(
+        "history -s third command; history; history -c; history",
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&saved, "session-only history");
+    assert_eq!(normalize_text(&saved.stdout), "1  third command");
+    assert!(saved.stderr.is_empty(), "{saved:?}");
+    assert_eq!(
+        std::fs::read_to_string(&history).unwrap(),
+        "first command\nsecond command\n"
+    );
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn noninteractive_history_files_require_explicit_read_and_write() {
+    let temp = unique_temp_dir("niubash-explicit-history");
+    let home = temp.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let history = temp.join("input-history");
+    let written = temp.join("output-history");
+    std::fs::write(&history, "seed-entry\n").unwrap();
+    let script = format!(
+        "history; history -r {}; history -s session-entry; history; history -w {}",
+        shell_quote(&shell_path(&history)),
+        shell_quote(&shell_path(&written)),
+    );
+    let output = run_niu(&script, &temp, &home, &[]);
+    assert_success(&output, "explicit noninteractive history files");
+    assert_eq!(
+        normalize_text(&output.stdout),
+        "1  seed-entry\n    2  session-entry"
+    );
+    assert!(output.stderr.is_empty(), "{output:?}");
+    assert_eq!(
+        normalize_text(&std::fs::read(&written).unwrap()),
+        "seed-entry\nsession-entry"
+    );
+    assert!(!home.join(".niubash_history").exists());
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn script_and_stdin_history_do_not_load_the_interactive_history_file() {
+    let temp = unique_temp_dir("niubash-script-history-isolation");
+    let home = temp.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let history = home.join(".niubash_history");
+    std::fs::write(&history, "private-interactive-entry\n").unwrap();
+    let script = temp.join("probe.sh");
+    let source = "history; history -s script-entry; history; history -c\n";
+    std::fs::write(&script, source).unwrap();
+
+    for from_stdin in [false, true] {
+        let mut command = Command::new(niu_binary());
+        command
+            .current_dir(&temp)
+            .env("HOME", &home)
+            .env("USERPROFILE", &home);
+        if from_stdin {
+            command.stdin(std::fs::File::open(&script).unwrap());
+        } else {
+            command.arg(&script);
+        }
+        let output = command.output().unwrap();
+        assert_success(&output, "script history isolation");
+        assert_eq!(normalize_text(&output.stdout), "1  script-entry");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        assert_eq!(
+            std::fs::read_to_string(&history).unwrap(),
+            "private-interactive-entry\n"
+        );
+    }
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn command_mode_runs_when_history_file_cannot_be_created() {
+    let temp = unique_temp_dir("niubash-host-history-fallback");
+    let home = temp.join("home-file");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&temp).unwrap();
+    std::fs::write(&home, "home is intentionally a file").unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu("printf '%s' command-ok", &start, &home, &[]);
+    assert_success(&output, "history fallback command mode");
+    assert_eq!(normalize_text(&output.stdout), "command-ok");
+    assert_eq!(normalize_text(&output.stderr), "");
+    assert_eq!(
+        std::fs::read_to_string(home).unwrap(),
+        "home is intentionally a file"
+    );
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+/// niubash#134: a history *file* that exists but cannot be opened (restricted
+/// token sandbox reports os error 5; a directory in its place fails the same
+/// way) must degrade to in-memory history instead of aborting startup. The
+/// `-c` one-shot contract — exact stdout, empty stderr, rc 0 — is what agent
+/// harnesses (dsh/DeepSeek) rely on. GNU citation: bashhist.c:320
+/// load_history() tolerates every history-file read failure.
+#[test]
+fn command_mode_runs_when_history_path_is_a_directory() {
+    let temp = unique_temp_dir("niubash-host-history-directory");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    // A directory where the history file should be: opening it for read+write
+    // fails with access denied on Windows (os error 5) and EISDIR elsewhere.
+    std::fs::create_dir_all(home.join(".niubash_history")).unwrap();
+
+    let output = run_niu("printf '%s' dir-ok; echo rc=$?", &start, &home, &[]);
+    assert_success(&output, "history directory fallback command mode");
+    assert_eq!(normalize_text(&output.stdout), "dir-okrc=0");
+    assert_eq!(
+        normalize_text(&output.stderr),
+        "",
+        "degradation must be log::warn only, never stderr"
+    );
+    assert!(home.join(".niubash_history").is_dir());
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn script_mode_keeps_engine_history_data_plane() {
+    // P2: non-interactive runs keep the engine's history machinery active so
+    // `set -H`, fc, and the history builtin behave as under rubash/GNU. The
+    // REPL path (enter_interactive) remains the place where engine history
+    // storage is disabled in favor of reedline.
+    let temp = unique_temp_dir("niubash-host-history-owner");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    let rubash_history = temp.join("rubash-history");
+
+    let output = run_niu(
+        "set -o history; history abcde 2>/dev/null; test $? -eq 2",
+        &start,
+        &home,
+        &[("HISTFILE", rubash_history.to_string_lossy().into_owned())],
+    );
+
+    assert_success(&output, "engine history data plane in scripts");
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn bash_style_noexec_option_reaches_rubash() {
+    let temp = unique_temp_dir("niubash-host-noexec");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = Command::new(niu_binary())
+        .args(["-n", "-c", "printf should-not-run"])
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .output()
+        .unwrap();
+
+    assert_success(&output, "Bash -n host invocation");
+    assert!(
+        output.stdout.is_empty(),
+        "-n unexpectedly executed the command"
+    );
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn bash_style_errexit_option_reaches_rubash() {
+    let temp = unique_temp_dir("niubash-host-errexit");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = Command::new(niu_binary())
+        .args(["-e", "-c", "false; printf should-not-run"])
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty(), "-e continued after failure");
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn bash_style_login_option_after_c_reaches_rubash() {
+    let temp = unique_temp_dir("niubash-host-c-login");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = Command::new(niu_binary())
+        .args(["-c", "-l", "printf '%s\\n' hi"])
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .output()
+        .unwrap();
+
+    assert_success(&output, "Bash -c -l host invocation");
+    assert_eq!(normalize_text(&output.stdout), "hi");
+    assert_eq!(normalize_text(&output.stderr), "");
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+/// Slash-drive spelling stays accepted *input*; since rubash#556
+/// (P0 rubash#537) the engine's own `$PWD`/`pwd` rendering is the POSIX
+/// persona form, so the persona spelling is also the default *output* —
+/// the old "compat input must not become default output" pin belonged to the
+/// retired native-style hatch (the test formerly asserted a native `pwd`).
+#[test]
+fn slash_drive_input_cd_works_and_pwd_renders_persona_form() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let users = PathBuf::from(r"C:\Users");
+    if !users.is_dir() {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-slash-drive");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu("cd /c/Users; pwd", &start, &home, &[]);
+    assert_success(&output, "slash-drive cwd contract");
+
+    let stdout = stdout_lines(&output);
+    assert_eq!(stdout.len(), 1, "stdout was {stdout:?}");
+    assert_same_path(&stdout[0], "/c/Users");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn slash_drive_root_cd_switches_to_drive_root() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-slash-drive-root-cd");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let start_native_path = native_path(&start);
+    let bytes = start_native_path.as_bytes();
+    if bytes.len() < 2 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {
+        let _ = std::fs::remove_dir_all(temp);
+        return;
+    }
+
+    let drive = (bytes[0] as char).to_ascii_uppercase();
+    let drive_root = format!("{drive}:/");
+    // rubash#556 (P0 rubash#537): `pwd` renders the POSIX persona form
+    // (`/c/...`) unconditionally; the cmd.exe child keeps native spelling.
+    let persona_drive_root = format!("/{}/", drive.to_ascii_lowercase());
+    let output = run_niu(
+        &format!("cd /{}; pwd; cmd.exe /C cd", drive.to_ascii_lowercase()),
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&output, "slash-drive root cd");
+    let stdout = stdout_lines(&output);
+    assert_eq!(stdout.len(), 2, "stdout was {stdout:?}");
+    assert_same_path(&stdout[0], &persona_drive_root);
+    assert_same_path(&stdout[1], &drive_root);
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn slash_drive_mktemp_template_creates_file() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-slash-drive-mktemp");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    let output_dir = temp.join("backups").join("niubash-phase12");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let Some(output_dir_slash_drive) = slash_drive_path(&output_dir) else {
+        let _ = std::fs::remove_dir_all(temp);
+        return;
+    };
+
+    let output = run_niu(
+        &format!(
+            "mkdir -p {dir} && mktemp {dir}/test.XXXXXX.tmp",
+            dir = shell_quote(&output_dir_slash_drive)
+        ),
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&output, "slash-drive mktemp template");
+
+    let stdout = stdout_lines(&output);
+    assert_eq!(stdout.len(), 1, "stdout was {stdout:?}");
+    assert!(
+        !stdout[0].starts_with("/c/"),
+        "mktemp should print Windows-native output, got {:?}",
+        stdout[0]
+    );
+    assert!(
+        PathBuf::from(stdout[0].replace('/', "\\")).is_file(),
+        "mktemp output should name an existing file: {:?}",
+        stdout[0]
+    );
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn winshrc_does_not_run_for_non_interactive_modes() {
+    let temp = unique_temp_dir("niubash-host-winshrc");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    std::fs::write(
+        home.join(".winshrc"),
+        r#"
+echo SHOULD_NOT_PRINT
+"#,
+    )
+    .unwrap();
+
+    let output = run_niu("echo command-ok", &start, &home, &[]);
+    assert_success(&output, "command-mode .winshrc isolation");
+    assert_eq!(normalize_text(&output.stdout), "command-ok");
+
+    let script = temp.join("script.sh");
+    std::fs::write(&script, "echo script-ok\n").unwrap();
+    let output = Command::new(niu_binary())
+        .arg(&script)
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .output()
+        .unwrap_or_else(|err| panic!("spawn niubash script file: {err}"));
+    assert_success(&output, "script-file .winshrc isolation");
+    assert_eq!(normalize_text(&output.stdout), "script-ok");
+
+    let mut child = Command::new(niu_binary())
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| panic!("spawn niubash stdin script: {err}"));
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"echo stdin-ok\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_success(&output, "stdin-script .winshrc isolation");
+    assert_eq!(normalize_text(&output.stdout), "stdin-ok");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn command_mode_sets_bash_execution_string() {
+    let temp = unique_temp_dir("niubash-host-bash-execution-string");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let script = "printf '%s' \"$BASH_EXECUTION_STRING\"";
+    let output = run_niu(script, &start, &home, &[]);
+    assert_success(&output, "BASH_EXECUTION_STRING");
+    assert_eq!(normalize_text(&output.stdout), script);
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn rubash_executor_sees_niu_shell_name() {
+    let temp = unique_temp_dir("niubash-host-shell-name");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu("printf '%s' \"$__RUBASH_SHELL_NAME\"", &start, &home, &[]);
+    assert_success(&output, "rubash shell name");
+    assert!(
+        normalize_text(&output.stdout)
+            .to_ascii_lowercase()
+            .contains("niu"),
+        "stdout was {:?}",
+        normalize_text(&output.stdout)
+    );
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn niu_reports_niu_as_interactive_shell_zero() {
+    let temp = unique_temp_dir("niubash-host-shell-zero");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu("printf '%s' \"$0\"", &start, &home, &[]);
+    assert_success(&output, "shell $0");
+    assert_eq!(normalize_text(&output.stdout), "niu");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn interactive_alias_defaults_and_explicit_disable_reach_command_mode() {
+    let temp = unique_temp_dir("niubash-host-interactive-alias");
+    std::fs::create_dir_all(&temp).unwrap();
+    let probe = "if shopt -q expand_aliases; then printf on; else printf off; fi";
+    for (arguments, expected) in [
+        (vec!["--norc", "-i", "-c", probe], "on"),
+        (
+            vec!["--norc", "-i", "+O", "expand_aliases", "-c", probe],
+            "off",
+        ),
+        (
+            vec!["--norc", "+O", "expand_aliases", "-i", "-c", probe],
+            "off",
+        ),
+        (vec!["--norc", "-c", probe], "off"),
+        (
+            vec!["--norc", "-i", "-c", "alias ll='printf alias-%s done'\nll"],
+            "alias-done",
+        ),
+    ] {
+        let output = Command::new(niu_binary())
+            .args(&arguments)
+            .current_dir(&temp)
+            .env("HOME", &temp)
+            .env("USERPROFILE", &temp)
+            .env_remove("BASH_ENV")
+            .env_remove("ENV")
+            .env_remove("NIU_INVOKED_AS")
+            .env_remove("BASH_ARGV0")
+            .output()
+            .unwrap();
+        assert_success(&output, &format!("{arguments:?}"));
+        assert_eq!(normalize_text(&output.stdout), expected, "{arguments:?}");
+        assert!(output.stderr.is_empty(), "{arguments:?}: {output:?}");
+    }
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn invocation_face_from_argv0_preserves_help_version_and_name_precedence() {
+    let temp = unique_temp_dir("niubash-host-argv0-face");
+    let home = temp.join("home");
+    let bin = temp.join("bin");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+
+    let run = |target: &Path, args: &[&str], forwarded: Option<&str>| {
+        let mut command = Command::new(target);
+        command
+            .args(args)
+            .current_dir(&home)
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env_remove("NIU_INVOKED_AS")
+            .env_remove("BASH_ARGV0")
+            .env_remove("BASH_ENV")
+            .env_remove("ENV");
+        if let Some(face) = forwarded {
+            command.env("NIU_INVOKED_AS", face);
+        }
+        let output = command
+            .output()
+            .unwrap_or_else(|err| panic!("spawn {} {args:?}: {err}", target.display()));
+        assert_success(&output, &format!("{} {args:?}", target.display()));
+        assert!(
+            output.stderr.is_empty(),
+            "{} {args:?}: stderr: {}",
+            target.display(),
+            normalize_text(&output.stderr)
+        );
+        normalize_text(&output.stdout)
+    };
+
+    for face in ["bash", "sh"] {
+        let file_name = if cfg!(windows) {
+            format!("{face}.exe")
+        } else {
+            face.to_string()
+        };
+        let target = bin.join(file_name);
+        std::fs::copy(niu_binary(), &target).unwrap();
+
+        let stdout = run(&target, &["--help"], None);
+        assert!(
+            stdout.contains("GNU bash, version") && stdout.contains("GNU long options:"),
+            "{face} --help did not print the GNU usage form:\n{stdout}"
+        );
+        assert!(
+            stdout.contains(&format!("Usage:\t{face} ")),
+            "{face} --help usage did not name the invocation face:\n{stdout}"
+        );
+        assert!(
+            !stdout.contains("Niubash ") && !stdout.contains("Usage:  niu"),
+            "{face} --help leaked the product help:\n{stdout}"
+        );
+
+        let stdout = run(&target, &["--version"], None);
+        assert!(
+            stdout.contains("GNU bash, version") && !stdout.contains("Niubash "),
+            "{face} --version did not print the GNU version:\n{stdout}"
+        );
+
+        for forwarded in [
+            None,
+            Some(if face == "bash" { "sh" } else { "bash" }),
+            Some("niu"),
+        ] {
+            let expected = forwarded.unwrap_or(face);
+            if forwarded.is_some() {
+                let stdout = run(&target, &["--help"], forwarded);
+                if expected == "niu" {
+                    assert!(
+                        stdout.contains("Niubash ") && !stdout.contains("GNU bash, version"),
+                        "{face} with NIU_INVOKED_AS=niu --help:\n{stdout}"
+                    );
+                } else {
+                    assert!(
+                        stdout.contains(&format!("Usage:\t{expected} ")),
+                        "{face} with NIU_INVOKED_AS={expected}:\n{stdout}"
+                    );
+                }
+                let stdout = run(&target, &["--version"], forwarded);
+                assert_eq!(
+                    stdout.contains("Niubash "),
+                    expected == "niu",
+                    "{face} with NIU_INVOKED_AS={expected} --version:\n{stdout}"
+                );
+                assert_eq!(
+                    stdout.contains("GNU bash, version"),
+                    expected != "niu",
+                    "{face} with NIU_INVOKED_AS={expected} --version:\n{stdout}"
+                );
+            }
+            for prefix in [vec!["-c"], vec!["-o", "posix", "-c"]] {
+                let mut args = prefix;
+                args.push("printf '%s|%s' \"$0\" \"$1\"");
+                assert_eq!(
+                    run(&target, &args, forwarded),
+                    format!("{expected}|"),
+                    "{face} with NIU_INVOKED_AS={forwarded:?}: default $0"
+                );
+                args.extend(["explicit-command-name", "argument"]);
+                assert_eq!(
+                    run(&target, &args, forwarded),
+                    "explicit-command-name|argument",
+                    "{face} with NIU_INVOKED_AS={forwarded:?}: explicit -c name"
+                );
+            }
+        }
+    }
+
+    let target = niu_binary();
+    let stdout = run(&target, &["--help"], None);
+    assert!(stdout.contains("Niubash "), "niu --help: {stdout}");
+    let stdout = run(&target, &["--version"], None);
+    assert!(
+        stdout.contains("Niubash ") && !stdout.contains("GNU bash, version"),
+        "niu --version: {stdout}"
+    );
+    assert_eq!(
+        run(&target, &["-c", "printf %s \"$0\""], Some("sh")),
+        "sh",
+        "explicit NIU_INVOKED_AS must override the niu executable name"
+    );
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn starship_receives_bash_shell_identity() {
+    let temp = unique_temp_dir("niubash-host-starship-shell");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu("printf '%s' \"$STARSHIP_SHELL\"", &start, &home, &[]);
+    assert_success(&output, "Starship shell name");
+    assert_eq!(normalize_text(&output.stdout), "bash");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn exit_trap_runs_for_non_interactive_modes() {
+    let temp = unique_temp_dir("niubash-host-exit-trap");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let command_marker = temp.join("command-marker");
+    let output = run_niu(
+        &format!(
+            "trap 'printf command > {}' EXIT; true",
+            shell_quote(&shell_path(&command_marker))
+        ),
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&output, "command-mode EXIT trap");
+    assert_eq!(std::fs::read_to_string(&command_marker).unwrap(), "command");
+
+    let script_marker = temp.join("script-marker");
+    let script = temp.join("script.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "trap 'printf script > {}' EXIT\ntrue\n",
+            shell_quote(&shell_path(&script_marker))
+        ),
+    )
+    .unwrap();
+    let output = Command::new(niu_binary())
+        .arg(&script)
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .output()
+        .unwrap_or_else(|err| panic!("spawn niubash script file: {err}"));
+    assert_success(&output, "script-file EXIT trap");
+    assert_eq!(std::fs::read_to_string(&script_marker).unwrap(), "script");
+
+    let stdin_marker = temp.join("stdin-marker");
+    let mut child = Command::new(niu_binary())
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| panic!("spawn niubash stdin script: {err}"));
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(
+            format!(
+                "trap 'printf stdin > {}' EXIT\ntrue\n",
+                shell_quote(&shell_path(&stdin_marker))
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_success(&output, "stdin-script EXIT trap");
+    assert_eq!(std::fs::read_to_string(&stdin_marker).unwrap(), "stdin");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn internal_pipeline_helpers_work_when_rubash_is_embedded() {
+    let temp = unique_temp_dir("niubash-host-internal-pipeline");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let mut child = Command::new(niu_binary())
+        .arg("--internal-wc")
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| panic!("spawn niubash internal wc: {err}"));
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"one\ntwo\nthree\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_success(&output, "embedded internal wc helper");
+    assert_eq!(normalize_text(&output.stdout), "3");
+
+    let output = run_niu("yes ok | head -n 3 | wc", &start, &home, &[]);
+    assert_success(&output, "embedded internal pipeline helpers");
+    assert!(
+        normalize_text(&output.stdout).starts_with('3'),
+        "stdout was {:?}",
+        normalize_text(&output.stdout)
+    );
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn temporary_assignment_reaches_nested_niubash_child() {
+    let temp = unique_temp_dir("niubash-host-nested-env");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu(
+        &format!(
+            "FOO_NIU_PROBE=bar {} -c 'printf FOO=$FOO_NIU_PROBE'",
+            shell_quote(&shell_path(&niu_binary()))
+        ),
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&output, "temporary assignment reaches nested niubash");
+    assert_eq!(normalize_text(&output.stdout), "FOO=bar");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn rubash_shopt_is_visible_when_sourcing_startup_rc() {
+    let temp = unique_temp_dir("niubash-host-shopt");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let rc = home.join(".winshrc");
+    std::fs::write(
+        &rc,
+        r#"
+plugins=(
+    git
+    completion
+)
+shopt -s extglob
+shopt -s cmdhist dotglob checkwinsize expand_aliases
+shopt -u dotglob
+export SHOPT_RC_OK=ok
+"#,
+    )
+    .unwrap();
+
+    let output = run_niu(
+        &format!(
+            "source {}; echo $SHOPT_RC_OK; shopt",
+            shell_quote(&shell_path(&rc))
+        ),
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&output, "source .winshrc shopt");
+    assert_eq!(normalize_text(&output.stderr), "");
+
+    let stdout = stdout_lines(&output);
+    assert!(stdout.contains(&"ok".to_string()), "stdout was {stdout:?}");
+
+    // The contract pinned here is that option builtins are visible while the
+    // startup rc is sourced and that the state they set survives into the
+    // live shell. rubash#759 item 4 dropped the zsh `setopt`/`unsetopt`
+    // aliases, so this rides the bash-aligned `shopt` surface: bare `shopt`
+    // lists every option with its state, and `extglob`/`expand_aliases` are
+    // off by default, so "on" here proves the rc's `-s` actually landed; the
+    // set-then-unset `dotglob` plus the empty-stderr gate prove both the `-s`
+    // batch form and `-u` parsed and ran inside the sourced rc.
+    let state_of = |name: &str| -> String {
+        stdout
+            .iter()
+            .find(|line| line.starts_with(name))
+            .unwrap_or_else(|| panic!("shopt output missing {name}: {stdout:?}"))
+            .clone()
+    };
+    assert!(state_of("extglob").ends_with("on"), "stdout was {stdout:?}");
+    assert!(
+        state_of("expand_aliases").ends_with("on"),
+        "stdout was {stdout:?}"
+    );
+    assert!(
+        state_of("dotglob").ends_with("off"),
+        "stdout was {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn native_backslash_drive_paths_work_for_cd() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-native-path");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    let target = temp.join("target");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    std::fs::create_dir_all(&target).unwrap();
+
+    let target_native_path = native_path(&target);
+    let output = run_niu(
+        &format!("cd {}; pwd", target_native_path),
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&output, "native backslash path cd");
+    let stdout = stdout_lines(&output);
+    assert_eq!(stdout.len(), 1, "stdout was {stdout:?}");
+    // rubash#556 (P0 rubash#537): native backslash input stays accepted;
+    // `pwd` renders the POSIX persona form.
+    let Some(target_persona_path) = slash_drive_path(&target) else {
+        let _ = std::fs::remove_dir_all(temp);
+        return;
+    };
+    assert_same_path(&stdout[0], &target_persona_path);
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn drive_only_cd_and_bare_drive_commands_switch_to_drive_root() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-drive-switch");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let start_native_path = native_path(&start);
+    let bytes = start_native_path.as_bytes();
+    if bytes.len() < 2 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {
+        let _ = std::fs::remove_dir_all(temp);
+        return;
+    }
+
+    let drive = (bytes[0] as char).to_ascii_uppercase();
+    let drive_root = format!("{drive}:/");
+    // rubash#556 (P0 rubash#537): `pwd` renders the POSIX persona form
+    // (`/d/...`) unconditionally; the cmd.exe child keeps native spelling.
+    let persona_drive_root = format!("/{}/", drive.to_ascii_lowercase());
+    let start_shell_path = shell_path(&start);
+
+    let output = run_niu(
+        &format!("cd {drive}:; pwd; cmd.exe /C cd"),
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&output, "drive-only cd");
+    let stdout = stdout_lines(&output);
+    assert_eq!(stdout.len(), 2, "stdout was {stdout:?}");
+    assert_same_path(&stdout[0], &persona_drive_root);
+    assert_same_path(&stdout[1], &drive_root);
+
+    let output = run_niu(&format!("{drive}:; pwd; cmd.exe /C cd"), &start, &home, &[]);
+    assert_success(&output, "bare drive command");
+    let stdout = stdout_lines(&output);
+    assert_eq!(stdout.len(), 2, "stdout was {stdout:?}");
+    assert_same_path(&stdout[0], &persona_drive_root);
+    assert_same_path(&stdout[1], &drive_root);
+
+    let output = run_niu(
+        &format!(
+            "cd {drive}: && cmd.exe /C cd; cd {start}; {drive}: && cmd.exe /C cd",
+            drive = drive,
+            start = shell_quote(&start_shell_path)
+        ),
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&output, "drive commands in and-or lists");
+    let stdout = stdout_lines(&output);
+    assert_eq!(stdout.len(), 2, "stdout was {stdout:?}");
+    assert_same_path(&stdout[0], &drive_root);
+    assert_same_path(&stdout[1], &drive_root);
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+#[ignore = "requires real winuxcmd.exe command links; run with --ignored"]
+fn native_backslash_drive_paths_work_for_winuxcmd() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-native-path-winuxcmd");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    let target = temp.join("target");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("marker.txt"), "ok").unwrap();
+    let winuxcmd = real_winuxcmd_for_test()
+        .unwrap_or_else(|| panic!("real winuxcmd.exe with command links is required"));
+    let target_native_path = native_path(&target);
+    let output = run_niu(
+        &format!("ls {}", target_native_path),
+        &start,
+        &home,
+        &[("WINUXCMD_PATH", native_path(&winuxcmd))],
+    );
+    assert_success(&output, "native backslash path ls");
+    let stdout = stdout_lines(&output);
+    assert!(
+        stdout.iter().any(|line| line.contains("marker.txt")),
+        "ls output did not include marker.txt: {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn winuxcmd_ls_preserves_unicode_filenames() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let Some(winuxcmd) = real_winuxcmd_for_test() else {
+        return;
+    };
+
+    let temp = unique_temp_dir("niubash-host-unicode-ls");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    let filename = "中文测试.txt";
+    std::fs::write(start.join(filename), "ok").unwrap();
+
+    let output = run_niu(
+        "ls",
+        &start,
+        &home,
+        &[("WINUXCMD_PATH", native_path(&winuxcmd))],
+    );
+    assert_success(&output, "unicode filename ls");
+    let stdout = normalize_text(&output.stdout);
+    assert!(
+        stdout.contains(filename),
+        "ls should preserve unicode filename {filename:?}, got {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn installed_winuxcmd_links_back_logical_bin_namespaces_without_root_copies() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let Some(winuxcmd) = real_winuxcmd_for_test() else {
+        return;
+    };
+    let Some(winuxcmd_dir) = winuxcmd.parent() else {
+        return;
+    };
+    if !winuxcmd_dir.join("ls.exe").is_file() {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-installed-winuxcmd-logical-bin");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    let root = temp.join("root");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu(
+        "test -x /usr/bin/ls; test -f /usr/bin/ls; /bin/ls /etc >/dev/null; printf x > /etc/path-contract; test -f /etc/path-contract",
+        &start,
+        &home,
+        &[
+            ("WINUXCMD_PATH", native_path(&winuxcmd)),
+            ("NIU_ROOT", native_path(&root)),
+        ],
+    );
+    assert_success(&output, "installed WinuxCmd logical bin provider");
+    assert!(
+        !root.join("usr").join("bin").join("ls.exe").exists(),
+        "WinuxCmd links must stay in the installed provider directory"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("etc").join("path-contract")).unwrap(),
+        "x"
+    );
+    assert!(!root.join(".wpm").exists());
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn redirected_recursive_cp_delegates_to_engine_external_layer() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-cp-native");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    let source = start.join("source");
+    let dest = start.join("dest");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(source.join("sub")).unwrap();
+    std::fs::write(source.join("sub").join("file.txt"), "ok").unwrap();
+
+    // The engine-owned cp layer copies a directory's contents with `/.` into
+    // a destination that does not exist yet (SINKING LIST: engine emulated cp
+    // mishandles `src/.` into an existing destination directory).
+    let script = format!(
+        "cp -R {}/. {}/ 2>&1; test -f {}/sub/file.txt",
+        shell_quote(&shell_path(&source)),
+        shell_quote(&shell_path(&dest)),
+        shell_quote(&shell_path(&dest))
+    );
+    let output = run_niu(&script, &start, &home, &[]);
+
+    assert_success(&output, "redirected recursive cp engine dispatch");
+    assert_eq!(
+        std::fs::read_to_string(dest.join("sub").join("file.txt")).unwrap(),
+        "ok"
+    );
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn path_lookup_finds_windows_pathextext_commands() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-path");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    let bin = temp.join("bin");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(
+        bin.join("hostcontractprobe.cmd"),
+        "@echo off\r\necho path-ok\r\n",
+    )
+    .unwrap();
+
+    let old_path = std::env::var("PATH").unwrap_or_default();
+    let path = format!("{};{}", native_path(&bin), old_path);
+    let output = run_niu(
+        "hostcontractprobe",
+        &start,
+        &home,
+        &[
+            ("PATH", path),
+            ("PATHEXT", ".COM;.EXE;.BAT;.CMD".to_string()),
+        ],
+    );
+    assert_success(&output, "PATH contract");
+    assert_eq!(normalize_text(&output.stdout), "path-ok");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn sourced_rc_keeps_winuxcmd_visible_to_windows_children() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-winuxcmd-child-path");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    let bin = temp.join("winuxcmd");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    for name in ["winuxcmd.exe", "ls.exe", "cat.exe", "grep.exe", "ln.exe"] {
+        std::fs::write(bin.join(name), b"").unwrap();
+    }
+    std::fs::write(
+        home.join(".winshrc"),
+        r#"export PATH="$PATH;C:\does-not-exist-niubash-test""#,
+    )
+    .unwrap();
+
+    let old_path = std::env::var("PATH").unwrap_or_default();
+    let output = run_niu(
+        "source ~/.winshrc; cmd.exe /D /C set PATH",
+        &start,
+        &home,
+        &[
+            ("PATH", old_path),
+            ("PATHEXT", ".COM;.EXE;.BAT;.CMD".to_string()),
+            ("WINUXCMD_PATH", native_path(&bin.join("winuxcmd.exe"))),
+        ],
+    );
+
+    assert_success(&output, "source rc keeps winuxcmd on child PATH");
+    let stdout = normalize_text(&output.stdout);
+    let normalized_stdout = stdout.replace('\\', "/").to_ascii_lowercase();
+    let expected_winuxcmd_dirs = [
+        native_path(&bin).replace('\\', "/").to_ascii_lowercase(),
+        slash_drive_path(&bin)
+            .unwrap_or_else(|| shell_path(&bin))
+            .to_ascii_lowercase(),
+    ];
+    assert!(
+        expected_winuxcmd_dirs
+            .iter()
+            .any(|path| normalized_stdout.contains(path)),
+        "child PATH did not contain winuxcmd dir {:?}: {stdout:?}",
+        expected_winuxcmd_dirs
+    );
+    assert!(
+        normalized_stdout.contains("c:/does-not-exist-niubash-test"),
+        "stdout was {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn exported_env_reaches_windows_child_processes() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-env");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu(
+        "export NIU_HOST_CONTRACT=ok; cmd.exe /C echo %NIU_HOST_CONTRACT%",
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&output, "env contract");
+    assert_eq!(normalize_text(&output.stdout), "ok");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+#[ignore = "known rubash gap: on the case-insensitive Windows environment block \n`export a` and `export A` collide, so a Windows child sees one of the two \nvalues and the first export wins (`lower and lower`, not `upper and upper`). \nSee rubash varenv.tests varenv23.sub `global1:` family. Re-enable once rubash \ntransports case-colliding pairs instead of writing them into the OS block."]
+fn exported_env_case_insensitive_pair_reaches_windows_child() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    // Windows process environments are case-insensitive, so `a` and `A` share
+    // one slot. rubash keeps them as two in-memory variables and marks both
+    // exported, but the OS environment block it hands a child can hold only one
+    // value, and the first export is the one that survives (`lower` here, not
+    // `upper`). The assertion below pins the contract that both should reach the
+    // child; rubash cannot satisfy it today.
+    //
+    // The command string is quoted because an unquoted `|` is parsed by
+    // cmd.exe as a pipe before variable expansion, and its right-hand side
+    // would then be read as a command name (exit 127).
+    let temp = unique_temp_dir("niubash-host-env-case");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu(
+        "export a=lower; export A=upper; cmd.exe /C \"echo %a% and %A%\"",
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&output, "env case-insensitive contract");
+    let stdout = normalize_text(&output.stdout);
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec!["upper and upper"],
+        "stdout was {stdout:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn tilde_resolves_to_normal_windows_home() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-home");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu("cd ~; pwd; cmd.exe /C cd", &start, &home, &[]);
+    assert_success(&output, "home contract");
+
+    let expected_home = shell_path(&home);
+    let stdout = stdout_lines(&output);
+    assert_eq!(stdout.len(), 2, "stdout was {stdout:?}");
+    // rubash#556 (P0 rubash#537): `pwd` renders the POSIX persona form
+    // unconditionally; the cmd.exe child keeps native spelling.
+    let Some(expected_home_persona) = slash_drive_path(&home) else {
+        let _ = std::fs::remove_dir_all(temp);
+        return;
+    };
+    assert_same_path(&stdout[0], &expected_home_persona);
+    assert_same_path(&stdout[1], &expected_home);
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn stdout_stderr_and_exit_code_are_preserved() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-stdio");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu("echo out; echo err >&2; exit 7", &start, &home, &[]);
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "expected exit code 7, got {:?}; stderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(normalize_text(&output.stdout), "out");
+    assert_eq!(normalize_text(&output.stderr), "err");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn piped_stdin_without_args_runs_plain_script_surface() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-piped-stdin");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let mut child = Command::new(niu_binary())
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"printf 'alpha\\nbeta\\n' | grep alpha\n")
+        .unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    assert_success(&output, "piped stdin script surface");
+    assert_eq!(normalize_text(&output.stdout), "alpha");
+    assert_eq!(normalize_text(&output.stderr), "");
+    assert_no_terminal_controls(&output.stdout);
+    assert_no_terminal_controls(&output.stderr);
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn piped_stdin_without_args_runs_multiline_compound_block() {
+    if !cfg!(windows) {
+        return;
+    }
+    let temp = unique_temp_dir("niubash-host-piped-stdin-multiline");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    let mut child = Command::new(niu_binary())
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"if true; then\n  echo block-ok\nfi\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_success(&output, "piped stdin multiline block");
+    assert_eq!(normalize_text(&output.stdout), "block-ok");
+    assert_eq!(normalize_text(&output.stderr), "");
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn piped_stdin_without_args_runs_heredoc_as_one_chunk() {
+    if !cfg!(windows) {
+        return;
+    }
+    let temp = unique_temp_dir("niubash-host-piped-stdin-heredoc");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    let mut child = Command::new(niu_binary())
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"cat <<EOF\nheredoc-ok\nEOF\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_success(&output, "piped stdin heredoc");
+    assert_eq!(normalize_text(&output.stdout), "heredoc-ok");
+    assert_eq!(normalize_text(&output.stderr), "");
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn piped_stdin_child_script_reads_unconsumed_parent_input() {
+    if !cfg!(windows) {
+        return;
+    }
+    let temp = unique_temp_dir("niubash-host-stdin-child");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    let sub = start.join("input-line.sub");
+    std::fs::write(&sub, "read line\necho line read by $0 was \\`$line\\'\n").unwrap();
+    let sub_display = shell_path(&sub);
+    let sub_arg = shell_quote(&sub_display);
+    let script = format!(
+        "echo before calling input-line.sub\n${{THIS_SH}} {sub_arg}\nthis line for input-line.sub\necho finished with input-line.sub\n"
+    );
+    let mut child = Command::new(niu_binary())
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("THIS_SH", shell_path(&niu_binary()))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_success(&output, "stdin child inherits unread input");
+    assert_eq!(
+        normalize_text(&output.stdout),
+        format!(
+            "before calling input-line.sub\nline read by {sub_display} was `this line for input-line.sub'\nfinished with input-line.sub"
+        )
+    );
+    assert_eq!(normalize_text(&output.stderr), "");
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn command_mode_grep_capture_stays_plain() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-grep-capture");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu("printf 'alpha\nbeta\n' | grep alpha", &start, &home, &[]);
+    assert_success(&output, "captured grep");
+    assert_eq!(normalize_text(&output.stdout), "alpha");
+    assert_no_terminal_controls(&output.stdout);
+    assert_no_terminal_controls(&output.stderr);
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn command_mode_pipeline_first_stage_reads_host_stdin() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-pipeline-stdin");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let mut child = Command::new(niu_binary())
+        .arg("-c")
+        .arg("grep alpha | cat")
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"alpha\nbeta\n")
+        .unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    assert_success(&output, "command mode host stdin pipeline");
+    assert_eq!(normalize_text(&output.stdout), "alpha");
+    assert_eq!(normalize_text(&output.stderr), "");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn script_file_args_populate_positional_parameters() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-script-args");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    let script = start.join("args.sh");
+    std::fs::write(
+        &script,
+        "printf 'zero=%s n=%s one=%s all=%s\\n' \"$0\" \"$#\" \"$1\" \"$*\"\n",
+    )
+    .unwrap();
+
+    let output = Command::new(niu_binary())
+        .arg(&script)
+        .arg("first")
+        .arg("second")
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .output()
+        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+
+    assert_success(&output, "script args");
+    let stdout = normalize_text(&output.stdout);
+    assert!(stdout.contains("zero="), "{stdout}");
+    assert!(stdout.contains("n=2"), "{stdout}");
+    assert!(stdout.contains("one=first"), "{stdout}");
+    assert!(stdout.contains("all=first second"), "{stdout}");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn script_file_while_read_redirect_does_not_wait_for_parent_stdin() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-script-read-redirect");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    std::fs::write(start.join("list.txt"), "alpha\nbeta\n").unwrap();
+    let script = start.join("read-list.sh");
+    std::fs::write(
+        &script,
+        "count=0\nwhile IFS= read -r file; do\n  printf '<%s>\\n' \"$file\"\n  count=$((count + 1))\ndone < list.txt\nprintf 'count=%s\\n' \"$count\"\n",
+    )
+    .unwrap();
+
+    let mut child = Command::new(niu_binary())
+        .arg(&script)
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| panic!("spawn niubash script read redirect: {err}"));
+    let _open_parent_stdin = child.stdin.take().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "script exited with {status}");
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("script read from parent stdin instead of redirected list.txt");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    drop(_open_parent_stdin);
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut stdout)
+        .unwrap();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    assert_eq!(
+        normalize_text(stdout.as_bytes()),
+        "<alpha>\n<beta>\ncount=2"
+    );
+    assert_eq!(normalize_text(stderr.as_bytes()), "");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn slash_drive_script_file_argument_executes_script() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-slash-drive-script");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+    let script = start.join("script.sh");
+    std::fs::write(&script, "echo slash-drive-script-ok\n").unwrap();
+    let Some(script_slash_drive) = slash_drive_path(&script) else {
+        let _ = std::fs::remove_dir_all(temp);
+        return;
+    };
+
+    let output = Command::new(niu_binary())
+        .arg(script_slash_drive)
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .output()
+        .unwrap_or_else(|err| panic!("spawn niubash slash-drive script: {err}"));
+
+    assert_success(&output, "slash-drive script file");
+    assert_eq!(normalize_text(&output.stdout), "slash-drive-script-ok");
+    assert_eq!(normalize_text(&output.stderr), "");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn command_mode_accepts_base_prefixed_arithmetic_in_function_body() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-arithmetic-base");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu(
+        "f() { value=$((16#de)); printf '%s\\n' \"$value\"; }; f",
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&output, "base-prefixed arithmetic");
+    assert_eq!(normalize_text(&output.stdout), "222");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn command_mode_parameter_pattern_removal_handles_escaped_quotes() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-param-pattern");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu(
+        r##"line='<rect x="0" fill="#fe0000"/>'; rest=${line#*fill=\"}; printf '%s\n' "${rest%%\"*}""##,
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&output, "parameter pattern removal");
+    assert_eq!(normalize_text(&output.stdout), "#fe0000");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn command_mode_set_positional_splits_custom_ifs() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-custom-ifs");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let output = run_niu(
+        r#"line='a"b"c'; old=$IFS; IFS='"'; set -- $line; IFS=$old; printf 'n=%s one=%s two=%s three=%s\n' "$#" "$1" "$2" "$3""#,
+        &start,
+        &home,
+        &[],
+    );
+    assert_success(&output, "custom IFS set --");
+    assert_eq!(normalize_text(&output.stdout), "n=3 one=a two=b three=c");
+
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn closed_stdout_pipe_does_not_print_broken_pipe_error() {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let temp = unique_temp_dir("niubash-host-broken-pipe");
+    let home = temp.join("home");
+    let start = temp.join("start");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&start).unwrap();
+
+    let mut child = Command::new(niu_binary())
+        .arg("-c")
+        .arg("i=0; while true; do echo line-$i; i=$((i+1)); done")
+        .current_dir(&start)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| panic!("spawn niubash: {err}"));
+
+    let mut stdout = child.stdout.take().unwrap();
+    let mut buffer = [0_u8; 32];
+    let _ = stdout.read(&mut buffer).unwrap_or(0);
+    drop(stdout);
+
+    let status = wait_for_child_exit(&mut child, Duration::from_secs(3));
+
+    let mut stderr = String::new();
+    if let Some(mut child_stderr) = child.stderr.take() {
+        child_stderr.read_to_string(&mut stderr).unwrap();
+    }
+
+    let _ = std::fs::remove_dir_all(temp);
+
+    assert!(
+        status.is_some(),
+        "niubash did not exit after stdout pipe closed; stderr: {stderr:?}"
+    );
+
+    assert!(
+        !stderr.contains("Broken pipe")
+            && !stderr.contains("os error 232")
+            && !stderr.contains("管道正在被关闭"),
+        "stderr should not contain scary broken pipe text: {stderr:?}"
+    );
+}
+
+fn run_niu(script: &str, cwd: &Path, home: &Path, extra_env: &[(&str, String)]) -> Output {
+    let mut command = Command::new(niu_binary());
+    command
+        .arg("-c")
+        .arg(script)
+        .current_dir(cwd)
+        .env("HOME", home)
+        .env("USERPROFILE", home);
+
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+
+    command
+        .output()
+        .unwrap_or_else(|err| panic!("spawn niubash: {err}"))
+}
+
+fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> Option<ExitStatus> {
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) if started.elapsed() < timeout => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
+fn assert_success(output: &Output, context: &str) {
+    assert!(
+        output.status.success(),
+        "{context} failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn stdout_lines(output: &Output) -> Vec<String> {
+    normalize_text(&output.stdout)
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+fn normalize_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .replace("\r\n", "\n")
+        .trim()
+        .to_string()
+}
+
+fn assert_no_terminal_controls(bytes: &[u8]) {
+    for byte in bytes {
+        assert_ne!(*byte, 0x1b, "unexpected ANSI escape in output");
+        assert!(
+            *byte >= 0x20 || matches!(*byte, b'\t' | b'\n' | b'\r'),
+            "unexpected control byte 0x{byte:02X} in output"
+        );
+    }
+}
+
+fn assert_same_path(actual: &str, expected: &str) {
+    assert_eq!(
+        comparable_path(actual),
+        comparable_path(expected),
+        "path mismatch: actual={actual:?}, expected={expected:?}"
+    );
+}
+
+fn comparable_path(value: &str) -> String {
+    let mut value = value.trim().replace('\\', "/");
+    if cfg!(windows) && value.len() >= 2 && value.as_bytes()[1] == b':' {
+        let drive = value[0..1].to_ascii_uppercase();
+        value.replace_range(0..1, &drive);
+    }
+    let normalized = value.trim_end_matches('/').to_string();
+    // cmd.exe may report 8.3 short-name paths (e.g. RUNNER~1); expand them
+    // through the filesystem so both sides compare as long names.
+    if cfg!(windows) {
+        if let Ok(expanded) = std::fs::canonicalize(normalized.replace('/', "\\")) {
+            let mut expanded = expanded.to_string_lossy().replace('\\', "/");
+            if expanded.len() >= 2 && expanded.as_bytes()[1] == b':' {
+                let drive = expanded[0..1].to_ascii_uppercase();
+                expanded.replace_range(0..1, &drive);
+            }
+            return expanded.trim_end_matches('/').to_string();
+        }
+    }
+    normalized
+}
+
+fn shell_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn slash_drive_path(path: &Path) -> Option<String> {
+    let value = shell_path(path);
+    let bytes = value.as_bytes();
+    if cfg!(windows)
+        && bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && bytes[2] == b'/'
+    {
+        Some(format!(
+            "/{}{}",
+            (bytes[0] as char).to_ascii_lowercase(),
+            &value[2..]
+        ))
+    } else {
+        None
+    }
+}
+
+fn real_winuxcmd_for_test() -> Option<PathBuf> {
+    std::env::var_os("WINUXCMD_PATH")
+        .and_then(|path| resolve_winuxcmd_test_path(PathBuf::from(path)))
+        .or_else(|| {
+            let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()?
+                .to_path_buf();
+            [
+                repo_root.join("WinuxCmd/build-vs/winuxcmd.exe"),
+                repo_root.join("WinuxCmd/build-vs-release/winuxcmd.exe"),
+                repo_root.join("niubash/dist/niubash-v0.7.1-win-x64/winuxcmd/winuxcmd.exe"),
+                repo_root.join("niubash/dist/niubash-v0.7.0-win-x64/winuxcmd/winuxcmd.exe"),
+            ]
+            .into_iter()
+            .find(|path| winuxcmd_test_path_has_command_links(path))
+        })
+        .or_else(|| find_winuxcmd_on_path())
+}
+
+fn resolve_winuxcmd_test_path(path: PathBuf) -> Option<PathBuf> {
+    if path.is_dir() {
+        let exe = path.join("winuxcmd.exe");
+        return winuxcmd_test_path_has_command_links(&exe).then_some(exe);
+    }
+    winuxcmd_test_path_has_command_links(&path).then_some(path)
+}
+
+fn winuxcmd_test_path_has_command_links(path: &Path) -> bool {
+    if !path.is_file()
+        || !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("winuxcmd.exe"))
+    {
+        return false;
+    }
+    let Some(dir) = path.parent() else {
+        return false;
+    };
+    ["ls.exe", "cat.exe", "grep.exe", "ln.exe"]
+        .into_iter()
+        .all(|name| dir.join(name).is_file())
+}
+
+fn find_winuxcmd_on_path() -> Option<PathBuf> {
+    let output = Command::new("where.exe")
+        .arg("winuxcmd.exe")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| PathBuf::from(line.trim()))
+        .find(|path| winuxcmd_test_path_has_command_links(path))
+}
+
+fn native_path(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn unique_temp_dir(prefix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), nanos))
+}
+
+/// unixwin/niubash#377: a shell invoked as `bash`/`sh` behaves like one.
+/// Niubash's product verbs are not shell words - `bash setup` runs a file named
+/// `setup` (GNU shell.c), it does not open the setup wizard - and while
+/// `$BASH` follows the invoked face, the shell-path contract (`NIU_SHELL`)
+/// still names the real binary of the installation.
+#[test]
+fn shell_faces_do_not_expose_product_verbs_and_name_the_real_shell() {
+    let temp = unique_temp_dir("niubash-host-face-product-verbs");
+    let home = temp.join("home");
+    let bin = temp.join("bin");
+    // A minimal installation: the shell next to a bundled winuxcmd tree, and
+    // the face hardlinked (copied, portably) into the PATH entry directory.
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(temp.join("winuxcmd").join("usr").join("bin")).unwrap();
+    let niu = temp.join(if cfg!(windows) { "niu.exe" } else { "niu" });
+    std::fs::copy(niu_binary(), &niu).unwrap();
+    let face = bin.join(if cfg!(windows) { "bash.exe" } else { "bash" });
+    std::fs::copy(&niu, &face).unwrap();
+
+    let spawn = |target: &Path, args: &[&str]| {
+        Command::new(target)
+            .args(args)
+            .current_dir(&home)
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env_remove("NIU_INVOKED_AS")
+            .output()
+            .unwrap_or_else(|err| panic!("spawn {} {args:?}: {err}", target.display()))
+    };
+
+    // `bash setup` with no such file: the engine's ENOENT surface, not a wizard.
+    let missing = spawn(&face, &["setup"]);
+    assert_eq!(
+        missing.status.code(),
+        Some(127),
+        "bash setup -> {:?} / {}",
+        missing.status,
+        normalize_text(&missing.stderr)
+    );
+    assert!(
+        normalize_text(&missing.stderr).contains("No such file or directory"),
+        "{}",
+        normalize_text(&missing.stderr)
+    );
+
+    // With a script of that name, the shell runs the script.
+    std::fs::write(home.join("setup"), "echo ran-the-script\n").unwrap();
+    let script = spawn(&face, &["setup"]);
+    assert_success(&script, "bash setup with the script present");
+    assert!(
+        normalize_text(&script.stdout).contains("ran-the-script"),
+        "{}",
+        normalize_text(&script.stdout)
+    );
+
+    // Environment contract: the shell path, and the face for $BASH.
+    let env_out = spawn(&face, &["-c", "echo $NIU_SHELL; echo $BASH"]);
+    assert_success(&env_out, "bash face environment");
+    let text = normalize_text(&env_out.stdout);
+    let mut lines = text.lines();
+    let shell = lines.next().unwrap_or_default().to_lowercase();
+    let bash = lines.next().unwrap_or_default().to_lowercase();
+    assert!(
+        shell.ends_with(if cfg!(windows) { "niu.exe" } else { "niu" }),
+        "NIU_SHELL must name the real shell, got {shell:?}"
+    );
+    assert!(
+        bash.ends_with(if cfg!(windows) { "bash.exe" } else { "bash" }),
+        "$BASH must follow the invoked face, got {bash:?}"
+    );
+
+    // The product verbs are still there on the niu face.
+    let niu_help = spawn(&niu, &["setup", "-h"]);
+    assert_success(&niu_help, "niu setup -h");
+
+    let _ = std::fs::remove_dir_all(&temp);
+}

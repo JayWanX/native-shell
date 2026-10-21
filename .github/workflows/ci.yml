@@ -1,0 +1,320 @@
+name: Niubash CI
+
+on:
+  schedule:
+    # nightly trend run (perfbudget-trend) — 03:23 UTC, off the busy hours
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - "rewrite/**"
+  pull_request:
+    branches:
+      - master
+      - "rewrite/**"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: stable
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Checkout rubash path dependency
+        run: git clone --depth 1 https://github.com/unixwin/rubash.git ../rubash
+
+      # rubash#827: keep the release-pin verifier honest on every PR (local
+      # fixtures, no network). The verifier audits scripts/release/rubash-pin.json
+      # against a rubash tree; the release workflow enforces that contract
+      # inline, fail-hard, at fetch time.
+      - name: verify-rubash-pin self-test
+        run: python scripts/release/verify-rubash-pin.py --self-test
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt
+
+      # No `cargo update -p rubash` here on purpose: under the [patch] path
+      # override the sibling clone above IS latest master (the lock's git rev
+      # never participates in compilation), and a re-resolution of the rubash
+      # subtree rewires transitive windows-sys refs (0.61.2 -> 0.59/0.48) in
+      # a way that drops the patched crate's target-specific windows-sys
+      # features at build time -- a clean-machine repro of the E0432
+      # CreateFileW failure. Build with the committed lock; bump it by hand
+      # when the engine moves.
+
+      # Workspace-wide: the niubash-runtime crate used to carry fmt
+      # violations that the -p niubash gate never saw (observed upstream by
+      # x2410516039/xgr-niubash; the tree has been clean since).
+      - name: cargo fmt --check (workspace)
+        run: cargo fmt --check --all
+
+      - name: cargo build
+        run: cargo build --locked
+
+      - name: cargo test (workspace)
+        run: cargo test --workspace --locked
+
+      # Skill bundle golden check (niubash#188): the generated regions in
+      # skills/niubash/ must match the corpus transcripts + applet inventory,
+      # and the launcher must embed the whole committed bundle. The
+      # install/status verbs themselves are covered by tests/skill_bundle.rs
+      # inside `cargo test` above.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: harvest resume fixtures
+        run: python -m unittest discover -s scripts/harvest -p "test_*.py" -v
+
+      - name: skill bundle golden check
+        run: python scripts/test-skill-bundle.py
+
+  # Cross-platform gating gate (ledger N9): the host layer must compile
+  # clean off Windows. `cargo check` is the hard acceptance line for the
+  # cfg-gating work; the lib test suite is informational until the unix
+  # runtime semantics land (wave-2).
+  cross-check:
+    name: cross-check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      # The [patch."https://github.com/unixwin/rubash.git"] path override in
+      # Cargo.toml resolves rubash to a sibling checkout -- same step the
+      # build-and-test job uses.
+      - name: Checkout rubash path dependency
+        run: git clone --depth 1 https://github.com/unixwin/rubash.git ../rubash
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      # Same as build-and-test: no `cargo update -p rubash` under the
+      # [patch] override -- the sibling clone is already latest master and
+      # the subtree re-resolution breaks windows-sys feature resolution.
+
+      - name: cargo check (unix acceptance line)
+        run: cargo check --workspace --locked
+
+      # TODO(wave-2): unix lib tests are expected to have failures until the
+      # unix runtime work (spawn delegation, signal handling, terminal glue)
+      # lands. Track the first green run here, then drop continue-on-error.
+      - name: cargo test --lib (informational)
+        continue-on-error: true
+        run: cargo test --workspace --lib --locked
+
+  # Cross-target gating gate: the two `runs-on` platforms above only ever
+  # exercise x86_64 glibc. Neither the musl libc (Alpine / static builds) nor
+  # the OpenHarmony target (`aarch64-unknown-linux-ohos`, HarmonyOS PC) is
+  # covered, and both diverge from glibc in ways a host-only check cannot
+  # see -- e.g. rubash's `ulimit` used `libc::__rlimit_resource_t`, a typedef
+  # glibc alone defines, so musl and ohos failed to compile while the host
+  # stayed green. `cargo check` on an explicit target is the acceptance line.
+  #
+  # `aarch64-unknown-linux-ohos` is Tier 2 with host tools, so no external
+  # OpenHarmony SDK / clang wrapper is needed for a check-only build.
+  cross-target-check:
+    name: cross-target-check (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-ohos
+          - aarch64-linux-android
+          - armv7-linux-androideabi
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Checkout rubash path dependency
+        run: git clone --depth 1 https://github.com/unixwin/rubash.git ../rubash
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          target: ${{ matrix.target }}
+
+      # Same as the other jobs: no `cargo update -p rubash` under the
+      # [patch] override -- the sibling clone is already latest master.
+
+      - name: cargo check --target ${{ matrix.target }}
+        run: cargo check --workspace --locked --target ${{ matrix.target }}
+
+
+  # musl smoke gate: the point above only proves musl *compiles*. A static
+  # musl binary is a shipped artifact shape (Alpine, scratch containers,
+  # `-static` redistributions), and docs/release.md held the musl leg back
+  # until it could "carry the same smoke gate green" as the glibc legs --
+  # a compile check is not that gate. Unlike the ohos target, a static musl
+  # x86_64 binary runs natively on the glibc runner, so the gate can run in
+  # full here: build --release, then run the exact four checks the release
+  # pipeline runs (docs/release.md "The smoke gate"): --version banner,
+  # one-shot `-c`, a pipeline through native coreutils, and the offline
+  # plugin stack. No `musl-tools` package is needed -- rustc links against
+  # the toolchain's own self-contained musl crt/libc via the host `cc`.
+  cross-target-smoke:
+    name: cross-target-smoke (x86_64-unknown-linux-musl)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Checkout rubash path dependency
+        run: git clone --depth 1 https://github.com/unixwin/rubash.git ../rubash
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          target: x86_64-unknown-linux-musl
+
+      # No `cargo update -p rubash` under the [patch] override, same as the
+      # other jobs: the sibling clone is already latest master.
+
+      - name: Pin rubash revision
+        id: rubash
+        run: |
+          if [ ! -d ../rubash ]; then
+            echo "rubash checkout missing at ../rubash" >&2
+            exit 1
+          fi
+          revision="$(git -C ../rubash rev-parse --short=12 HEAD)"
+          if [ -z "$revision" ]; then
+            echo "could not resolve rubash revision" >&2
+            exit 1
+          fi
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Build niubash (musl, release)
+        run: cargo build --locked --release --target x86_64-unknown-linux-musl
+
+      # Same four checks as build-linux in release.yml, against the binary
+      # this job just built. The --version check reads the version from
+      # Cargo.toml rather than a release tag -- there is no tag in CI.
+      - name: "Smoke-test the musl binary (gate: no smoke, no trust)"
+        run: |
+          set -euo pipefail
+          bin="target/x86_64-unknown-linux-musl/release/niu"
+          test -x "$bin"
+
+          # The whole point: prove it is actually static, not silently
+          # linked against the runner's glibc.
+          if ldd "$bin" 2>&1 | grep -qi 'not a dynamic executable\|statically linked'; then
+            ldd "$bin" 2>&1 | head -1
+          else
+            echo "musl binary is dynamically linked:" >&2
+            ldd "$bin" >&2
+            exit 1
+          fi
+
+          # 1) --version names this crate version and the pinned engine rev.
+          version="$(grep -m1 -E '^version[[:space:]]*=' Cargo.toml | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/')"
+          out="$("$bin" --version)"
+          printf '%s\n' "$out"
+          grep -qF "Niubash $version " <<<"$out"
+          grep -qF "rubash   git ${{ steps.rubash.outputs.revision }}" <<<"$out"
+
+          # 2) one-shot engine execution
+          out="$("$bin" -c 'echo ok')"
+          [ "$out" = "ok" ]
+
+          # 3) external commands + pipeline through native coreutils
+          out="$(printf 'a\nb\n' | "$bin" -c 'sort | head -1')"
+          [ "$out" = "a" ]
+
+          # 4) plugin stack offline check: empty spec, isolated HOME --
+          #    must exit 0 with zero output and touch no network.
+          mkdir -p "$RUNNER_TEMP/smoke-home"
+          : > "$RUNNER_TEMP/smoke-plugins.toml"
+          out="$(HOME="$RUNNER_TEMP/smoke-home" \
+            NIU_PLUGIN_SPEC="$RUNNER_TEMP/smoke-plugins.toml" \
+            "$bin" plugin sync --bootstrap 2>&1)"
+          if [ -n "$out" ]; then
+            echo "plugin sync --bootstrap was not quiet on empty spec:" >&2
+            printf '%s\n' "$out" >&2
+            exit 1
+          fi
+
+
+  # Per-asset timing budget trend (owner directive 2026-10-04): nightly run
+  # of the same gate the release enforces (scripts/perf/asset-timing.py over
+  # every theme/plugin asset of the pinned trusted sources). Records the
+  # full per-asset JSON as a trend artifact and enforces the budgets so a
+  # regression is caught by the nightly, not at the next release tag.
+  perfbudget-trend:
+    name: per-asset timing trend (nightly)
+    if: github.event_name == 'schedule'
+    runs-on: windows-2025
+    timeout-minutes: 75
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Checkout rubash path dependency
+        run: git clone --depth 1 https://github.com/unixwin/rubash.git ../rubash
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: cargo build
+        run: cargo build --locked --release
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install perfbudget dependencies
+        run: pip install pywinpty pyte
+
+      # Same pinned revisions as the release gate and the committed baseline
+      # (scripts/perf/baselines/asset-timing-baseline.json) — bumping a pin
+      # requires re-recording the baseline in the same change.
+      - name: Checkout pinned asset sources
+        shell: pwsh
+        run: |
+          git init ..\oh-my-bash
+          git -C ..\oh-my-bash remote add origin https://github.com/ohmybash/oh-my-bash
+          git -C ..\oh-my-bash fetch --depth 1 origin abf8461
+          git -C ..\oh-my-bash checkout --quiet FETCH_HEAD
+          git init ..\bash-it
+          git -C ..\bash-it remote add origin https://github.com/Bash-it/bash-it
+          git -C ..\bash-it fetch --depth 1 origin 4725d29
+          git -C ..\bash-it checkout --quiet FETCH_HEAD
+
+      - name: Run the per-asset timing budget gate
+        shell: pwsh
+        run: |
+          python scripts/perf/asset-timing.py `
+            --niu (Resolve-Path target/release/niu.exe) `
+            --omb (Resolve-Path ..\oh-my-bash) `
+            --bash-it (Resolve-Path ..\bash-it) `
+            --run-dir "$env:RUNNER_TEMP\perfbudget-run" `
+            --compare-baseline scripts/perf/baselines/asset-timing-baseline.json `
+            --out perfbudget-trend/asset-timing.json
+
+      - name: Upload perfbudget trend record
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perfbudget-trend
+          path: perfbudget-trend
+          if-no-files-found: error
+          retention-days: 90

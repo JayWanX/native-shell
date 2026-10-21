@@ -1,0 +1,17 @@
+# Summary
+
+- [Niubash](index.md)
+- [Why Niubash](why-niubash.md)
+- [Coding agents on Windows](agents.md)
+- [Getting Started](getting-started.md)
+- [Advanced Usage](advanced-usage.md)
+- [Plugins & the Bash Ecosystem](plugins.md)
+- [External Completion Providers](external-completion-providers.md)
+- [Hooks](hooks.md)
+- [Install & Self-Update](installer.md)
+- [Bash Compatibility Matrix](rubash-bash-compat-matrix.md)
+- [Built-ins & Fast Paths](builtins.md)
+- [Architecture](architecture.md)
+- [Windows Path Contract](windows-path-contract.md)
+- [Platform Support](platform-support.md)
+- [Roadmap](niubash-roadmap.md)

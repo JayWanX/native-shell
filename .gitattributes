@@ -1,0 +1,46 @@
+# Shell scripts are executed by Git Bash / winuxsh, both of which treat CR
+# as payload: a CRLF checkout breaks heredocs, array literals, and rename
+# gates ("if" + CR: command not found), and perf scripts hung parsing a
+# word-split array literal on an autocrlf=true checkout. Force LF globally
+# so any Windows checkout behaves like the store; the per-path pins below
+# stay as documentation of the sensitive spots.
+*.sh text eol=lf
+*.py text eol=lf
+
+scripts/git-hooks/* text eol=lf
+# Generated residue baseline; byte-diffed by check-rename-clean.sh, so a
+# CRLF checkout must never silently change the gate (scripts/*.sh lesson).
+scripts/check-rename-clean.baseline text eol=lf
+# Smoke/verification shell scripts parse their own subprocess output; a
+# CRLF working copy would leak \r into those comparisons (same lesson as
+# the rubash repo's *.sh pin).
+scripts/*.sh text eol=lf
+# External plugin-manager source fixtures are shell trees; CRLF would kill
+# sourcing under the engine (same lesson as the rubash repo's *.sh pin).
+tests/fixtures/sources/** text eol=lf
+
+# Generated completion assets and help transcripts are golden fixtures;
+# CRLF would change the bytes the generator diff and Rust corpus tests see.
+crates/niubash-runtime/assets/completions/** text eol=lf
+crates/niubash-runtime/tests/fixtures/winuxcmd-help-corpus/** text eol=lf
+
+# Audit probe scripts live deeper than scripts/*.sh; same CRLF hazard
+# (wt82-L01: the tracked lanes' sweep/migrate probes must stay LF).
+scripts/**/*.sh text eol=lf
+
+# The golden-journey driver is python (CRLF-tolerant) but it is edited and
+# diffed across agents/shells; keep it LF like scripts/*.sh (shared-tree
+# hygiene: a CRLF working copy must never silently change the gate).
+scripts/journey/*.py text eol=lf
+
+# The adversarial injection kit (wt88/advmatrix) is python edited and run
+# across agents/shells; same shared-tree hygiene as scripts/journey/*.py.
+scripts/adversarial/*.py text eol=lf
+# Skill bundle (niubash#188): the corpus transcripts are byte-diffed by
+# scripts/generate-skill.py, and the bundle files are embedded via
+# include_str! — a CRLF working copy would flip both the golden check and
+# the shipped bytes.
+crates/niubash-runtime/tests/fixtures/skill-corpus/** text eol=lf
+skills/niubash/** text eol=lf
+scripts/generate-skill.py text eol=lf
+scripts/test-skill-bundle.py text eol=lf
