@@ -809,10 +809,51 @@ jobs:
           # never per package name, so the assertion targets each package's
           # `commands` from the manifest (mirroring the wpm index), with the
           # package name as the fallback for entries that carry none.
+          # The staged payloads are NATIVE programs, so on a foreign-arch leg they
+          # cannot be executed at all: Windows x64 has no ARM64 user-mode emulator,
+          # and invoking an aarch64 image fails with a ResourceUnavailable error
+          # before --version ever runs ("StandardOutputEncoding is only supported
+          # when standard output is redirected"). The behaviour is only assertable
+          # where the binary can run; elsewhere fall back to a structural PE check,
+          # the same contract the bash/sh face gate below already applies.
+          $shimMachines = @{ "x64" = 0x8664; "arm64" = 0xAA64 }
+          $shimTargetMachine = $shimMachines["${{ matrix.arch }}"]
+          if (-not $shimTargetMachine) { throw "unknown arch ${{ matrix.arch }}" }
+          $shimHostArch = (Get-CimInstance -ClassName Win32_Processor |
+            Select-Object -First 1).Architecture
+          $shimCanRunNatively = ($shimHostArch -eq 9 -and "${{ matrix.arch }}" -eq "x64") -or
+            ($shimHostArch -eq 12 -and "${{ matrix.arch }}" -eq "arm64")
+
+          function Get-StagedPEMachine([string]$path) {
+            $fs = [System.IO.File]::OpenRead($path)
+            try {
+              $br = New-Object System.IO.BinaryReader($fs)
+              if ($br.ReadUInt16() -ne 0x5A4D) { throw "not an MZ image: $path" }
+              $null = $fs.Seek(0x3C, [System.IO.SeekOrigin]::Begin)
+              $peOffset = $br.ReadUInt32()
+              $null = $fs.Seek($peOffset, [System.IO.SeekOrigin]::Begin)
+              if ($br.ReadUInt32() -ne 0x00004550) { throw "not a PE image: $path" }
+              return $br.ReadUInt16()
+            }
+            finally {
+              $fs.Dispose()
+            }
+          }
+
           function Assert-StagedShim([string]$name, [string]$packageName) {
             $exe = Join-Path $binDir "$name.exe"
             if (-not (Test-Path -LiteralPath $exe)) {
               throw "pre-install reported '$packageName' installed but $exe is missing from the staged package"
+            }
+            if (-not $shimCanRunNatively) {
+              # Foreign-arch leg: assert the image is really built for this package
+              # arch rather than pretending the forwarder ran.
+              $machine = Get-StagedPEMachine $exe
+              if ($machine -ne $shimTargetMachine) {
+                throw ("$name.exe is machine 0x{0:X4} in the staged ${{ matrix.arch }} package, expected 0x{1:X4}" -f $machine, $shimTargetMachine)
+              }
+              Write-Host "$name.exe: foreign-arch leg, PE machine 0x$($machine.ToString("X4")) OK (not executed)"
+              return
             }
             $out = & $exe --version 2>&1
             if ($LASTEXITCODE -ne 0 -or -not "$out") {
@@ -835,7 +876,11 @@ jobs:
             Assert-StagedShim $shim.name $shim.target
           }
 
-          if ($installed -contains "gawk") {
+          # The awk probes run the staged binaries, so they need the same native-arch
+          # gate as Assert-StagedShim: on a foreign-arch leg `gawk` cannot start and
+          # the LF contract is unobservable here (the arm64 package is verified
+          # structurally by the face gate below).
+          if ($installed -contains "gawk" -and $shimCanRunNatively) {
             $env:PATH = "$(Resolve-Path $binDir);$env:PATH"
 
             $native_shell = Join-Path $stage "native-shell.exe"
