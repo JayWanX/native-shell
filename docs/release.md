@@ -198,6 +198,16 @@ asserts the raw bytes (`a\nb\n`, plus the `a\r\nb\r\n` pass-through an
 explicit `ORS="\r\n"` must produce). A release whose bundled forwarder
 lacks the adapter fails the x64 gate.
 
+The prefix is declared once, in `scripts/release/preinstall.json`
+(`adapted_argv` on the gawk package), and shipped as
+`winuxcmd\.wpm\adapters.map` — `scripts/package-release.ps1` copies it there.
+It cannot live in `.wpm/shims.map`: wpm rewrites that file wholesale from its
+own (command, payload) pairs on every `wpm links rebuild`, which runs at each
+shell start. Both forwarders (`native-cmd.exe`'s dispatcher and
+`native-cmd-shim.exe`) read `adapters.map` through the shared
+`src/core/adapted_argv.h` and splice the prefix between the program token and
+the caller's argv, so a caller's own later `-v BINMODE=...` still wins.
+
 ## Dispatching a dry run (captain)
 
 The workflow validates `tag` against `^v\d+\.\d+\.\d+$` and against the

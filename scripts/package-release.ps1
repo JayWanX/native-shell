@@ -248,6 +248,17 @@ try {
         if (Test-Path -LiteralPath (Join-Path $PreinstallRoot "opt")) {
             Copy-Item -LiteralPath (Join-Path $PreinstallRoot "opt") -Destination (Join-Path $stageDir "winuxcmd\opt") -Recurse -Force
         }
+        # Adapted-command argv prefixes (native-shell#467): the forwarders read
+        # <root>\.wpm\adapters.map, so it has to ship inside winuxcmd\. It is the
+        # only .wpm file the product carries - receipts, the index cache and
+        # shims.map stay out, because wpm owns and rewrites those at runtime.
+        $adapterMap = Join-Path $PreinstallRoot ".wpm\adapters.map"
+        if (Test-Path -LiteralPath $adapterMap) {
+            $adapterDir = Join-Path $stageDir "winuxcmd\.wpm"
+            New-Item -ItemType Directory -Force -Path $adapterDir | Out-Null
+            Copy-Item -LiteralPath $adapterMap -Destination (Join-Path $adapterDir "adapters.map") -Force
+            Write-Host "Shipped adapters.map: $((Get-Content -LiteralPath $adapterMap | Where-Object { $_ -notmatch '^#' -and $_ -ne '' }) -join '; ')"
+        }
         if ($preinstallShims.Count -gt 0) {
             Write-Host "Pre-installed shims: $($preinstallShims.Name -join ', ')"
         }

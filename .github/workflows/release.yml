@@ -566,6 +566,42 @@ jobs:
             }
           }
 
+          # Adapted-command argv prefixes (native-shell#467). Declared here, not in
+          # shims.map: wpm rewrites shims.map wholesale from its own (command,
+          # payload) pairs on every `wpm links rebuild`, which runs at each shell
+          # start, so anything stored there would be erased. The forwarders read
+          # <root>\.wpm\adapters.map instead and never write it.
+          $adapterLines = @(
+            "# Adapted-command argv prefixes, written by the NativeShell release.",
+            "# <command>=<argv prefix spliced ahead of the caller argv>"
+          )
+          $adaptersWritten = 0
+          foreach ($package in $manifest.packages) {
+            if (-not $package.adapted_argv) { continue }
+            # Only for packages this leg really installed: an adapter for an absent
+            # payload would be dead weight and would mask the "cannot pre-install"
+            # warning above.
+            if ($installed -notcontains $package.name) { continue }
+            foreach ($command in @($package.adapted_argv.commands)) {
+              if ([string]::IsNullOrWhiteSpace($command)) { continue }
+              $prefix = (@($package.adapted_argv.prepend) | Where-Object { $_ }) -join " "
+              if ([string]::IsNullOrWhiteSpace($prefix)) { continue }
+              $adapterLines += "$command=$prefix"
+              $adaptersWritten++
+            }
+          }
+          if ($adaptersWritten -gt 0) {
+            $adapterPath = Join-Path $root ".wpm\adapters.map"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $adapterPath) | Out-Null
+            # LF line endings, matching what the C++ reader documents: it splits
+            # on LF and trims a trailing CR, so either ending parses, but LF keeps
+            # the shipped file byte-identical to the format described there.
+            $adapterText = ($adapterLines -join "`n") + "`n"
+            [System.IO.File]::WriteAllText($adapterPath, $adapterText, (New-Object System.Text.UTF8Encoding($false)))
+            Write-Host "adapters.map: $adaptersWritten command(s) -> $adapterPath"
+            foreach ($line in $adapterLines | Where-Object { $_ -notmatch "^#" }) { Write-Host "  $line" }
+          }
+
           $shimsMade = @()
           foreach ($shim in $manifest.shims) {
             # A shim may only reference an installed package's payload.
@@ -832,30 +868,10 @@ jobs:
               $want = ($expected | ForEach-Object { $_.ToString('x2') }) -join ' '
               Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
               if ($hex -ne $want) {
-                throw "$face stdout landed as [$hex], expected [$want] — the staged bundle ships a text-mode gawk (native-shell#467); the bundled WinuxCmd must carry the adapted forwarder that splices -v BINMODE=3"
+                throw "$face stdout landed as [$hex], expected [$want] — the staged bundle ships a text-mode gawk (native-shell#467); the bundled forwarders must splice the adapted_argv prefix declared in scripts/release/preinstall.json (shipped as winuxcmd\.wpm\adapters.map)"
               }
               Write-Host "$face raw output bytes: $hex"
             }
-            # DIAGNOSTIC (non-blocking) — does `-v BINMODE=3` actually fix this
-            # build? The plan of record says the BINMODE *environment variable* is
-            # ignored and the -v assignment is "the only lever", but no adapter has
-            # ever shipped, so that was never measured. Measure before designing an
-            # adapter around it: this reports the bytes and never throws; the three
-            # fail-closed probes that follow remain the actual gate (so a failing
-            # release still prints these notices first, which is the point).
-            function Show-AwkBytes([string]$label, [string]$command) {
-              $probe = "$probeDir/diag-" + [guid]::NewGuid().ToString("N") + ".bin"
-              & $native_shell -c ($command + " > '" + $probe + "'")
-              if (Test-Path -LiteralPath $probe) {
-                $hex = (([System.IO.File]::ReadAllBytes($probe)) | ForEach-Object { $_.ToString("x2") }) -join " "
-                Write-Host "::notice::BINMODE probe [$label] -> [$hex] (LF target = 61 0a 62 0a)"
-                Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
-              }
-              else { Write-Host "::notice::BINMODE probe [$label] -> no output file" }
-            }
-            Show-AwkBytes "gawk -v BINMODE=3" "printf 'a\nb\n' | gawk -v BINMODE=3 '{print `$1}'"
-            Show-AwkBytes "awk  -v BINMODE=3" "printf 'a\nb\n' | awk -v BINMODE=3 '{print `$1}'"
-
             Assert-AwkOutputBytes "awk"  "printf 'a\nb\n' | awk '{print `$1}'"  ([byte[]](0x61, 0x0a, 0x62, 0x0a))             "$probeDir/native-shell-awk-lf.bin"
             Assert-AwkOutputBytes "gawk" "printf 'a\nb\n' | gawk '{print `$1}'" ([byte[]](0x61, 0x0a, 0x62, 0x0a))             "$probeDir/native-shell-gawk-lf.bin"
             Assert-AwkOutputBytes "awk"  ("printf 'a\nb\n' | awk '" + 'BEGIN{ORS="\r\n"}{print $1}' + "'") ([byte[]](0x61, 0x0d, 0x0a, 0x62, 0x0d, 0x0a)) "$probeDir/native-shell-awk-ors.bin"

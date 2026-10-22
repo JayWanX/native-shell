@@ -108,6 +108,34 @@ fn assert_package_pin(package: &Value) {
         );
         return;
     }
+    // An adapted_argv entry makes the forwarders splice a prefix ahead of the
+    // caller's argv (native-shell#467). A malformed one is silent breakage:
+    // an empty prepend does nothing, and a command list that names nothing
+    // never matches. Require both halves to be non-empty strings.
+    if let Some(adapter) = package.get("adapted_argv") {
+        let commands = adapter
+            .get("commands")
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("package {name:?}: adapted_argv needs a commands array"));
+        assert!(
+            !commands.is_empty()
+                && commands.iter().all(|command| command
+                    .as_str()
+                    .is_some_and(|command| !command.trim().is_empty())),
+            "package {name:?}: adapted_argv.commands must be non-empty command names"
+        );
+        let prepend = adapter
+            .get("prepend")
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("package {name:?}: adapted_argv needs a prepend array"));
+        assert!(
+            !prepend.is_empty()
+                && prepend.iter().all(|argument| argument
+                    .as_str()
+                    .is_some_and(|argument| !argument.trim().is_empty())),
+            "package {name:?}: adapted_argv.prepend must be non-empty argv strings"
+        );
+    }
     let pins = package
         .get("sha256")
         .and_then(Value::as_object)
