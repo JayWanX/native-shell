@@ -4,7 +4,7 @@
 //! unexpected token ')'`, rc 2, and the subshell unexecuted.
 //!
 //! Oracle note: the earliest "GNU 5.3 (msys) tolerates the tail" record was
-//! produced against `winuxcmd/usr/bin/bash.exe`, which is a launcher shim
+//! produced against `cmd/usr/bin/bash.exe`, which is a launcher shim
 //! that spawns native-shell itself — the tolerant verdict was native-shell's own behavior
 //! echoed back (rubash#852). The authority is WSL GNU bash 5.3.0 (re-run
 //! 2026-10-19, bash copied to argv[0] `native-shell` for name-identical capture):

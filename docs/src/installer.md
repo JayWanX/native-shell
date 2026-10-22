@@ -66,7 +66,7 @@ The installer invokes `winuxcmd.exe wpm links rebuild --root ... --force` after
 copying the files, so the bundled commands are materialized immediately. On NTFS,
 WPM creates hard links to the installed `winuxcmd.exe`. The portable zip keeps the
 first-start fallback: if command links are missing, Native Shell runs
-`winuxcmd/activate-winuxcmd.sh` once from the bundle.
+`cmd/activate-winuxcmd.sh` once from the bundle.
 
 The bundled package shims (`usr\bin\gawk.exe`, `awk.exe`) sit outside that
 rebuild: wpm only reconciles names recorded in `.wpm` state, which the
@@ -118,8 +118,8 @@ Run this after laying the tree down, and again after any update that replaces
 native-shell --relink-shells --force
 ```
 
-It links `bash.exe` and `sh.exe` in `<root>\bin`, `<root>\winuxcmd\bin` and
-`<root>\winuxcmd\usr\bin`, skips directories that are not present, is
+It links `bash.exe` and `sh.exe` in `<root>\bin`, `<root>\cmd\bin` and
+`<root>\cmd\usr\bin`, skips directories that are not present, is
 idempotent, and parks an existing name out of the way before replacing it, so a
 shell that is running right now keeps its bytes. The Native Shell installer does
 this from `[Run]`.
@@ -154,7 +154,7 @@ installation provider calls `native-shell --relink-shells` (or implements the
 ## The PATH Entry Directory Contract
 
 Only two directories of the installation ever appear on the process `PATH`:
-`{app}` itself (so `native-shell` resolves) and `<root>\winuxcmd\bin` — the single
+`{app}` itself (so `native-shell` resolves) and `<root>\cmd\bin` — the single
 *command* directory. The contract for what may live in the command directory
 (native-shell#376):
 

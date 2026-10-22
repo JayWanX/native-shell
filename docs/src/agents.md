@@ -51,7 +51,7 @@ Mechanism 3 is why the install places a `bash.exe` at the Git for Windows
 location; mechanism 4 is why a bare `bash` cannot be redirected from the user
 `PATH` alone.
 
-### What `winuxcmd\bin\bash.exe` actually is
+### What `cmd\bin\bash.exe` actually is
 
 It is not native-shell. It is a launcher that starts `native-shell.exe` as a child process, so an
 agent pointed at it runs `agent -> bash.exe -> native-shell.exe`. Two consequences, both
@@ -238,13 +238,13 @@ Add them when someone can read the shipped selector.
 | Path | Serves | Owner | Needs admin |
 |---|---|---|---|
 | `SHELL=%LOCALAPPDATA%\Programs\NativeShell\native-shell.exe` (user env) | mechanism 1 | installer | no |
-| `%LOCALAPPDATA%\Programs\NativeShell\bin\{bash,sh}.exe` | opencode-shaped derivation when `git` resolves from `winuxcmd\bin` | installer / `native-shell setup` | no |
+| `%LOCALAPPDATA%\Programs\NativeShell\bin\{bash,sh}.exe` | opencode-shaped derivation when `git` resolves from `cmd\bin` | installer / `native-shell setup` | no |
 | `C:\Program Files\Git\bin\bash.exe` | mechanism 3 probe 1 (Claude Code, VS Code family) | installer | yes |
 | `C:\Program Files (x86)\Git\bin\bash.exe` | the second hardcoded candidate | installer | yes |
 | `C:\Program Files\Git\bin\sh.exe` | tools that want `sh` beside the bash they found | installer | yes |
-| `...\winuxcmd\opt\native-git\bin\{bash,sh}.exe` | opencode's updater probe (`git --exec-path` up three) | native-git package manifest, so wpm refresh keeps it | no |
+| `...\cmd\opt\native-git\bin\{bash,sh}.exe` | opencode's updater probe (`git --exec-path` up three) | native-git package manifest, so wpm refresh keeps it | no |
 
-The entry directory `...\winuxcmd\bin` must contain only names you intend to
+The entry directory `...\cmd\bin` must contain only names you intend to
 own globally (`git`, `sh`, `bash`), because it is what goes on `PATH`.
 
 ## Why `PATH` cannot win against `System32`
@@ -280,7 +280,7 @@ and telling callers to use `sh`, which has no `System32` counterpart.
    probes: Zed, DSH (done), the Codex fork (done), the VS Code automation
    profile.
 
-Two things not to do: do not add `winuxcmd\usr\bin` to `PATH` (hundreds of
+Two things not to do: do not add `cmd\usr\bin` to `PATH` (hundreds of
 names, including ones `System32` owns), and do not replace
 `C:\Windows\System32\bash.exe`.
 

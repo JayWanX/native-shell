@@ -118,7 +118,7 @@ fn continuation_brace_group_completes() {
 ///
 /// The closing line once ended `");)"` — a stray `)` after the list
 /// separator. The note that "GNU bash 5.3 (msys, oracle run 2026-10-13)
-/// tolerates that tail" was a MIS-ORACLE: the `winuxcmd/usr/bin/bash.exe`
+/// tolerates that tail" was a MIS-ORACLE: the `cmd/usr/bin/bash.exe`
 /// binary used as the "GNU" baseline is a launcher shim that spawns native-shell
 /// itself, so the tolerant verdict was native-shell's own behavior echoed back
 /// (rubash#852). The authority — WSL GNU bash 5.3.0, re-run 2026-10-19 —

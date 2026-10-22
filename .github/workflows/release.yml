@@ -513,22 +513,60 @@ jobs:
               if (-not $isDir -and $to -notmatch "/") { return Join-Path $root "usr\bin\$to" }
               return Join-Path $root ($to -replace "/", "\")
             }
+            # Two passes, because a FILE mapping whose source also lives inside a
+            # DIRECTORY mapping must not be copied out of the extraction tree: that
+            # ships a second independent copy of git.exe (the payload already holds
+            # it under opt/git/mingw64/bin) and defeats the dedup the tarball is
+            # shipped for. Directories land first; the file mappings then hardlink
+            # from the mapped payload instead of the extract dir - the rule wpm
+            # follows with payload_source_for (NativeCmd#1188).
             $mapped = 0
-            foreach ($map in $package.files) {
+            $directoryMaps = @($package.files | Where-Object { $_.from.EndsWith("/") })
+            $fileMaps = @($package.files | Where-Object { -not $_.from.EndsWith("/") })
+            foreach ($map in $directoryMaps) {
               $dest = Resolve-InstalledPath $map
               $src = Join-Path $x ($map.from -replace "/", "\")
               if (-not (Test-Path -LiteralPath $src)) {
                 Write-Host "::warning::$($package.name): $($map.from) missing from $($zip.Name)"
                 return $false
               }
-              if ($map.from.EndsWith("/")) {
-                New-Item -ItemType Directory -Force -Path $dest | Out-Null
-                Copy-Item -Path (Join-Path $src "*") -Destination $dest -Recurse -Force
+              New-Item -ItemType Directory -Force -Path $dest | Out-Null
+              Copy-Item -Path (Join-Path $src "*") -Destination $dest -Recurse -Force
+              $mapped++
+            }
+            foreach ($map in $fileMaps) {
+              $dest = Resolve-InstalledPath $map
+              # Source the file from the payload copy this same install just laid
+              # down, so the two names share one file on disk.
+              $src = $null
+              $fromPayload = $false
+              foreach ($dirMap in $directoryMaps) {
+                $dirFrom = $dirMap.from
+                if (-not $map.from.StartsWith($dirFrom)) { continue }
+                $relInside = $map.from.Substring($dirFrom.Length)
+                $candidate = Join-Path (Resolve-InstalledPath $dirMap) ($relInside -replace "/", "\")
+                if (Test-Path -LiteralPath $candidate) { $src = $candidate; $fromPayload = $true }
+                break
               }
-              else {
-                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
-                Copy-Item -LiteralPath $src -Destination $dest -Force
+              if ($null -eq $src) {
+                # No directory mapping covers it: use the extract dir directly.
+                $src = Join-Path $x ($map.from -replace "/", "\")
+                if (-not (Test-Path -LiteralPath $src)) {
+                  Write-Host "::warning::$($package.name): $($map.from) missing from $($zip.Name)"
+                  return $false
+                }
               }
+              New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
+              $linked = $false
+              if ($fromPayload) {
+                try {
+                  if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Force }
+                  New-Item -ItemType HardLink -Path $dest -Target $src -ErrorAction Stop | Out-Null
+                  $linked = $true
+                }
+                catch { $linked = $false }
+              }
+              if (-not $linked) { Copy-Item -LiteralPath $src -Destination $dest -Force }
               $mapped++
             }
             Write-Host "pre-installed (fork release): $($package.name) $tag ($mapped mappings)"
@@ -753,18 +791,18 @@ jobs:
             return ($listing | Measure-Object -Line).Lines
           }
           $tarRoot = Join-Path $extractTar $name
-          $bashProbe = Join-Path $tarRoot "winuxcmd\usr\bin\bash.exe"
-          if (-not (Test-Path -LiteralPath $bashProbe)) { throw "winuxcmd\usr\bin\bash.exe missing from the .tar.gz extraction" }
+          $bashProbe = Join-Path $tarRoot "cmd\usr\bin\bash.exe"
+          if (-not (Test-Path -LiteralPath $bashProbe)) { throw "cmd\usr\bin\bash.exe missing from the .tar.gz extraction" }
           $bashLinks = Get-HardLinkCount $bashProbe
           if ($bashLinks -lt 2) {
-            throw ".tar.gz did not restore hardlinks: winuxcmd\usr\bin\bash.exe has $bashLinks link(s), expected >= 2"
+            throw ".tar.gz did not restore hardlinks: cmd\usr\bin\bash.exe has $bashLinks link(s), expected >= 2"
           }
           Write-Host "bash.exe shim family links in .tar.gz extraction: $bashLinks"
-          $gitProbe = Join-Path $tarRoot "winuxcmd\usr\bin\git.exe"
+          $gitProbe = Join-Path $tarRoot "cmd\usr\bin\git.exe"
           if (Test-Path -LiteralPath $gitProbe) {
             $gitLinks = Get-HardLinkCount $gitProbe
             if ($gitLinks -lt 2) {
-              throw ".tar.gz did not restore hardlinks: winuxcmd\usr\bin\git.exe has $gitLinks link(s), expected >= 2"
+              throw ".tar.gz did not restore hardlinks: cmd\usr\bin\git.exe has $gitLinks link(s), expected >= 2"
             }
             Write-Host "git.exe family links in .tar.gz extraction: $gitLinks"
           }
@@ -800,7 +838,7 @@ jobs:
             Write-Host "::warning::release ships without pre-installed '$failure' (${{ matrix.arch }}; users can run native-cmd wpm install $failure after install)"
           }
 
-          $binDir = Join-Path $stage "winuxcmd\usr\bin"
+          $binDir = Join-Path $stage "cmd\usr\bin"
           # native-shell#312 says this step hard-asserts only what the pre-install
           # step reported as INSTALLED (the fail-open contract): a package
           # skipped by design on this leg (no arch pin, pin mismatch) asserts
@@ -913,7 +951,7 @@ jobs:
               $want = ($expected | ForEach-Object { $_.ToString('x2') }) -join ' '
               Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
               if ($hex -ne $want) {
-                throw "$face stdout landed as [$hex], expected [$want] — the staged bundle ships a text-mode gawk (native-shell#467); the bundled forwarders must splice the adapted_argv prefix declared in scripts/release/preinstall.json (shipped as winuxcmd\.wpm\adapters.map)"
+                throw "$face stdout landed as [$hex], expected [$want] — the staged bundle ships a text-mode gawk (native-shell#467); the bundled forwarders must splice the adapted_argv prefix declared in scripts/release/preinstall.json (shipped as cmd\.wpm\adapters.map)"
               }
               Write-Host "$face raw output bytes: $hex"
             }
@@ -928,7 +966,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $stage = "dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}"
-          $usrBin = Join-Path $stage "winuxcmd\usr\bin"
+          $usrBin = Join-Path $stage "cmd\usr\bin"
 
           # The behavioral face check runs the staged shims on THIS runner.
           # The arm64 leg cross-compiles on an x64 windows-2025 host, and
@@ -1011,7 +1049,7 @@ jobs:
             # but ship broken), so the gate still pins the package's
             # architecture honestly.
             Write-Host "host arch $($hostArch) cannot execute ${{ matrix.arch }} binaries; running the structural PE-machine face check"
-            foreach ($rel in @("winuxcmd\usr\bin\bash.exe", "winuxcmd\usr\bin\sh.exe", "native-shell.exe", "winuxcmd\usr\bin\native-cmd.exe")) {
+            foreach ($rel in @("cmd\usr\bin\bash.exe", "cmd\usr\bin\sh.exe", "native-shell.exe", "cmd\usr\bin\native-cmd.exe")) {
               $path = Join-Path $stage $rel
               if (-not (Test-Path -LiteralPath $path)) {
                 throw "$rel is missing from the staged package at $path"

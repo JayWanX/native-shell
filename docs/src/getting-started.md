@@ -22,10 +22,10 @@ If you are using the release zip, native-shell automatically runs the activation
 script on first start when command links are missing:
 
 ```bash
-native-shell winuxcmd/activate-winuxcmd.sh
+native-shell cmd/activate-winuxcmd.sh
 ```
 
-That creates local command links inside `winuxcmd/`, so `ls`, `cat`, and
+That creates local command links inside `cmd/`, so `ls`, `cat`, and
 friends resolve normally. Once the links exist, startup skips activation.
 
 ## 2. Start the shell

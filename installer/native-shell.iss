@@ -84,7 +84,7 @@ Type: files; Name: "{app}\native-shell.exe"
 ; Self-update-era stray rollback backups observed on real machines; dead
 ; weight once a full installer payload replaces the tree.
 Type: files; Name: "{app}\native-shell.exe.old-*"
-; native-shell#376 (hygiene rule): {app}\winuxcmd\bin is THE PATH entry directory,
+; native-shell#376 (hygiene rule): {app}\cmd\bin is THE PATH entry directory,
 ; and dead payloads inside it make the active entry set unauditable. Earlier
 ; updaters parked retired faces aside and never swept them (observed live:
 ; bash.exe.bak-1.4.0, sh.exe.old-shposix, 226,816 B each); the current
@@ -94,24 +94,24 @@ Type: files; Name: "{app}\native-shell.exe.old-*"
 ; never the live entry names. The wildcards match generated shapes only;
 ; a user file deliberately named with one of these suffixes inside these
 ; two app-owned directories would be swept with them.
-Type: files; Name: "{app}\winuxcmd\bin\*.bak-*"
-Type: files; Name: "{app}\winuxcmd\bin\*.old-*"
-Type: files; Name: "{app}\winuxcmd\bin\*.niu-old-*"
-Type: files; Name: "{app}\winuxcmd\usr\bin\*.bak-*"
-Type: files; Name: "{app}\winuxcmd\usr\bin\*.old-*"
-Type: files; Name: "{app}\winuxcmd\usr\bin\*.niu-old-*"
+Type: files; Name: "{app}\cmd\bin\*.bak-*"
+Type: files; Name: "{app}\cmd\bin\*.old-*"
+Type: files; Name: "{app}\cmd\bin\*.niu-old-*"
+Type: files; Name: "{app}\cmd\usr\bin\*.bak-*"
+Type: files; Name: "{app}\cmd\usr\bin\*.old-*"
+Type: files; Name: "{app}\cmd\usr\bin\*.niu-old-*"
 
 ; native-shell#313 (R4): the same strays must not survive uninstall — processed
 ; after the uninstall log replay, so they cannot pin {app} behind.
 [UninstallDelete]
 Type: files; Name: "{app}\native-shell.exe"
 Type: files; Name: "{app}\native-shell.exe.old-*"
-Type: files; Name: "{app}\winuxcmd\bin\*.bak-*"
-Type: files; Name: "{app}\winuxcmd\bin\*.old-*"
-Type: files; Name: "{app}\winuxcmd\bin\*.niu-old-*"
-Type: files; Name: "{app}\winuxcmd\usr\bin\*.bak-*"
-Type: files; Name: "{app}\winuxcmd\usr\bin\*.old-*"
-Type: files; Name: "{app}\winuxcmd\usr\bin\*.niu-old-*"
+Type: files; Name: "{app}\cmd\bin\*.bak-*"
+Type: files; Name: "{app}\cmd\bin\*.old-*"
+Type: files; Name: "{app}\cmd\bin\*.niu-old-*"
+Type: files; Name: "{app}\cmd\usr\bin\*.bak-*"
+Type: files; Name: "{app}\cmd\usr\bin\*.old-*"
+Type: files; Name: "{app}\cmd\usr\bin\*.niu-old-*"
 
 ; native-shell#211: these are the conhost-baseline forms (direct native-shell.exe — what
 ; Win10 hosts with conhost). When WT is detected after install, the
@@ -122,7 +122,7 @@ Name: "{group}\Native Shell"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{%US
 Name: "{autodesktop}\Native Shell"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{%USERPROFILE}"; IconFilename: "{app}\assets\native-shell-icon.ico"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\winuxcmd\usr\bin\native-cmd.exe"; Parameters: "wpm links rebuild --root ""{app}\winuxcmd"" --force"; WorkingDir: "{app}\winuxcmd\usr\bin"; StatusMsg: "Activating WinuxCmd command links..."; Flags: runhidden waituntilterminated
+Filename: "{app}\cmd\usr\bin\native-cmd.exe"; Parameters: "wpm links rebuild --root ""{app}\winuxcmd"" --force"; WorkingDir: "{app}\cmd\usr\bin"; StatusMsg: "Activating WinuxCmd command links..."; Flags: runhidden waituntilterminated
 ; JayWanX/native-shell#468: `wpm links rebuild` reconciles only what `.wpm` state
 ; and the builtin applet table declare, and the bundled install ships no
 ; .wpm state — so the package shims (usr\bin\awk.exe, gawk.exe) are outside
@@ -241,9 +241,9 @@ var
 begin
   AppDir := ExpandConstant('{app}');
   // native-shell#313 (R1): wpm's install-time `links rebuild` puts
-  // {app}\winuxcmd\bin on the user PATH, but the uninstall only removed
+  // {app}\cmd\bin on the user PATH, but the uninstall only removed
   // {app} — every uninstall left that dangling entry behind. Sweep both.
-  WinuxCmdBinDir := AppDir + '\winuxcmd\bin';
+  WinuxCmdBinDir := AppDir + '\cmd\bin';
 
   if not RegQueryStringValue(HKEY_CURRENT_USER, NativeShellEnvironmentKey, NativeShellPathValueName, PathValue) then
   begin

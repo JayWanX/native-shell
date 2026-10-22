@@ -51,12 +51,12 @@ if [ -f "$script_dir/native-cmd.exe" ] && [ "$(basename "$script_dir")" = "bin" 
 elif [ -f "$script_dir/native-cmd.exe" ]; then
   winuxcmd_bin_dir="$script_dir"
   winuxcmd_root="$script_dir"
-elif [ -f "./winuxcmd/usr/bin/native-cmd.exe" ]; then
-  winuxcmd_bin_dir="./winuxcmd/usr/bin"
-  winuxcmd_root="./winuxcmd"
-elif [ -f "./winuxcmd/native-cmd.exe" ]; then
-  winuxcmd_bin_dir="./winuxcmd"
-  winuxcmd_root="./winuxcmd"
+elif [ -f "./cmd/usr/bin/native-cmd.exe" ]; then
+  winuxcmd_bin_dir="./cmd/usr/bin"
+  winuxcmd_root="./cmd"
+elif [ -f "./cmd/native-cmd.exe" ]; then
+  winuxcmd_bin_dir="./cmd"
+  winuxcmd_root="./cmd"
 else
   echo "activate-winuxcmd: native-cmd.exe not found"
   echo "Run this script from the WinuxCmd usr/bin directory or release root."

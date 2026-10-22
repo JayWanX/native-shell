@@ -18,13 +18,13 @@ filesystem overlay.
 For an installed executable such as:
 
 ```text
-C:/Users/Administrator/AppData/Local/Programs/NativeShell/winuxcmd/usr/bin/winuxcmd.exe
+C:/Users/Administrator/AppData/Local/Programs/NativeShell/cmd/usr/bin/winuxcmd.exe
 ```
 
 the shell root is:
 
 ```text
-C:/Users/Administrator/AppData/Local/Programs/NativeShell/winuxcmd/
+C:/Users/Administrator/AppData/Local/Programs/NativeShell/cmd/
   usr/bin/
   bin/
   usr/local/bin/

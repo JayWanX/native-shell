@@ -87,10 +87,10 @@ SLOT_CANDIDATES = (
 FACES = (
     (r"bin", "bash.exe"),
     (r"bin", "sh.exe"),
-    (r"winuxcmd\bin", "bash.exe"),
-    (r"winuxcmd\bin", "sh.exe"),
-    (r"winuxcmd\usr\bin", "bash.exe"),
-    (r"winuxcmd\usr\bin", "sh.exe"),
+    (r"cmd\bin", "bash.exe"),
+    (r"cmd\bin", "sh.exe"),
+    (r"cmd\usr\bin", "bash.exe"),
+    (r"cmd\usr\bin", "sh.exe"),
 )
 
 # The instrument for the process-chain evidence: PowerShell walks from its own
@@ -379,7 +379,7 @@ def main():
                              "(e.g. target/release/native-shell.exe)")
     parser.add_argument("--forwarder",
                         help="the forwarding shim to seed the 'before' state "
-                             "(default: the live install's winuxcmd\\bin\\bash.exe "
+                             "(default: the live install's cmd\\bin\\bash.exe "
                              "when it is distinct from the payload)")
     parser.add_argument("--n", type=int, default=20,
                         help="timed samples per face, min reported (default 20)")

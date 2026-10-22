@@ -270,7 +270,7 @@ class ResumeTests(unittest.TestCase):
         # winuxcmd is native-shell's own shim layout: `where git` and PATH resolve
         # to it on dev boxes, and it must never enter the candidate chain
         winux = (r"C:\Users\x\AppData\Local\Programs\NativeShell"
-                 r"\winuxcmd\usr\bin\bash.exe")
+                 r"\cmd\usr\bin\bash.exe")
         with mock.patch.dict(os.environ, {"ECO_GNU_BASH": ""}), \
              mock.patch.object(ECO.subprocess, "run",
                                return_value=SimpleNamespace(stdout="")), \
@@ -291,7 +291,7 @@ class ResumeTests(unittest.TestCase):
         # an explicit ECO_GNU_BASH pin into our own shim layout is refused
         # too — loud, not silent (a functional native-shell forwarder would pass any
         # output check, so the path filter is the authoritative guard)
-        winux = r"C:\x\NativeShell\winuxcmd\usr\bin\bash.exe"
+        winux = r"C:\x\NativeShell\cmd\usr\bin\bash.exe"
         with mock.patch.dict(os.environ, {"ECO_GNU_BASH": winux}), \
              mock.patch.object(ECO.subprocess, "run",
                                return_value=SimpleNamespace(stdout="")), \

@@ -11,8 +11,8 @@ use anyhow::{anyhow, Context, Result};
 /// Locate `native-cmd.exe` by checking, in order:
 ///   1. `$WINUXCMD_PATH` env var (file or directory)
 ///   2. `<exe_dir>/usr/bin/native-cmd.exe`
-///   3. `<exe_dir>/winuxcmd/usr/bin/native-cmd.exe`
-///   4. `<exe_dir>/utils/winuxcmd/usr/bin/native-cmd.exe`
+///   3. `<exe_dir>/cmd/usr/bin/native-cmd.exe`
+///   4. `<exe_dir>/utils/cmd/usr/bin/native-cmd.exe`
 ///   5. legacy flat locations and `native-cmd.exe` on `PATH`
 pub fn find_winuxcmd() -> Option<PathBuf> {
     find_winuxcmd_with_report().found
@@ -25,7 +25,7 @@ struct WinuxCmdSearchReport {
     /// knows the layout it describes, so nothing has to probe the filesystem:
     /// `<root>\usr\bin\native-cmd.exe`, `<root>\native-cmd.exe` and
     /// `<root>\bin\native-cmd.exe` (the PATH entry link) all imply their own
-    /// root, while `<x>\winuxcmd\usr\bin\native-cmd.exe` implies
+    /// root, while `<x>\cmd\usr\bin\native-cmd.exe` implies
     /// `<x>\winuxcmd`.
     root: Option<PathBuf>,
     checked: Vec<String>,
@@ -253,10 +253,10 @@ fn bundled_winuxcmd_candidates(exe_dir: &Path) -> Vec<BundledCandidate> {
         // this shape a shell hardlinked beside it would resolve native-cmd.exe
         // and then treat `bin` as the installation root, losing usr\bin.
         ("bin/native-cmd.exe", ""),
-        ("winuxcmd/usr/bin/native-cmd.exe", "winuxcmd"),
-        ("winuxcmd/native-cmd.exe", "winuxcmd"),
-        ("utils/winuxcmd/usr/bin/native-cmd.exe", "utils/winuxcmd"),
-        ("utils/winuxcmd/native-cmd.exe", "utils/winuxcmd"),
+        ("cmd/usr/bin/native-cmd.exe", "cmd"),
+        ("cmd/native-cmd.exe", "cmd"),
+        ("utils/cmd/usr/bin/native-cmd.exe", "utils/cmd"),
+        ("utils/cmd/native-cmd.exe", "utils/cmd"),
     ];
 
     let mut candidates = Vec::new();
@@ -964,39 +964,39 @@ mod tests {
         assert_eq!(candidates[2].path, exe_dir.join("bin/native-cmd.exe"));
         assert_eq!(
             candidates[3].path,
-            exe_dir.join("winuxcmd/usr/bin/native-cmd.exe")
+            exe_dir.join("cmd/usr/bin/native-cmd.exe")
         );
         assert_eq!(candidates[0].root, exe_dir);
-        assert_eq!(candidates[3].root, exe_dir.join("winuxcmd"));
+        assert_eq!(candidates[3].root, exe_dir.join("cmd"));
     }
 
     #[test]
     fn bundled_candidates_climb_to_ancestor_installations() {
         // A shell hardlinked into the PATH entry directory finds the tree one
         // level up, and the shared root is what gets injected - not `bin`.
-        let from_entry_bin = bundled_winuxcmd_candidates(Path::new(r"C:\tools\winuxcmd\bin"));
+        let from_entry_bin = bundled_winuxcmd_candidates(Path::new(r"C:\tools\cmd\bin"));
         let found = from_entry_bin
             .iter()
             .find(|candidate| {
-                candidate.path == PathBuf::from(r"C:\tools\winuxcmd\usr\bin\native-cmd.exe")
+                candidate.path == PathBuf::from(r"C:\tools\cmd\usr\bin\native-cmd.exe")
             })
             .expect("the installation one level up must be a candidate");
         assert_eq!(found.root, PathBuf::from(r"C:\tools\winuxcmd"));
 
         // A package payload deep in the tree still reaches the bundled tree.
         let from_payload =
-            bundled_winuxcmd_candidates(Path::new(r"C:\tools\winuxcmd\opt\native-git\bin"));
+            bundled_winuxcmd_candidates(Path::new(r"C:\tools\cmd\opt\native-git\bin"));
         assert!(from_payload.iter().any(|candidate| candidate.path
-            == PathBuf::from(r"C:\tools\winuxcmd\usr\bin\native-cmd.exe")));
+            == PathBuf::from(r"C:\tools\cmd\usr\bin\native-cmd.exe")));
 
-        // The native-shell layout: `<x>\bin\bash.exe` finds `<x>\winuxcmd\...`.
+        // The native-shell layout: `<x>\bin\bash.exe` finds `<x>\cmd\...`.
         let from_native_shell_bin =
             bundled_winuxcmd_candidates(Path::new(r"C:\apps\NativeShell\bin"));
         let bundled = from_native_shell_bin
             .iter()
             .find(|candidate| {
                 candidate.path
-                    == PathBuf::from(r"C:\apps\NativeShell\winuxcmd\usr\bin\native-cmd.exe")
+                    == PathBuf::from(r"C:\apps\NativeShell\cmd\usr\bin\native-cmd.exe")
             })
             .expect("the bundled tree must be a candidate");
         assert_eq!(bundled.root, PathBuf::from(r"C:\apps\NativeShell\winuxcmd"));
@@ -1006,18 +1006,18 @@ mod tests {
     fn injected_path_dirs_cover_the_installation_root() {
         let root = Path::new(r"C:\tools\winuxcmd");
         let expected = vec![
-            PathBuf::from(r"C:\tools\winuxcmd\usr/local/bin"),
-            PathBuf::from(r"C:\tools\winuxcmd\usr/bin"),
-            PathBuf::from(r"C:\tools\winuxcmd\bin"),
+            PathBuf::from(r"C:\tools\cmd\usr/local/bin"),
+            PathBuf::from(r"C:\tools\cmd\usr/bin"),
+            PathBuf::from(r"C:\tools\cmd\bin"),
             PathBuf::from(r"C:\tools\winuxcmd"),
         ];
         // The canonical location, the PATH entry link (whose parent is `bin`),
         // and a copy that a package placed elsewhere in the tree all inject the
         // same four directories.
         for exe in [
-            r"C:\tools\winuxcmd\usr\bin\native-cmd.exe",
-            r"C:\tools\winuxcmd\bin\native-cmd.exe",
-            r"C:\tools\winuxcmd\opt\pkg\bin\native-cmd.exe",
+            r"C:\tools\cmd\usr\bin\native-cmd.exe",
+            r"C:\tools\cmd\bin\native-cmd.exe",
+            r"C:\tools\cmd\opt\pkg\bin\native-cmd.exe",
         ] {
             assert_eq!(injected_path_dirs(root, Path::new(exe)), expected, "{exe}");
         }
@@ -1160,14 +1160,14 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn path_prepend_deduplicates_windows_equivalent_entries() {
-        let current = "C:/Other;c:\\tools\\winuxcmd\\;D:/Bin";
+        let current = "C:/Other;c:\\tools\\cmd\\;D:/Bin";
 
         assert_eq!(
             path_with_dir_prepended(current, "C:/Tools/WinuxCmd"),
             "C:/Tools/WinuxCmd;C:/Other;D:/Bin"
         );
         assert!(path_starts_with_dir(
-            "c:\\tools\\winuxcmd\\;C:/Other",
+            "c:\\tools\\cmd\\;C:/Other",
             "C:/Tools/WinuxCmd"
         ));
     }

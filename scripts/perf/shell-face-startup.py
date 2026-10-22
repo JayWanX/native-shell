@@ -3,7 +3,7 @@ r"""Per-invocation startup cost of every installed shell face, by name.
 
 native-shell#377: a shell face is any PATH-reachable name that starts the native-shell
 engine — the payload `native-shell.exe` itself, the `bash.exe`/`sh.exe` faces under
-`winuxcmd\bin` and `winuxcmd\usr\bin`, and convention slots such as
+`cmd\bin` and `cmd\usr\bin`, and convention slots such as
 `C:\Program Files\Git\bin\bash.exe` (native-shell#398). AI agents, CI and git
 hooks pay the face's fixed cost on EVERY `-c` invocation, so the contract
 that matters is execution-level: spawn the face with `-c exit`, time it,
@@ -22,8 +22,8 @@ measurement. Structural facts (size, hardlink count, same file as the
 payload) are reported per row as annotations.
 
 Gating (native-shell#377 CR round): the gate is `--check-links` and it is
-DETERMINISTIC — every declared face (`winuxcmd\bin\bash.exe`,
-`winuxcmd\bin\sh.exe`, `winuxcmd\usr\bin\bash.exe`, `winuxcmd\usr\bin\sh.exe`)
+DETERMINISTIC — every declared face (`cmd\bin\bash.exe`,
+`cmd\bin\sh.exe`, `cmd\usr\bin\bash.exe`, `cmd\usr\bin\sh.exe`)
 must be the SAME FILE as the payload `native-shell.exe`. The gate exists to catch a
 link degenerating back into a forwarder, and inode identity is exactly that
 fact, which the script computes either way. A measured-time-ratio gate was
@@ -69,10 +69,10 @@ GIT_SLOT_CANDIDATES = (
 )
 
 FACE_NAMES = (
-    ("winuxcmd\\bin", "bash.exe"),
-    ("winuxcmd\\bin", "sh.exe"),
-    ("winuxcmd\\usr\\bin", "bash.exe"),
-    ("winuxcmd\\usr\\bin", "sh.exe"),
+    ("cmd\\bin", "bash.exe"),
+    ("cmd\\bin", "sh.exe"),
+    ("cmd\\usr\\bin", "bash.exe"),
+    ("cmd\\usr\\bin", "sh.exe"),
 )
 
 # The faces native-shell#397 owns: `--check-links` requires each of these to be

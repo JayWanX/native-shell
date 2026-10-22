@@ -24,7 +24,7 @@ FAILED_NAMES=()
 WIN_HOME="${USERPROFILE:-$HOME}"
 WIN_HOME="${WIN_HOME//\//}"
 NATIVE_SHELL_BUNDLE="${NATIVE_SHELL_BUNDLE:-$WIN_HOME/AppData/Local/Programs/NativeShell/bundles/oh-my-native-shell}"
-WINUXCMD_BIN="${WINUXCMD_BIN:-$WIN_HOME/AppData/Local/Programs/NativeShell/winuxcmd/usr/bin}"
+WINUXCMD_BIN="${WINUXCMD_BIN:-$WIN_HOME/AppData/Local/Programs/NativeShell/cmd/usr/bin}"
 GIT_CORE="${GIT_CORE:-/mingw64/libexec/git-core}"
 
 pass() { PASSED=$((PASSED+1)); TOTAL=$((TOTAL+1)); }

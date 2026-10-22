@@ -11,7 +11,7 @@
 //! directory, a package payload, the directories editors put on PATH).
 //!
 //! Hardlinks are created **where the directories exist** (`<root>\bin`,
-//! `<root>\winuxcmd\bin`, `<root>\winuxcmd\usr\bin`) rather than in the
+//! `<root>\cmd\bin`, `<root>\cmd\usr\bin`) rather than in the
 //! distribution itself: a zip stores the 12 MB payload once per name, while
 //! hardlinks on the user's machine are free. The forwarding shim stays the
 //! fallback for layouts without hardlink support (exFAT, a network share), so
@@ -32,7 +32,7 @@ const SHELL_FACES: [&str; 2] = ["bash", "sh"];
 
 /// Directories that end up on a user's or an editor's PATH, relative to the
 /// installation root.
-const PATH_DIRECTORIES: [&str; 3] = ["bin", "winuxcmd/bin", "winuxcmd/usr/bin"];
+const PATH_DIRECTORIES: [&str; 3] = ["bin", "cmd/bin", "cmd/usr/bin"];
 
 /// What one `--relink-shells` run did, so callers can report it honestly.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -55,7 +55,7 @@ impl ShellLinkReport {
 
 /// How far above the running executable the installation root may sit. The
 /// shell can be reached as a hardlink in `<root>\bin`, in
-/// `<root>\winuxcmd\bin` or in a package payload, so the root has to be found
+/// `<root>\cmd\bin` or in a package payload, so the root has to be found
 /// rather than assumed.
 const MAX_ROOT_ANCESTORS: usize = 4;
 
@@ -290,14 +290,14 @@ mod tests {
         std::fs::create_dir_all(root.join("winuxcmd").join("usr").join("bin")).unwrap();
         std::fs::create_dir_all(root.join("bin")).unwrap();
         std::fs::write(root.join(SHELL_BIN_NAME), b"native-shell payload").unwrap();
-        std::fs::write(root.join("winuxcmd/usr/bin/native-cmd.exe"), b"dispatcher").unwrap();
+        std::fs::write(root.join("cmd/usr/bin/native-cmd.exe"), b"dispatcher").unwrap();
 
         // Reached as the real binary, from the PATH entry directory, and from
         // inside the winuxcmd tree: all three report the installation root.
         for exe in [
             root.join(SHELL_BIN_NAME),
             root.join("bin").join(SHELL_FACES[0]),
-            root.join("winuxcmd/bin").join(SHELL_FACES[1]),
+            root.join("cmd/bin").join(SHELL_FACES[1]),
         ] {
             assert_eq!(find_installation_root(&exe), root, "{}", exe.display());
         }
@@ -318,7 +318,7 @@ mod tests {
         std::fs::create_dir_all(root.join("winuxcmd").join("usr").join("bin")).unwrap();
         std::fs::create_dir_all(root.join("bin")).unwrap();
         std::fs::write(root.join(SHELL_BIN_NAME), b"native-shell payload").unwrap();
-        std::fs::write(root.join("winuxcmd/usr/bin/native-cmd.exe"), b"dispatcher").unwrap();
+        std::fs::write(root.join("cmd/usr/bin/native-cmd.exe"), b"dispatcher").unwrap();
         std::fs::write(
             root.join("bin").join(SHELL_FACES[0]),
             b"native-shell payload",

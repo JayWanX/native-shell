@@ -873,7 +873,7 @@
       "nushell": "typed expressions with units",
       "ours": "partial-equivalent (executor/arithmetic; no mathfunc functions — see D11)",
       "impact": "low",
-      "fix_path": "mathfunc is a winuxcmd/external concern"
+      "fix_path": "mathfunc is a cmd/external concern"
     },
     {
       "id": "D09-10",

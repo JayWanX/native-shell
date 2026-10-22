@@ -96,7 +96,7 @@ CLI 已有：`native-shell plugin add/trust/use/remove/rollback`（`src/main.rs:
 - `fonts.rs`：`FONT_OPTIONS` `fonts.rs:30`、`menu_labels` `fonts.rs:63`、
   `nerd_font_installed` `fonts.rs:70`、`install` `fonts.rs:76`、
   `native-shell font` `fonts.rs:103`。
-- `doctor.rs:17-166 run_doctor`：4 项 critical（winuxcmd/command links/rc/
+- `doctor.rs:17-166 run_doctor`：4 项 critical（cmd/command links/rc/
   **plugin bundle**，108-123）+ advisory（字体/终端/语言）。尚无补全与
   生态体检项。
 - `src/main.rs:164-170`：`native-shell setup|font|doctor|plugin` 分发。

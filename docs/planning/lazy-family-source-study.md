@@ -194,7 +194,7 @@ that is wpm's job in this ecosystem.
 ## 7. wpm as the executable driver (our environment)
 
 Checked against the local WinuxCmd checkout (wpm = `winuxcmd wpm`,
-`D:/repo/unixwin-winuxcmd/src/commands/wpm.cpp`):
+`D:/repo/unixwin-cmd/src/commands/wpm.cpp`):
 
 - Subcommands: `wpm install|uninstall|list|search|info`, `wpm links
   rebuild|list|remove`, `wpm sources add|remove|list` (`wpm.cpp:4109-4165`).

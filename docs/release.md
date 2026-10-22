@@ -200,7 +200,7 @@ lacks the adapter fails the x64 gate.
 
 The prefix is declared once, in `scripts/release/preinstall.json`
 (`adapted_argv` on the gawk package), and shipped as
-`winuxcmd\.wpm\adapters.map` — `scripts/package-release.ps1` copies it there.
+`cmd\.wpm\adapters.map` — `scripts/package-release.ps1` copies it there.
 It cannot live in `.wpm/shims.map`: wpm rewrites that file wholesale from its
 own (command, payload) pairs on every `wpm links rebuild`, which runs at each
 shell start. Both forwarders (`native-cmd.exe`'s dispatcher and

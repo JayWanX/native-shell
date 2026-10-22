@@ -43,7 +43,7 @@ import time
 DEVNULL = subprocess.DEVNULL
 
 # D:\Git is a plain Git for Windows install. C:\Program Files\Git is
-# routinely replaced by a winuxcmd/MSYS bundle whose bash reports
+# routinely replaced by a cmd/MSYS bundle whose bash reports
 # MSYSTEM empty and whose `git` is not Git for Windows, so it is only a
 # fallback and never trusted without the identity check below.
 GIT_BASH_CANDIDATES = (

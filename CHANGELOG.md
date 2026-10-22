@@ -72,7 +72,7 @@ Healthy re-release on the pinned release chain (the bundled engine is now locked
 
 - **Shell-face startup is a measured contract** (`scripts/perf/shell-face-startup.py`):
   execution-level `-c exit` timing for every installed face — the `native-shell.exe`
-  payload, the `winuxcmd\bin` / `winuxcmd\usr\bin` `bash.exe`/`sh.exe` links,
+  payload, the `cmd\bin` / `cmd\usr\bin` `bash.exe`/`sh.exe` links,
   and the `C:\Program Files\Git\bin\bash.exe` convention slot — with a
   verify-before-record rule (a face that cannot execute prints the failure
   note, never a fast number), structural annotations (size, hardlink count,
@@ -90,7 +90,7 @@ Healthy re-release on the pinned release chain (the bundled engine is now locked
   payload within noise (23.8–29.7 ms, same inode) with `$0`, `BASH_VERSION`,
   POSIX mode and the `NIU_SHELL` contract verified through the links.
 - **The installer sweeps retired shim shapes out of the PATH entry directory**
-  (native-shell#376 hygiene): `{app}\winuxcmd\bin` and `{app}\winuxcmd\usr\bin` are
+  (native-shell#376 hygiene): `{app}\cmd\bin` and `{app}\cmd\usr\bin` are
   cleared of `*.bak-*` / `*.old-*` / `*.niu-old-*` on install and uninstall —
   the same dead-weight class as the existing `native-shell.exe.old-*` sweep, observed
   live as `bash.exe.bak-1.4.0` / `sh.exe.old-shposix` (4 × 226,816 B on real
@@ -200,7 +200,7 @@ Healthy re-release on the pinned release chain (the bundled engine is now locked
 
 ### Fixed
 
-- **`(A;B);)` is a syntax error on every non-interactive route, like GNU** (JayWanX/native-shell#431). `native-shell -c '(printf a; printf b);)'` ran the subshell and exited 0 — and so did script files, `--encoded-command`, and piped/redirected stdin — where GNU bash 5.3.0 rejects the shape in every mode (`syntax error near unexpected token ')'`, rc 2, subshell unexecuted; the earlier "msys GNU tolerates the tail" record came from the `winuxcmd/usr/bin/bash.exe` launcher shim echoing native-shell back — rubash#852). The host fast path now parses with the engine's stray-close guard armed (`ParseLoopOptions::stray_close_is_error`, the same predicate rubash's readers arm) and hands a tripped parse to the engine's group-wise driver, so the diagnostic (verbatim offending-line echo, `$0: -c: line N:` attribution, rc 2) matches GNU byte-for-byte; the no-flag stdin route also binds the argv[0] diagnostic name and keeps one physical line counter across gathered batches like `bash -s`. Pinned in `tests/issue431_stray_close_paren.rs` and `tests/interactive.rs::continuation_subshell_stray_close_is_syntax_error`.
+- **`(A;B);)` is a syntax error on every non-interactive route, like GNU** (JayWanX/native-shell#431). `native-shell -c '(printf a; printf b);)'` ran the subshell and exited 0 — and so did script files, `--encoded-command`, and piped/redirected stdin — where GNU bash 5.3.0 rejects the shape in every mode (`syntax error near unexpected token ')'`, rc 2, subshell unexecuted; the earlier "msys GNU tolerates the tail" record came from the `cmd/usr/bin/bash.exe` launcher shim echoing native-shell back — rubash#852). The host fast path now parses with the engine's stray-close guard armed (`ParseLoopOptions::stray_close_is_error`, the same predicate rubash's readers arm) and hands a tripped parse to the engine's group-wise driver, so the diagnostic (verbatim offending-line echo, `$0: -c: line N:` attribution, rc 2) matches GNU byte-for-byte; the no-flag stdin route also binds the argv[0] diagnostic name and keeps one physical line counter across gathered batches like `bash -s`. Pinned in `tests/issue431_stray_close_paren.rs` and `tests/interactive.rs::continuation_subshell_stray_close_is_syntax_error`.
 - **Bundled gawk's CRLF output gets a byte-level release gate** (JayWanX/native-shell#467). The `opt\gawk` payload is a text-mode mingw build — its CRT rewrote every `\n` as `\r\n` on write and folded `\r\n` into `\n` on read, while every other bundled applet does binary stdio, so `awk '{print}' > f` landed CRLF files and `ORS="\r\n"` doubled the CR. The fix ships in the bundled WinuxCmd forwarder (winuxcmd.exe / winuxcmd-shim.exe splice `-v BINMODE=3` ahead of the forwarded argv for `awk`/`gawk` — the build ignores the `BINMODE` environment variable, the `-v` assignment is its only lever, and a caller's own `-v BINMODE=...` still wins by landing later); the pre-install manifest now records why `layout: shim` is load-bearing. The staged-release verify gains raw-byte probes — the packaged `native-shell.exe` redirects the awk/gawk pipelines to a file and the bytes are compared exactly (`a\nb\n`, and `a\r\nb\r\n` for the explicit-ORS pass-through) — because a PowerShell native-command capture strips `\r` and string equality could never see the regression (that blindness is how the text-mode build shipped). A bundled forwarder without the adapter fails the x64 gate; flipping `native-cmd-pin.json` to a release carrying the adapter is the same change window.
 
 ## [1.4.0] - 2026-10-10
@@ -606,7 +606,7 @@ Healthy re-release on the pinned release chain (the bundled engine is now locked
   absent; a reader now always observes a complete old or new generation.
 
 - The installer cleans up after itself (native-shell#313). Uninstall now also
-  removes the `{app}\winuxcmd\bin` entry from the user `PATH` — the
+  removes the `{app}\cmd\bin` entry from the user `PATH` — the
   install-time `wpm links rebuild` adds it, but the uninstaller only ever
   removed `{app}`, leaving a dangling PATH entry after every uninstall.
   The installer gained `[InstallDelete]`/`[UninstallDelete]` sweeps for
@@ -1040,7 +1040,7 @@ Healthy re-release on the pinned release chain (the bundled engine is now locked
 - **WinGet portable install could not start `native-shell`**: the manifest shipped the
   release zip with `InstallerType: zip` + `NestedInstallerType: portable`, and
   WinGet's portable shim only copies the single declared `native-shell.exe` into
-  `%LOCALAPPDATA%\Microsoft\WinGet\Links`. The bundled `winuxcmd/usr/bin`
+  `%LOCALAPPDATA%\Microsoft\WinGet\Links`. The bundled `cmd/usr/bin`
   tree next to the executable is left behind, so `native-shell.exe` started from the
   Links directory found no WinuxCmd and aborted during startup validation
   (winget-pkgs PR #437563, exit code 0xC0000135). The manifest now installs

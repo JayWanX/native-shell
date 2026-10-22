@@ -21,7 +21,7 @@ integrated through PATH.
 ```text
 native-shell release
   native-shell.exe
-  winuxcmd/
+  cmd/
   bundles/
     oh-my-winuxsh/
       bundle.toml

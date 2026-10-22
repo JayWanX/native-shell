@@ -6733,7 +6733,7 @@ mod invocation_name_tests {
         // The sh.exe shim forwards its argv[0] stem verbatim.
         assert_eq!(default_script_name_from(Some("sh".to_string())), "sh");
         assert_eq!(
-            default_script_name_from(Some("C:/x/winuxcmd/bin/sh.exe".to_string())),
+            default_script_name_from(Some("C:/x/cmd/bin/sh.exe".to_string())),
             "sh"
         );
         assert_eq!(
@@ -6757,7 +6757,7 @@ mod invocation_name_tests {
         // for every face — `bash -c 'echo $0'` must read `bash`, not native-shell.
         assert_eq!(default_script_name_from(Some("bash".to_string())), "bash");
         assert_eq!(
-            default_script_name_from(Some("C:/x/winuxcmd/bin/bash.exe".to_string())),
+            default_script_name_from(Some("C:/x/cmd/bin/bash.exe".to_string())),
             "bash"
         );
         assert_eq!(default_script_name_from(Some("rbash".to_string())), "rbash");

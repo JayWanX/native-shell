@@ -10,7 +10,7 @@ param(
     # usr\bin holds the pre-install shims (gawk.exe, awk.exe) and whose opt\
     # holds the package payloads with their private DLLs. Its usr\bin *.exe
     # (except native-cmd.exe itself, which is staged from -WinuxCmdPath) and
-    # its whole opt\ tree are copied into the package's winuxcmd\ directory,
+    # its whole opt\ tree are copied into the package's cmd\ directory,
     # so the shim dispatch (<root>\usr\bin\<cmd>.exe -> <root>\opt\<pkg>\)
     # resolves inside the shipped layout. Never ships the .wpm state dir.
     [string]$PreinstallRoot,
@@ -219,17 +219,17 @@ try {
 
     Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force -Path (Join-Path $stageDir "winuxcmd\bin") | Out-Null
-    New-Item -ItemType Directory -Force -Path (Join-Path $stageDir "winuxcmd\usr\bin") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $stageDir "cmd\bin") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $stageDir "cmd\usr\bin") | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $stageDir "assets") | Out-Null
 
     Copy-Item -LiteralPath $native_shellExe -Destination (Join-Path $stageDir "native-shell.exe") -Force
-    Copy-Item -LiteralPath $WinuxCmdPath -Destination (Join-Path $stageDir "winuxcmd\usr\bin\native-cmd.exe") -Force
-    Copy-Item -LiteralPath $bashShimExe -Destination (Join-Path $stageDir "winuxcmd\usr\bin\bash.exe") -Force
-    Copy-Item -LiteralPath $shShimExe -Destination (Join-Path $stageDir "winuxcmd\usr\bin\sh.exe") -Force
-    Copy-Item -LiteralPath $bashShimExe -Destination (Join-Path $stageDir "winuxcmd\bin\bash.exe") -Force
-    Copy-Item -LiteralPath $shShimExe -Destination (Join-Path $stageDir "winuxcmd\bin\sh.exe") -Force
-    Copy-Item -LiteralPath $activationScript -Destination (Join-Path $stageDir "winuxcmd\usr\bin\activate-winuxcmd.sh") -Force
+    Copy-Item -LiteralPath $WinuxCmdPath -Destination (Join-Path $stageDir "cmd\usr\bin\native-cmd.exe") -Force
+    Copy-Item -LiteralPath $bashShimExe -Destination (Join-Path $stageDir "cmd\usr\bin\bash.exe") -Force
+    Copy-Item -LiteralPath $shShimExe -Destination (Join-Path $stageDir "cmd\usr\bin\sh.exe") -Force
+    Copy-Item -LiteralPath $bashShimExe -Destination (Join-Path $stageDir "cmd\bin\bash.exe") -Force
+    Copy-Item -LiteralPath $shShimExe -Destination (Join-Path $stageDir "cmd\bin\sh.exe") -Force
+    Copy-Item -LiteralPath $activationScript -Destination (Join-Path $stageDir "cmd\usr\bin\activate-winuxcmd.sh") -Force
 
     # native-shell#189: pre-installed wpm packages (see -PreinstallRoot above).
     # The same usr\bin sweep also ships `native-cmd-shim.exe` (the package-shim
@@ -243,18 +243,18 @@ try {
         $preinstallShims = Get-ChildItem -LiteralPath (Join-Path $PreinstallRoot "usr\bin") -Filter *.exe |
             Where-Object { $_.Name -ne "native-cmd.exe" }
         foreach ($shim in $preinstallShims) {
-            Copy-Item -LiteralPath $shim.FullName -Destination (Join-Path $stageDir "winuxcmd\usr\bin\$($shim.Name)") -Force
+            Copy-Item -LiteralPath $shim.FullName -Destination (Join-Path $stageDir "cmd\usr\bin\$($shim.Name)") -Force
         }
         if (Test-Path -LiteralPath (Join-Path $PreinstallRoot "opt")) {
-            Copy-Item -LiteralPath (Join-Path $PreinstallRoot "opt") -Destination (Join-Path $stageDir "winuxcmd\opt") -Recurse -Force
+            Copy-Item -LiteralPath (Join-Path $PreinstallRoot "opt") -Destination (Join-Path $stageDir "cmd\opt") -Recurse -Force
         }
         # Adapted-command argv prefixes (native-shell#467): the forwarders read
-        # <root>\.wpm\adapters.map, so it has to ship inside winuxcmd\. It is the
+        # <root>\.wpm\adapters.map, so it has to ship inside cmd\. It is the
         # only .wpm file the product carries - receipts, the index cache and
         # shims.map stay out, because wpm owns and rewrites those at runtime.
         $adapterMap = Join-Path $PreinstallRoot ".wpm\adapters.map"
         if (Test-Path -LiteralPath $adapterMap) {
-            $adapterDir = Join-Path $stageDir "winuxcmd\.wpm"
+            $adapterDir = Join-Path $stageDir "cmd\.wpm"
             New-Item -ItemType Directory -Force -Path $adapterDir | Out-Null
             Copy-Item -LiteralPath $adapterMap -Destination (Join-Path $adapterDir "adapters.map") -Force
             Write-Host "Shipped adapters.map: $((Get-Content -LiteralPath $adapterMap | Where-Object { $_ -notmatch '^#' -and $_ -ne '' }) -join '; ')"
