@@ -334,10 +334,11 @@ try {
             Write-Host "7z size: $([Math]::Round((Get-Item -LiteralPath $sevenZipPath).Length / 1MB, 2)) MB"
         }
         else {
-            # Local convenience builds may lack 7-Zip; the release workflow
-            # hard-asserts the .7z exists, so a CI leg can never silently
-            # lose the asset.
-            Write-Warning "7-Zip not found; skipping the .7z archive (the .zip and .tar.gz are complete)"
+            # 7-Zip is optional: the .7z is built only as the content-identity
+            # probe the release workflow runs against the staged tree, and it is
+            # never published. A missing 7-Zip degrades that one probe, never the
+            # shipped payload.
+            Write-Warning "7-Zip not found; skipping the .7z content-identity probe (the .zip and .tar.gz are complete)"
         }
     }
 

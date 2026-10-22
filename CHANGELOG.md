@@ -4,9 +4,23 @@ All notable changes to Native Shell are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Release assets: one artifact per format.** The v1.0.0 release published
+  417 MB across 28 assets for a ~125 MB payload: every Windows file appeared
+  twice (a version-less "latest" alias beside the versioned name) in three
+  formats on two architectures. The aliases are gone — `--self-update` never
+  needed them (it falls through to the versioned installer and verifies
+  against the versioned `.sha256` sidecar). The portable archive is now
+  `*.tar.gz` only: the same tree measured 54.47 MB as a zip and 29.63 MB as
+  a tarball, because `Compress-Archive` expands the 6-way `git.exe` hardlink
+  family into independent copies while bsdtar records the links. The `.7z`
+  is still built and verified inside the job (content identity against the
+  staged tree, `native-shell#470`) but is no longer published.
+
 ### Fixed
 
-- Upgrades now reconcile the bundled package shims (`winuxcmd\usr\bin\gawk.exe`, `awk.exe`): `wpm links rebuild` cannot reach them on a bundled install because the product ships no `.wpm` state, so replacing `winuxcmd.exe` left those names on the previous image — the 1.4.1 stale `awk.exe`/`gawk.exe` residue of #468. The installer runs `native-shell --relink-bundled-shims --force` after the wpm rebuild, and shell-startup activation runs the same reconcile: missing or stale declared names are parked and relinked to the current `winuxcmd.exe`, extracted copies are upgraded to real hardlinks, and names owned by the machine's own `.wpm` state (e.g. a user `wpm install awk`) are never touched.
+- Upgrades now reconcile the bundled package shims (`native-cmd\usr\bin\gawk.exe`, `awk.exe`): `wpm links rebuild` cannot reach them on a bundled install because the product ships no `.wpm` state, so replacing `native-cmd.exe` left those names on the previous image — the 1.4.1 stale `awk.exe`/`gawk.exe` residue of #468. The installer runs `native-shell --relink-bundled-shims --force` after the wpm rebuild, and shell-startup activation runs the same reconcile: missing or stale declared names are parked and relinked to the current `native-cmd.exe`, extracted copies are upgraded to real hardlinks, and names owned by the machine's own `.wpm` state (e.g. a user `wpm install awk`) are never touched.
 
 ## [1.4.2] - 2026-10-20
 

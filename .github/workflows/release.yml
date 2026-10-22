@@ -1049,32 +1049,21 @@ jobs:
             "/DSourceDir=$sourceDir" `
             "/DOutputDir=$outputDir"
 
-      - name: Add latest-compatible asset aliases
-        shell: pwsh
-        run: |
-          $versionedZip = "dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}.zip"
-          $versionedSetup = "dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}-setup.exe"
-          $versionedTarGz = "dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}.tar.gz"
-          $versionedSevenZip = "dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}.7z"
-          Copy-Item -LiteralPath $versionedZip -Destination "dist/native-shell-win-${{ matrix.arch }}.zip" -Force
-          Copy-Item -LiteralPath $versionedSetup -Destination "dist/native-shell-win-${{ matrix.arch }}-setup.exe" -Force
-          # native-shell#470: the hardlink-native archives get the same
-          # latest-compatible aliases as the formats that already had them.
-          Copy-Item -LiteralPath $versionedTarGz -Destination "dist/native-shell-win-${{ matrix.arch }}.tar.gz" -Force
-          Copy-Item -LiteralPath $versionedSevenZip -Destination "dist/native-shell-win-${{ matrix.arch }}.7z" -Force
-
-      # native-shell#311: every setup.exe ships a `.sha256` sidecar next to it, in
-      # the coreutils "<hex>  <filename>" form. `native-shell --self-update` fetches
-      # the stable alias's sidecar and verifies the downloaded installer
-      # against it before executing (fail-closed). The same digests feed the
-      # winget manifest's InstallerSha256 and the release's SHA256SUMS.
+      # Deliberately NO stable "latest-compatible" aliases. They doubled every
+      # payload in the release (the same bytes under a version-less name) so
+      # `releases/latest/download/<name>` could resolve. --self-update does
+      # not need them: installer_assets() lists the versioned installer and
+      # download_verified_installer() falls through to it when the stable name
+      # 404s, verifying against the versioned .sha256 sidecar.
       - name: Emit SHA-256 digest sidecars for the installers
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          # Only the versioned installer ships, so only its sidecar does. The
+          # name stays '<installer>.sha256' because digest_asset_for() derives
+          # the sidecar name from the installer name it is verifying.
           foreach ($file in @(
-            "dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}-setup.exe",
-            "dist/native-shell-win-${{ matrix.arch }}-setup.exe"
+            "dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}-setup.exe"
           )) {
             if (-not (Test-Path -LiteralPath $file)) {
               throw "expected installer artifact missing: $file"
@@ -1088,17 +1077,19 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}
+          # One artifact per format, versioned name only:
+          #   .tar.gz     the hardlink-preserving payload (the .zip alternative
+          #               spent 54.47 MB vs 29.63 MB on the same tree, because
+          #               Compress-Archive expands the 6-way git.exe hardlink
+          #               family into independent copies - native-shell#470)
+          #   -setup.exe  the Inno installer
+          #   .sha256     the digest --self-update verifies against
+          # The .7z is still BUILT and verified inside the job (content identity
+          # against the staged tree); it is simply no longer published.
           path: |
-            dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}.zip
             dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}.tar.gz
-            dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}.7z
             dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}-setup.exe
             dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}-setup.exe.sha256
-            dist/native-shell-win-${{ matrix.arch }}.zip
-            dist/native-shell-win-${{ matrix.arch }}.tar.gz
-            dist/native-shell-win-${{ matrix.arch }}.7z
-            dist/native-shell-win-${{ matrix.arch }}-setup.exe
-            dist/native-shell-win-${{ matrix.arch }}-setup.exe.sha256
           if-no-files-found: error
           retention-days: 1
 
@@ -1935,7 +1926,7 @@ jobs:
 
             Windows (x64, ARM64): Inno Setup installers (`*-setup.exe`) add user PATH and Windows Terminal profile integration; portable archives bundle `native-shell` with WinuxCmd and bash/sh shims.
 
-            Portable download guide (native-shell#470): prefer `*.tar.gz` — it is hardlink-native. The bundled payload ships real NTFS hardlinks (the whole `git.exe` family is one shared binary, `awk`/`gawk` likewise, exactly what `wpm install` lays down), so the tarball is roughly half the zip's download size and unpacks to a much smaller on-disk tree; `tar -xf <file>.tar.gz` works out of the box on Windows 10 1803+ and any modern Linux/macOS, and on a filesystem without hardlink support (FAT32/exFAT) extraction degrades gracefully to independent byte-identical copies with no loss of function. `*.7z` is the smallest download (solid LZMA already collapses the shared payloads) but current 7-Zip releases restore the shared families as independent copies — every file is byte-identical, only disk usage grows. The classic `*.zip` is unchanged, stores every payload in full, and remains for tooling that only speaks zip.
+            Portable download: `*.tar.gz` is the only portable archive shipped, and it is hardlink-native. The bundled payload ships real NTFS hardlinks (the whole `git.exe` family is one shared binary, `awk`/`gawk` likewise, exactly what `wpm install` lays down), so the tarball is roughly half the size of the equivalent zip and unpacks to a much smaller on-disk tree; `tar -xf <file>.tar.gz` works out of the box on Windows 10 1803+ and any modern Linux/macOS, and on a filesystem without hardlink support (FAT32/exFAT) extraction degrades gracefully to independent byte-identical copies with no loss of function (native-shell#470).
 
             Windows packages come with the must-install bundle pre-installed (native-shell#189, native-shell#209): native-git (native Windows git — the full plugin distro's five entries install through git, so a fresh machine without git.exe no longer fails `native-shell setup`), gawk 5.4.1 with plain `awk` working too, plus ripgrep (`rg`) and fd — landing in the bundled WinuxCmd root as wpm JSON-package payloads, while native-git is unpacked from the `JayWanX/native-git` release with the same flat layout. Everything is assembled at CI time with no runtime downloads, no runtime archive formats, and no symlinks. Pre-install is best-effort, not a promise: on legs where the package index has no matching artifact (currently native-git and gawk on the ARM64 builds; ripgrep and fd have ARM64 artifacts) the package ships WITHOUT that entry — run `winuxcmd wpm install <name>` once after installing to add it. The pre-install list and its recorded exclusions live in `scripts/release/preinstall.json`.
 
@@ -1948,11 +1939,14 @@ jobs:
             Every artifact was smoke-verified on the build OS of the job that produced it, before upload: `native-shell -c 'echo ok'`, `printf 'a\nb\n' | native-shell -c 'sort | head -1'`, an offline `NATIVE_SHELL_PLUGIN_SPEC=<empty> native-shell plugin sync --bootstrap` (exit 0, no output, no network), and a `native-shell --version` check against this tag and the engine revision.
 
             Integrity (native-shell#311): `SHA256SUMS` lists the SHA-256 of every shipped artifact, and each Windows installer has a `.sha256` sidecar beside it. `native-shell --self-update` verifies the installer against the sidecar before running it and aborts rather than execute anything it cannot verify. The same digests feed the winget manifest `InstallerSha256`.
+          # *.zip stays for the skill bundle only (native-shell-skill-v<ver>.zip);
+          # the Windows payload ships as *.tar.gz now. *.7z is no longer built for
+          # publication, so it must not be listed: fail_on_unmatched_files would
+          # otherwise abort the release.
           files: |
             artifacts/**/*.zip
             artifacts/**/*.exe
             artifacts/**/*.tar.gz
-            artifacts/**/*.7z
             artifacts/**/*.sha256
             SHA256SUMS
           fail_on_unmatched_files: true
