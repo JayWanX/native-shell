@@ -127,7 +127,7 @@ jobs:
           }
           git init ..\rubash
           if ($LASTEXITCODE -ne 0) { throw "git init ../rubash failed" }
-          git -C ..\rubash remote add origin https://github.com/unixwin/rubash.git
+          git -C ..\rubash remote add origin https://github.com/JayWanX/rubash.git
           git -C ..\rubash fetch --depth 1 origin $rev
           if ($LASTEXITCODE -ne 0) {
             throw "could not fetch the pinned rubash revision $rev; if rubash master was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)"
@@ -1121,7 +1121,7 @@ jobs:
             exit 1
           fi
           git init -q ../rubash
-          git -C ../rubash remote add origin https://github.com/unixwin/rubash.git
+          git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
           if ! git -C ../rubash fetch --depth 1 origin "$rev"; then
             echo "could not fetch the pinned rubash revision $rev; if rubash master was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
             exit 1
@@ -1327,7 +1327,7 @@ jobs:
             exit 1
           fi
           git init -q ../rubash
-          git -C ../rubash remote add origin https://github.com/unixwin/rubash.git
+          git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
           if ! git -C ../rubash fetch --depth 1 origin "$rev"; then
             echo "could not fetch the pinned rubash revision $rev; if rubash master was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
             exit 1
@@ -1562,7 +1562,7 @@ jobs:
             exit 1
           fi
           git init -q ../rubash
-          git -C ../rubash remote add origin https://github.com/unixwin/rubash.git
+          git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
           if ! git -C ../rubash fetch --depth 1 origin "$rev"; then
             echo "could not fetch the pinned rubash revision $rev; if rubash master was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
             exit 1
@@ -1730,7 +1730,7 @@ jobs:
             exit 1
           fi
           git init -q ../rubash
-          git -C ../rubash remote add origin https://github.com/unixwin/rubash.git
+          git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
           if ! git -C ../rubash fetch --depth 1 origin "$rev"; then
             echo "could not fetch the pinned rubash revision $rev; if rubash master was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
             exit 1
@@ -1948,7 +1948,7 @@ jobs:
           }
           git init ..\rubash
           if ($LASTEXITCODE -ne 0) { throw "git init ../rubash failed" }
-          git -C ..\rubash remote add origin https://github.com/unixwin/rubash.git
+          git -C ..\rubash remote add origin https://github.com/JayWanX/rubash.git
           git -C ..\rubash fetch --depth 1 origin $rev
           if ($LASTEXITCODE -ne 0) {
             throw "could not fetch the pinned rubash revision $rev; if rubash master was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)"

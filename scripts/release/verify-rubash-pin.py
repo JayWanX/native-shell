@@ -41,7 +41,7 @@ from pathlib import Path
 
 RELEASE_DIR = Path(__file__).resolve().parent
 RUBASH_PIN = RELEASE_DIR / "rubash-pin.json"
-RUBASH_REMOTE = "https://github.com/unixwin/rubash.git"
+RUBASH_REMOTE = "https://github.com/JayWanX/rubash.git"
 
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 
