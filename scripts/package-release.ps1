@@ -34,8 +34,41 @@ try {
     # linked), and degrading gracefully: on a filesystem without hardlink
     # support the copies simply stay copies, with a loud warning — every
     # downstream consumer (zip, setup.exe, smoke gates) is unaffected.
+    # Re-link byte-identical staged files as NTFS hardlinks so the shipped tree
+    # has the small on-disk footprint `wpm install` would have produced.
+    #
+    # This runs AFTER the Copy-Item sweep, which is what breaks the links in the
+    # first place: Copy-Item -Recurse materializes each name separately, so
+    # every hardlink family that existed in the pre-install root arrives here as
+    # independent copies with identical bytes. The hash grouping below is what
+    # puts them back together, so its correctness is load-bearing, not cosmetic.
+    #
+    # Reported per family on purpose. The previous version printed only totals,
+    # and a silently-unlinked payload (usr/bin/git.exe staying a second 5 MB
+    # copy of opt/git/mingw64/bin/git.exe) could not be told apart from a
+    # healthy run in the log. Failures throw unless -AllowUnlinked is passed,
+    # because a release that quietly doubles a payload is the bug this exists
+    # to prevent.
+    # Hardlink family of one file, as absolute paths. fsutil reports them
+    # relative to the volume root, so each entry is joined back to the drive.
+    function Get-StagedHardLinkPaths {
+        param([string]$Path)
+
+        $drive = (Get-Item -LiteralPath $Path).PSDrive.Root
+        foreach ($line in @(fsutil hardlink list $Path 2>$null)) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            Join-Path $drive ($line.Trim().TrimStart("\"))
+        }
+    }
+
     function Complete-StagedHardlinks {
-        param([string]$StageDir)
+        param(
+            [string]$StageDir,
+            [switch]$AllowUnlinked,
+            # Relative paths that MUST end up with >= 2 links (the flat-layout
+            # entries whose payload is also shipped beside them).
+            [string[]]$RequireLinked = @()
+        )
 
         $groups = @{}
         foreach ($file in (Get-ChildItem -LiteralPath $StageDir -Recurse -File)) {
@@ -49,28 +82,69 @@ try {
         $families = 0
         $links = 0
         $saved = [long]0
+        $failed = @()
         foreach ($group in $groups.Values) {
             if ($group.Count -lt 2) { continue }
-            $sorted = $group | Sort-Object { $_ }
+            $sorted = @($group | Sort-Object { $_ })
             $primary = $sorted[0]
             $primaryLength = (Get-Item -LiteralPath $primary).Length
             $families++
+            $familyLinks = 0
             foreach ($duplicate in ($sorted | Select-Object -Skip 1)) {
                 try {
                     New-Item -ItemType HardLink -Path $duplicate -Target $primary -Force -ErrorAction Stop | Out-Null
                     $links++
+                    $familyLinks++
                     $saved += $primaryLength
                 }
                 catch {
                     # No hardlink support on the staging volume (FAT32, some
-                    # network shares): ship the independent copies rather
-                    # than fail the release. The archives stay correct — the
-                    # tar.gz just stores full entries and keeps its unlinked
-                    # size.
-                    Write-Warning "hardlink for '$duplicate' failed ($($_.Exception.Message)); keeping an independent copy"
+                    # network shares). Degrading to independent copies keeps
+                    # the archive CORRECT - it only loses the size win - so it
+                    # is allowed explicitly, never silently.
+                    $failed += "$duplicate ($($_.Exception.Message))"
                 }
             }
+            $names = ($sorted | ForEach-Object { $_.Substring($StageDir.Length + 1) }) -join ", "
+            Write-Host ("Staged hardlink family ({0} files, {1:N1} MB each, {2} linked): {3}" -f `
+                $sorted.Count, ($primaryLength / 1MB), $familyLinks, $names)
         }
+
+        if ($failed.Count -gt 0) {
+            $detail = $failed -join "; "
+            if ($AllowUnlinked) {
+                Write-Warning "staged hardlinks: $($failed.Count) link(s) could not be created; keeping independent copies: $detail"
+            }
+            else {
+                throw "staged hardlinks: $($failed.Count) link(s) could not be created (FAT32/exFAT staging volume?); pass -AllowUnlinked to ship independent copies: $detail"
+            }
+        }
+
+        # A flat-layout entry must share storage with the payload beside it. If it
+        # does not, the two names are separate copies of the same bytes - exactly
+        # the duplication the tarball is shipped instead of a zip to avoid.
+        $unlinked = @()
+        foreach ($relative in $RequireLinked) {
+            $path = Join-Path $StageDir $relative
+            if (-not (Test-Path -LiteralPath $path)) { continue }
+            $count = @(Get-StagedHardLinkPaths $path).Count
+            if ($count -lt 2) {
+                $unlinked += "$relative ($count link)"
+            }
+            else {
+                Write-Host "Staged hardlink verified: $relative has $count links"
+            }
+        }
+        if ($unlinked.Count -gt 0) {
+            $detail = $unlinked -join "; "
+            if ($AllowUnlinked) {
+                Write-Warning "staged hardlinks: expected shared storage missing for $detail"
+            }
+            else {
+                throw "staged hardlinks: these entries do not share storage with their payload, so the package ships duplicate bytes: $detail"
+            }
+        }
+
         if ($families -gt 0) {
             Write-Host ("Staged hardlinks: {0} duplicate-content families re-linked ({1} links, {2} MB of duplicate payload bytes now shared)" -f `
                 $families, $links, [Math]::Round($saved / 1MB, 2))
@@ -287,7 +361,27 @@ try {
     # only share storage — so an unpacked tree is complete by construction:
     # no stand-in files, no manifests, no relink step for users.
     if (-not $SkipHardlinkArchives) {
-        Complete-StagedHardlinks -StageDir $stageDir
+        # Every entry under usr/bin whose same-named payload is also shipped
+        # under opt/ must share storage with it (a flat-layout package maps the
+        # payload file straight onto the entry). Derived from the staged tree
+        # rather than from preinstall.json so there is one source of truth: what
+        # the package actually contains.
+        $requireLinked = @()
+        $stageBin = Join-Path $stageDir "usr\bin"
+        $stageOpt = Join-Path $stageDir "opt"
+        if ((Test-Path -LiteralPath $stageBin) -and (Test-Path -LiteralPath $stageOpt)) {
+            $optByName = @{}
+            foreach ($optFile in (Get-ChildItem -LiteralPath $stageOpt -Recurse -File)) {
+                $key = $optFile.Name.ToLowerInvariant()
+                if (-not $optByName.ContainsKey($key)) { $optByName[$key] = $optFile.FullName }
+            }
+            foreach ($entry in (Get-ChildItem -LiteralPath $stageBin -File -Filter *.exe)) {
+                if ($optByName.ContainsKey($entry.Name.ToLowerInvariant())) {
+                    $requireLinked += "usr\bin\$($entry.Name)"
+                }
+            }
+        }
+        Complete-StagedHardlinks -StageDir $stageDir -RequireLinked $requireLinked
     }
 
     Compress-Archive -LiteralPath $stageDir -DestinationPath $zipPath -Force
