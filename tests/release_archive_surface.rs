@@ -4,12 +4,11 @@
 //! staged tree's hardlinks (wpm's own install layout — the whole `git.exe`
 //! family is one binary, `awk`/`gawk` likewise) are flattened by the
 //! Copy-Item staging sweep, and Compress-Archive then stored every copy in
-//! full. The fix ships two hardlink-native companions next to the unchanged
-//! zip: a `.tar.gz` (bsdtar records and restores NTFS hardlinks — measured
-//! 54.47 MB -> 29.63 MB on the v1.4.2 tree with the links re-linked after
-//! unpack) and a `.7z` (smallest download via solid compression, but
-//! measured 7-Zip 26.04 does not restore hardlinks, so it gates on content
-//! identity only).
+//! full. The Windows payload therefore ships as a `.tar.gz`, the only
+//! archive format measured to record AND restore NTFS hardlinks (bsdtar:
+//! 54.47 MB -> 29.63 MB on the v1.4.2 tree). The classic zip and the `.7z`
+//! are still produced inside the job as measured baselines — the release
+//! body compares their sizes — but neither is published.
 //!
 //! A placeholder-and-relink design (zero-byte stand-ins plus a manifest plus
 //! a rebuild script) was REJECTED by the owner: manual unzip breaks, wpm
@@ -82,11 +81,17 @@ fn packager_hardlink_alignment_is_content_neutral_and_loud_when_degraded() {
          corrupt the package"
     );
     // A volume without hardlink support degrades to copies with a warning,
-    // never a failed release and never a silent divergence.
+    // never a silent divergence — and only when the caller opted in: the
+    // default path THROWS, so a flattened package can never ship by accident.
     assert!(
-        text.contains("keeping an independent copy"),
+        text.contains("keeping independent copies"),
         "the alignment must warn loudly and keep copies when hardlinks are \
          unavailable (FAT32/network staging volumes)"
+    );
+    assert!(
+        text.contains("pass -AllowUnlinked to ship independent copies"),
+        "unlinked staging must fail closed by default: -AllowUnlinked is the \
+         only way to ship independent copies"
     );
 }
 
@@ -134,38 +139,42 @@ fn workflow_verifies_archive_round_trip_before_upload() {
 }
 
 #[test]
-fn workflow_uploads_and_hashes_both_companions() {
+fn workflow_publishes_exactly_one_windows_payload_format() {
     let text = release_workflow();
-    for needle in [
-        "dist/native-shell-v${{ steps.release.outputs.version }}-win-${{ matrix.arch }}.tar.gz",
-        "dist/native-shell-v${{ steps.release.outputs.version }}-win-${{ matrix.arch }}.7z",
-        "dist/native-shell-win-${{ matrix.arch }}.tar.gz",
-        "dist/native-shell-win-${{ matrix.arch }}.7z",
-    ] {
-        assert!(
-            text.contains(needle),
-            "release.yml must upload the archive asset and its latest-compatible \
-             alias: {needle}"
-        );
-    }
+    // The published payload: the hardlink-native tarball. A second portable
+    // format would be a second 30-60 MB download of the same tree.
+    let tar =
+        "dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.arch }}.tar.gz";
     assert!(
-        text.contains("-o -name '*.7z'"),
-        "SHA256SUMS must cover the .7z payload (native-shell#311: every shipped \
-         artifact is hashed)"
+        text.contains(tar),
+        "release.yml must upload the hardlink-native Windows tarball: {tar}"
     );
     assert!(
-        text.contains("artifacts/**/*.7z"),
-        "the GitHub release must attach the .7z assets"
+        !text.contains("artifacts/**/*.7z"),
+        "the .7z is a measured baseline inside the job, not a published asset \
+         (it stores the payload once but cannot restore the hardlinks)"
+    );
+    assert!(
+        !text.contains("dist/native-shell-win-${{ matrix.arch }}.tar.gz"),
+        "the version-less 'latest-compatible' asset aliases are gone: \
+         --self-update falls through to the versioned installer plus its \
+         .sha256 sidecar, so a second copy of every asset buys nothing"
+    );
+    assert!(
+        text.contains("-o -name '*.tar.gz'"),
+        "SHA256SUMS must cover the shipped tarballs (native-shell#311: every \
+         shipped artifact is hashed)"
     );
 }
 
 #[test]
-fn release_body_recommends_tar_gz_and_discloses_the_7z_limitation() {
+fn release_body_sells_the_tar_gz_and_discloses_the_7z_limitation() {
     let text = release_workflow();
     assert!(
-        text.contains("prefer `*.tar.gz` — it is hardlink-native"),
-        "the release body must steer users to the hardlink-native tar.gz \
-         (download size + on-disk footprint) — native-shell#470"
+        text.contains("`*.tar.gz` is the only portable archive shipped"),
+        "the release body must name the tarball as the ONE portable Windows \
+         format and say why it is hardlink-native (download size + on-disk \
+         footprint) — native-shell#470"
     );
     assert!(
         text.contains("degrades gracefully to independent byte-identical copies"),
@@ -173,9 +182,9 @@ fn release_body_recommends_tar_gz_and_discloses_the_7z_limitation() {
          without hardlink support (FAT32/exFAT)"
     );
     assert!(
-        text.contains("restore the shared families as independent copies"),
-        "the release body must disclose that 7-Zip does not restore the \
-         hardlinks (measured on 26.04) so the .7z choice is an informed one"
+        !text.contains("prefer `*.tar.gz` — it is hardlink-native"),
+        "the release body must not offer a CHOICE of portable formats any more: \
+         the zip and the .7z are neither published nor attached"
     );
 }
 
