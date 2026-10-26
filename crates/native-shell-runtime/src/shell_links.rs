@@ -30,6 +30,10 @@ const SHELL_FACES: [&str; 2] = ["bash.exe", "sh.exe"];
 #[cfg(not(windows))]
 const SHELL_FACES: [&str; 2] = ["bash", "sh"];
 
+/// The bundled command tree's directory name. One definition: root
+/// discovery, link planning and the packaging layout all read it here.
+pub const CMD_TREE: &str = "cmd";
+
 /// Directories that end up on a user's or an editor's PATH, relative to the
 /// installation root.
 const PATH_DIRECTORIES: [&str; 3] = ["bin", "cmd/bin", "cmd/usr/bin"];
@@ -69,16 +73,17 @@ const SHELL_BIN_NAME: &str = "native-shell.exe";
 #[cfg(not(windows))]
 const SHELL_BIN_NAME: &str = "native-shell";
 
-/// The installation root of a running shell: the directory that holds
-/// the shell binary next to the bundled `winuxcmd` tree. Falls back to the
-/// executable's own directory when nothing matches, so a portable layout
-/// simply reports the directories it does not have.
+/// The installation root of a running shell: the directory that holds the
+/// shell binary next to the bundled command tree (`cmd`, the directory the
+/// packaged layout ships under; it was `winuxcmd` before the rename).
+/// Falls back to the executable's own directory when nothing matches, so a
+/// portable layout simply reports the directories it does not have.
 pub fn find_installation_root(exe: &Path) -> PathBuf {
     let start = exe.parent().map(Path::to_path_buf).unwrap_or_default();
     let mut current = Some(start.clone());
     let mut level = 0;
     while let Some(directory) = current {
-        if directory.join(SHELL_BIN_NAME).is_file() && directory.join("winuxcmd").is_dir() {
+        if directory.join(SHELL_BIN_NAME).is_file() && directory.join(CMD_TREE).is_dir() {
             return directory;
         }
         if level >= MAX_ROOT_ANCESTORS {
@@ -287,13 +292,13 @@ mod tests {
     #[test]
     fn installation_root_is_found_from_a_hardlinked_entry_name() {
         let root = unique_temp_dir("root-from-link");
-        std::fs::create_dir_all(root.join("winuxcmd").join("usr").join("bin")).unwrap();
+        std::fs::create_dir_all(root.join(CMD_TREE).join("usr").join("bin")).unwrap();
         std::fs::create_dir_all(root.join("bin")).unwrap();
         std::fs::write(root.join(SHELL_BIN_NAME), b"native-shell payload").unwrap();
         std::fs::write(root.join("cmd/usr/bin/native-cmd.exe"), b"dispatcher").unwrap();
 
         // Reached as the real binary, from the PATH entry directory, and from
-        // inside the winuxcmd tree: all three report the installation root.
+        // inside the command tree: all three report the installation root.
         for exe in [
             root.join(SHELL_BIN_NAME),
             root.join("bin").join(SHELL_FACES[0]),
@@ -302,7 +307,8 @@ mod tests {
             assert_eq!(find_installation_root(&exe), root, "{}", exe.display());
         }
 
-        // A tree without a bundled winuxcmd reports the executable's directory.
+        // A tree without a bundled command directory reports the executable's
+        // own directory.
         let portable = unique_temp_dir("root-portable");
         let portable_niu = portable.join(SHELL_BIN_NAME);
         std::fs::write(&portable_niu, b"native-shell payload").unwrap();
@@ -315,7 +321,7 @@ mod tests {
     #[test]
     fn resolved_shell_path_names_the_real_shell_not_the_face() {
         let root = unique_temp_dir("resolved-shell-path");
-        std::fs::create_dir_all(root.join("winuxcmd").join("usr").join("bin")).unwrap();
+        std::fs::create_dir_all(root.join(CMD_TREE).join("usr").join("bin")).unwrap();
         std::fs::create_dir_all(root.join("bin")).unwrap();
         std::fs::write(root.join(SHELL_BIN_NAME), b"native-shell payload").unwrap();
         std::fs::write(root.join("cmd/usr/bin/native-cmd.exe"), b"dispatcher").unwrap();
@@ -355,8 +361,8 @@ mod tests {
         let cases: &[&[&str]] = &[
             &["bin", SHELL_FACES[0]],
             &["bin", SHELL_FACES[1]],
-            &["winuxcmd", "bin", SHELL_FACES[0]],
-            &["winuxcmd", "usr", "bin", SHELL_FACES[1]],
+            &[CMD_TREE, "bin", SHELL_FACES[0]],
+            &[CMD_TREE, "usr", "bin", SHELL_FACES[1]],
         ];
         for relative in cases {
             let expected = relative

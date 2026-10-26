@@ -122,7 +122,7 @@ Name: "{group}\Native Shell"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{%US
 Name: "{autodesktop}\Native Shell"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{%USERPROFILE}"; IconFilename: "{app}\assets\native-shell-icon.ico"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\cmd\usr\bin\native-cmd.exe"; Parameters: "wpm links rebuild --root ""{app}\winuxcmd"" --force"; WorkingDir: "{app}\cmd\usr\bin"; StatusMsg: "Activating WinuxCmd command links..."; Flags: runhidden waituntilterminated
+Filename: "{app}\cmd\usr\bin\native-cmd.exe"; Parameters: "wpm links rebuild --root ""{app}\cmd"" --force"; WorkingDir: "{app}\cmd\usr\bin"; StatusMsg: "Activating WinuxCmd command links..."; Flags: runhidden waituntilterminated
 ; JayWanX/native-shell#468: `wpm links rebuild` reconciles only what `.wpm` state
 ; and the builtin applet table declare, and the bundled install ships no
 ; .wpm state — so the package shims (usr\bin\awk.exe, gawk.exe) are outside

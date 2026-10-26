@@ -1194,7 +1194,7 @@ fn sourced_rc_keeps_winuxcmd_visible_to_windows_children() {
     let temp = unique_temp_dir("native-shell-host-winuxcmd-child-path");
     let home = temp.join("home");
     let start = temp.join("start");
-    let bin = temp.join("winuxcmd");
+    let bin = temp.join("cmd");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&start).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
@@ -1970,10 +1970,8 @@ fn real_winuxcmd_for_test() -> Option<PathBuf> {
             [
                 repo_root.join("WinuxCmd/build-vs/native-cmd.exe"),
                 repo_root.join("WinuxCmd/build-vs-release/native-cmd.exe"),
-                repo_root
-                    .join("native_shell/dist/native_shell-v0.7.1-win-x64/winuxcmd/native-cmd.exe"),
-                repo_root
-                    .join("native_shell/dist/native_shell-v0.7.0-win-x64/winuxcmd/native-cmd.exe"),
+                repo_root.join("native_shell/dist/native_shell-v0.7.1-win-x64/cmd/native-cmd.exe"),
+                repo_root.join("native_shell/dist/native_shell-v0.7.0-win-x64/cmd/native-cmd.exe"),
             ]
             .into_iter()
             .find(|path| winuxcmd_test_path_has_command_links(path))
@@ -2046,11 +2044,11 @@ fn shell_faces_do_not_expose_product_verbs_and_name_the_real_shell() {
     let temp = unique_temp_dir("native_shell-host-face-product-verbs");
     let home = temp.join("home");
     let bin = temp.join("bin");
-    // A minimal installation: the shell next to a bundled winuxcmd tree, and
+    // A minimal installation: the shell next to a bundled command tree, and
     // the face hardlinked (copied, portably) into the PATH entry directory.
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
-    std::fs::create_dir_all(temp.join("winuxcmd").join("usr").join("bin")).unwrap();
+    std::fs::create_dir_all(temp.join("cmd").join("usr").join("bin")).unwrap();
     let native_shell_bin = temp.join(if cfg!(windows) {
         "native-shell.exe"
     } else {

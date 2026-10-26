@@ -966,7 +966,7 @@ fn dirs_shim_candidate() -> std::path::PathBuf {
         .unwrap_or_default()
         .join("Programs")
         .join("NativeShell")
-        .join("winuxcmd")
+        .join("cmd")
         .join("usr")
         .join("bin")
         .join("native-cmd-shim.exe")

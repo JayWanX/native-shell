@@ -25,8 +25,7 @@ struct WinuxCmdSearchReport {
     /// knows the layout it describes, so nothing has to probe the filesystem:
     /// `<root>\usr\bin\native-cmd.exe`, `<root>\native-cmd.exe` and
     /// `<root>\bin\native-cmd.exe` (the PATH entry link) all imply their own
-    /// root, while `<x>\cmd\usr\bin\native-cmd.exe` implies
-    /// `<x>\winuxcmd`.
+    /// root, while `<x>\cmd\usr\bin\native-cmd.exe` implies `<x>\cmd`.
     root: Option<PathBuf>,
     checked: Vec<String>,
 }
@@ -981,7 +980,9 @@ mod tests {
                 candidate.path == PathBuf::from(r"C:\tools\cmd\usr\bin\native-cmd.exe")
             })
             .expect("the installation one level up must be a candidate");
-        assert_eq!(found.root, PathBuf::from(r"C:\tools\winuxcmd"));
+        // The entry directory's parent IS the bundled tree: this is the shape
+        // where the PATH entry link must not be mistaken for the root.
+        assert_eq!(found.root, PathBuf::from(r"C:\tools\cmd"));
 
         // A package payload deep in the tree still reaches the bundled tree.
         let from_payload =
@@ -999,17 +1000,17 @@ mod tests {
                 candidate.path == PathBuf::from(r"C:\apps\NativeShell\cmd\usr\bin\native-cmd.exe")
             })
             .expect("the bundled tree must be a candidate");
-        assert_eq!(bundled.root, PathBuf::from(r"C:\apps\NativeShell\winuxcmd"));
+        assert_eq!(bundled.root, PathBuf::from(r"C:\apps\NativeShell\cmd"));
     }
 
     #[test]
     fn injected_path_dirs_cover_the_installation_root() {
-        let root = Path::new(r"C:\tools\winuxcmd");
+        let root = Path::new(r"C:\tools\cmd");
         let expected = vec![
             PathBuf::from(r"C:\tools\cmd\usr/local/bin"),
             PathBuf::from(r"C:\tools\cmd\usr/bin"),
             PathBuf::from(r"C:\tools\cmd\bin"),
-            PathBuf::from(r"C:\tools\winuxcmd"),
+            PathBuf::from(r"C:\tools\cmd"),
         ];
         // The canonical location, the PATH entry link (whose parent is `bin`),
         // and a copy that a package placed elsewhere in the tree all inject the
@@ -1087,7 +1088,7 @@ mod tests {
     #[test]
     fn search_order_finds_nested_bundle_when_sibling_missing() {
         let exe_dir = unique_temp_dir("winuxcmd-search-nested");
-        let nested_dir = exe_dir.join("winuxcmd");
+        let nested_dir = exe_dir.join("cmd");
         std::fs::create_dir_all(&nested_dir).unwrap();
         let nested = nested_dir.join("native-cmd.exe");
         std::fs::write(&nested, b"").unwrap();
@@ -1160,15 +1161,17 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn path_prepend_deduplicates_windows_equivalent_entries() {
-        let current = "C:/Other;c:\\tools\\cmd\\;D:/Bin";
+        // Same directory spelled with another separator, another case, and a
+        // trailing separator: it must be dropped, not prepended twice.
+        let current = "C:/Other;c:\\tools\\Cmd\\;D:/Bin";
 
         assert_eq!(
-            path_with_dir_prepended(current, "C:/Tools/WinuxCmd"),
-            "C:/Tools/WinuxCmd;C:/Other;D:/Bin"
+            path_with_dir_prepended(current, "C:/Tools/Cmd"),
+            "C:/Tools/Cmd;C:/Other;D:/Bin"
         );
         assert!(path_starts_with_dir(
             "c:\\tools\\cmd\\;C:/Other",
-            "C:/Tools/WinuxCmd"
+            "C:/Tools/Cmd"
         ));
     }
 

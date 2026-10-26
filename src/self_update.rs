@@ -240,7 +240,14 @@ fn active_install_dir() -> Option<PathBuf> {
 fn install_root_for_executable(executable: &Path) -> Option<PathBuf> {
     let mut candidate = executable.parent()?.to_path_buf();
     for _ in 0..5 {
-        if candidate.join("native-shell.exe").is_file() && candidate.join("winuxcmd").is_dir() {
+        // The bundled command tree is `cmd` (it was `winuxcmd` before the
+        // rename); it is the marker that separates an installation root from
+        // the PATH entry directory the shell is also hardlinked into.
+        if candidate.join("native-shell.exe").is_file()
+            && candidate
+                .join(native_shell_runtime::shell_links::CMD_TREE)
+                .is_dir()
+        {
             return Some(candidate);
         }
         candidate = candidate.parent()?.to_path_buf();
@@ -1271,9 +1278,12 @@ mod tests {
             "native-shell-self-update-root-test-{}",
             std::process::id()
         ));
-        let shim = root.join("winuxcmd").join("bin").join("sh.exe");
+        let shim = root
+            .join(native_shell_runtime::shell_links::CMD_TREE)
+            .join("bin")
+            .join("sh.exe");
         std::fs::create_dir_all(shim.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(root.join("winuxcmd")).unwrap();
+        std::fs::create_dir_all(root.join(native_shell_runtime::shell_links::CMD_TREE)).unwrap();
         std::fs::write(root.join("native-shell.exe"), b"MZ").unwrap();
         std::fs::write(&shim, b"MZ").unwrap();
 
