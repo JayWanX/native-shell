@@ -207,30 +207,33 @@ not the one we happened to run):
   path differs from the first one), so the floor contract asserts on
   every consecutive fresh terminal.
 
-### Follow-up: the perfbudget gate ships now (wt87 continuation)
+### Follow-up: the per-asset budget trend runs nightly (wt87 continuation)
 
 Release run 37224044818's perfbudget job died BEFORE timing:
 `git fetch --depth 1 origin abf8461` → `couldn't find remote ref` — a
 fetch REFSPEC is resolved server-side as a ref NAME, so the abbreviated
-pins could never fetch. The checkout step now:
+pins could never fetch. The gate is now the `perfbudget-trend` job in
+`ci.yml` (nightly), and its checkout step:
 
-- pins the FULL 40-char object ids
+- pins the FULL 40-char object ids in one table
   (`abf846186ab0a8a41ec5888e827ece6277dfe446`,
   `4725d29db8c0ac8c21df47664b28539f3b8fce94` — verified against the
-  local baseline trees and the GitHub API);
-- retries 5× with backoff, honoring `GIT_PERF_FALLBACK_PROXY` on the
-  final attempt (local operators with a dead global proxy; CI runs
-  direct like every other job);
+  local baseline trees and the GitHub API) that also drives the
+  `--omb`/`--bash-it` argument vector, so a pin and its flag cannot
+  drift apart;
+- retries 5× with backoff;
 - **fails open with a loud label** on total transport failure: the
   missing source is skipped (empty `--omb`/`--bash-it` = source
-  disabled in asset-timing.py) and the verdict artifact carries
+  disabled in asset-timing.py) and the artifact carries
   `SKIPPED-<source>.txt` plus a workflow warning — a flap must not kill
   the gate before it measures, and a skip must never look like a
   measurement;
 - **records per-source fetch latency** into
-  `perfbudget-artifacts/fetch-latency.json` (seconds, attempts, ok) —
-  the fetch feeding the measurement was historically invisible, and
-  that invisibility is how the 6s incident shipped.
+  `perfbudget-trend/fetch-latency.json` (seconds, attempts, ok) — the
+  fetch feeding the measurement was historically invisible, and that
+  invisibility is how the 6s incident shipped;
+- creates its artifact directory before the first network call, so the
+  upload always has a record even when a fetch died.
 
 ### Ship evidence: the 6s source fix is in the 1.3.4 binary
 
@@ -485,25 +488,20 @@ verdicts appear in the same
 registered KNOWN-FAIL labels (e.g. `wt80-undo-receipt-ambiguous-theme`)
 and never pass silently.
 
-## How the gate blocks release
+## How the gate is run
 
-`.github/workflows/release.yml` has a `journey` job that runs on
-`windows-2025`: it resolves the release tag, **preserves the current
-`scripts/journey/` from master, checks out the tag's own source, builds
-`native-shell.exe` fresh inside the job** (stale-binary discipline — the artifact
-is never reused), installs `pywinpty`/`pyte`, and runs the journey. The
-`release` job declares `needs: [build-windows, journey]`, so no GitHub
-Release is published while the journey is red. The verdict and the full
-transcripts upload as the `journey-verdict` artifact (always, even on
-failure — 14-day retention) so a red gate can be diagnosed from the run
-page alone.
+The gate is operator-driven, not a release-workflow job: build the binary,
+then run `python scripts/journey/golden-journey.py <binary>` on the
+machine that can drive a real ConPTY (see the invocation below). A red
+verdict blocks the release by policy — the owner does not cut a tag over
+one — and the verdict plus the raw transcripts are the artifact you
+attach to the release PR.
 
-The "preserve current gate, checkout old tag" step mirrors the packager
-preservation in `build-windows`: a `workflow_dispatch` release of an old
-tag must be gated by the *current* journey while building that tag's own
-source. (A genuinely old tag may lack strings the current gate waits for;
-the gate failing on an ancient tag is honest — release it only if you
-mean it.)
+The old `journey` job was deleted from `.github/workflows/release.yml`
+along with the rest of the release-time simulation lanes: it re-built the
+whole binary and re-ran the interactive journey inside the publishing
+pipeline. Keep the harness current here instead; the runbook's ignition
+sequence treats the journey as a pre-flight box.
 
 ## How to add a step
 
