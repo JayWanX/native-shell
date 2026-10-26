@@ -4,7 +4,7 @@
 `scripts/release/rubash-pin.json` is release *policy* (rubash#827, conclusion
 B): every release job fetches exactly the pinned commit into ../rubash and
 refuses to build anything else, so a release can no longer compile "whatever
-rubash master HEAD was at build time" (the v1.4.0 defect: run 38506862578
+rubash main HEAD was at build time" (the v1.4.0 defect: run 38506862578
 compiled e785c3c8f610 while the era declared rubash v1.4.0 = f69e7900).
 
 This is the standalone auditor for that pin. It checks one checkout against
