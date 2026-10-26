@@ -11,8 +11,8 @@ rules and the failure catalog earned by the v1.4.0 ignition campaign
    checks out the tree the tag points at. Every product fix merged after
    the tag was cut is silently absent from the build — runs 1-5 of
    v1.4.0 all died on this one mistake in different costumes (missing
-   tag, stale journey scripts, stale pins, missing self-check file).
-   Sequence: merge everything → confirm `origin/master` SHA → cut the
+   tag, stale gate scripts, stale pins, missing self-check file).
+   Sequence: merge everything → confirm `origin/main` SHA → cut the
    tag on that SHA → push. The `release-tags-are-immutable` ruleset
    (#425, docs/release-tag-ruleset.md) rejects moving or deleting a
    pushed `v*` tag for everyone except org admins, so the old
@@ -23,12 +23,11 @@ rules and the failure catalog earned by the v1.4.0 ignition campaign
    unchanged tag, dispatch the workflow (iron rule 5); a tag that
    points at the wrong commit is corrected forward as the next patch
    version, not rewritten.
-3. **The gate scripts ride `origin/master`, not the tag.** The journey
-   job (`git checkout origin/master -- scripts/journey`) and the
-   perfbudget job (`-- scripts/perf`) deliver their current scripts by
-   git pathspec after checking out the tag. A gate-only fix therefore
-   needs only a master merge — but if ANY product-tree file changed,
-   re-cut the tag anyway (rule 1).
+3. **The tag is the only gate input.** No job checks out gate scripts
+   from a branch: every job builds and measures exactly the tree the tag
+   points at, so a gate fix reaches a release only through a new tag.
+   Change any product-tree, script, or gate file → re-cut the tag
+   (rule 1).
 4. **A lightweight tag is fine** (the release body is hardcoded in the
    workflow template; nothing reads the annotation), but the tag NAME
    must match `^v\d+\.\d+\.\d+$` AND the `Cargo.toml` `version` at that
@@ -46,7 +45,7 @@ rules and the failure catalog earned by the v1.4.0 ignition campaign
 
 ## Pre-flight checklist (all boxes before cutting the tag)
 
-- [ ] `origin/master` CI green (build-and-test, both repos if rubash
+- [ ] `origin/main` CI green (build-and-test, both repos if rubash
       moved — native-shell vendors rubash via `[patch]` + git dependency,
       and its lockfile must carry the matching rubash version; see the
       2026-10-10 lock incident: bump rubash version → one-line lock
@@ -73,8 +72,8 @@ rules and the failure catalog earned by the v1.4.0 ignition campaign
 ## Ignition sequence
 
 ```sh
-# 0. everything merged, origin/master = <sha>, CI green
-gh api repos/JayWanX/native-shell/commits/master --jq .sha   # note <sha>
+# 0. everything merged, origin/main = <sha>, CI green
+gh api repos/JayWanX/native-shell/commits/main --jq .sha   # note <sha>
 
 # 1. cut the tag — one shot: the ruleset rejects moving a pushed v* tag
 git ls-remote --tags origin vX.Y.Z   # must be EMPTY before you push
@@ -89,39 +88,35 @@ git push origin vX.Y.Z        # this push IS the trigger
 gh run list --repo JayWanX/native-shell --workflow=release.yml --limit 1
 ```
 
-Expected wall time ~45-60 min (perfbudget alone measured 2351 s on run
-38489787748; the journey lane and the timing lane build concurrently).
+Expected wall time ~10-15 min: the pipeline builds six targets and
+publishes. No timing or journey lane runs inside it any more — the
+per-asset budget trend is the nightly `perfbudget-trend` job in ci.yml.
 
 ## The gates and what their artifacts say
 
 | Gate | Reads | Blocks on | Artifact |
 | --- | --- | --- | --- |
 | smoke (per build job) | the binary it just built | any of the 4 checks | job log |
-| golden user journey | `scripts/journey` from origin/master | any unlabeled FAIL verdict (`test_verdict_exit.py` pins the contract: known-fail exits 0, unknown fail exits 1) | `journey-verdict` (verdict.json + raw transcripts) |
-| per-asset timing | `scripts/perf` from origin/master | verdict `hard-fail`/`timeout` (past the hard cap); `over` inside the hard band is a printed warning, NOT a blocker (2026-10-14 calibration, #335/#337 — revert #337 to restore fail-on-over) | `perfbudget-verdict` (asset-timing.json) |
+| staged-package verify (windows) | the tree the job just packaged | a shim that does not run, a missing payload, a broken hardlink family | job log |
+| pre-install verify (windows) | every pre-installed package | a package that installed but does not run | job log |
 
-Journey failure triage: download `journey-verdict`, read
-`verdict.json` → `steps[]` → `assertions[]` with `ok: false`. The raw
-transcripts are the truth when a screen-shape assertion looks wrong —
-the pyte viewport is a SAMPLE of a live ConPTY repaint, not an instant
-(P8-S4's emptied signature, run 38489787748: the theme had rendered;
-a partial repaint left the top row's letterless filler as the newest
-row and the old single-instant extractor broke on it — #334/#336 made
-the extractor sample and compare block shape).
+The release pipeline runs no timing or user-journey gate. The per-asset
+budget trend is the nightly `perfbudget-trend` job in ci.yml: it records
+`asset-timing.json` + `fetch-latency.json`, and fails OPEN with a
+`SKIPPED-<source>.txt` label when a pinned asset source cannot be
+fetched (a skip must never look like a measurement).
 
 ## Failure catalog (v1.4.0 campaign — check here first)
 
 | Symptom | Root cause | Fix |
 | --- | --- | --- |
-| checkout/journey fails on files that exist on master | tag cut before fixes merged (iron rule 1) | cut the NEXT patch tag on master — the pushed tag is immutable (#425) |
+| checkout fails on files that exist on main | tag cut before fixes merged (iron rule 1) | cut the NEXT patch tag on main — the pushed tag is immutable (#425) |
 | `Invalid release tag` on dispatch | the `tag` input disagrees with `Cargo.toml` | leave it empty |
 | preinstall verify throw, native-git missing | wpm index updated, `preinstall.json` pin not | sync the pin |
 | crates publish "secret not found" | secret name mismatch | map `CRATES_IO_TOKEN` |
 | crates "already uploaded" on retry | expected — tolerated by pattern in release.yml | no-op |
 | armv7 "linker not found" | NDK r19+ name is `armv7a-linux-androideabi*-clang` | #327, keep |
-| journey `SyntaxWarning` / script missing | tag-tree vs master delivery drift | #330/#333 pathspec delivery, keep |
-| P8-S4 signature emptied | harness sampling artifact, not product | #336 sampling extractor, keep |
-| perfbudget FAIL with all overs ≤1.05x | soft band = concurrent-lane load | #337: soft over warns |
+| `perfbudget-trend` FAIL with all overs ≤1.05x | soft band = runner load | #337: soft over warns (nightly job only) |
 
 ## After green (the downstream chain, in order)
 

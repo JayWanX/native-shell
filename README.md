@@ -98,12 +98,12 @@ nvm.sh go through the same harness with per-phase timings on record
 ([baseline](scripts/perf/baselines/asset-timing-baseline.json),
 [snapshot](scripts/harvest/snapshots/wt92-local-20261005/)).
 
-**A release cannot ship slow.** Every asset in
+**A slow theme shows up within a day.** Every asset in
 [budgets.toml](scripts/perf/budgets.toml) carries a measured budget
 (healthy themes re-render in 11-35 ms; the budget line is 120 ms; 5x over
-budget is a hard fail). The
-[release pipeline](.github/workflows/release.yml) runs the `perfbudget`
-gate and fails the release on a breach; a nightly run watches the trend.
+budget is a hard fail). The nightly `perfbudget-trend` job in
+[ci.yml](.github/workflows/ci.yml) re-measures every asset against the
+committed baseline and records the full per-asset trend.
 
 The GNU Bash upstream golden-suite record belongs here too; it returns
 once the fix currently in flight lands.

@@ -101,7 +101,7 @@ jobs:
           fetch-depth: 0
 
       # rubash#827 (conclusion B): the engine source is PINNED, never
-      # "whatever rubash master HEAD was at clone time" -- that float is how
+      # "whatever rubash main HEAD was at clone time" -- that float is how
       # v1.4.0 (run 38506862578) compiled e785c3c8f610 while the release era
       # declared rubash v1.4.0 (f69e7900). The pin
       # (scripts/release/rubash-pin.json) names a full 40-char commit; this step fetches
@@ -130,7 +130,7 @@ jobs:
           git -C ..\rubash remote add origin https://github.com/JayWanX/rubash.git
           git -C ..\rubash fetch --depth 1 origin $rev
           if ($LASTEXITCODE -ne 0) {
-            throw "could not fetch the pinned rubash revision $rev; if rubash master was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)"
+            throw "could not fetch the pinned rubash revision $rev; if rubash main was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)"
           }
           git -C ..\rubash checkout --quiet FETCH_HEAD
           if ($LASTEXITCODE -ne 0) { throw "could not check out the pinned rubash revision $rev" }
@@ -1197,7 +1197,7 @@ jobs:
           git init -q ../rubash
           git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
           if ! git -C ../rubash fetch --depth 1 origin "$rev"; then
-            echo "could not fetch the pinned rubash revision $rev; if rubash master was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
+            echo "could not fetch the pinned rubash revision $rev; if rubash main was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
             exit 1
           fi
           git -C ../rubash checkout --quiet FETCH_HEAD
@@ -1403,7 +1403,7 @@ jobs:
           git init -q ../rubash
           git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
           if ! git -C ../rubash fetch --depth 1 origin "$rev"; then
-            echo "could not fetch the pinned rubash revision $rev; if rubash master was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
+            echo "could not fetch the pinned rubash revision $rev; if rubash main was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
             exit 1
           fi
           git -C ../rubash checkout --quiet FETCH_HEAD
@@ -1621,7 +1621,7 @@ jobs:
       # exactly scripts/release/rubash-pin.json's commit into ../rubash, where
       # the [patch] path override takes over, and die on any mismatch. This
       # leg uploads nothing to the release, but what it compiles must still be
-      # a named revision, not build-minute master HEAD.
+      # a named revision, not build-minute main HEAD.
       - name: Checkout pinned rubash revision
         id: rubash-pin
         run: |
@@ -1638,7 +1638,7 @@ jobs:
           git init -q ../rubash
           git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
           if ! git -C ../rubash fetch --depth 1 origin "$rev"; then
-            echo "could not fetch the pinned rubash revision $rev; if rubash master was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
+            echo "could not fetch the pinned rubash revision $rev; if rubash main was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
             exit 1
           fi
           git -C ../rubash checkout --quiet FETCH_HEAD
@@ -1789,7 +1789,7 @@ jobs:
       # exactly scripts/release/rubash-pin.json's commit into ../rubash, where
       # the [patch] path override takes over, and die on any mismatch. This
       # leg uploads nothing to the release, but what it compiles must still be
-      # a named revision, not build-minute master HEAD.
+      # a named revision, not build-minute main HEAD.
       - name: Checkout pinned rubash revision
         id: rubash-pin
         run: |
@@ -1806,7 +1806,7 @@ jobs:
           git init -q ../rubash
           git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
           if ! git -C ../rubash fetch --depth 1 origin "$rev"; then
-            echo "could not fetch the pinned rubash revision $rev; if rubash master was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
+            echo "could not fetch the pinned rubash revision $rev; if rubash main was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
             exit 1
           fi
           git -C ../rubash checkout --quiet FETCH_HEAD
@@ -1959,7 +1959,7 @@ jobs:
           body: |
             NativeShell ${{ needs.resolve-tag.outputs.tag }} packages for Windows, Linux, and macOS.
 
-            Engine: rubash git ${{ needs.build-windows.outputs.rubash_revision }} — every platform build in this release compiled that same revision, pinned by `scripts/release/rubash-pin.json` and fail-hard verified at fetch time (rubash#827). The release compiles the pinned engine, not "whatever rubash master was when the pipeline ran".
+            Engine: rubash git ${{ needs.build-windows.outputs.rubash_revision }} — every platform build in this release compiled that same revision, pinned by `scripts/release/rubash-pin.json` and fail-hard verified at fetch time (rubash#827). The release compiles the pinned engine, not "whatever rubash main was when the pipeline ran".
             Verify locally with `native-shell --version`, which prints the same revision.
 
             Windows (x64, ARM64): Inno Setup installers (`*-setup.exe`) add user PATH and Windows Terminal profile integration; portable archives bundle `native-shell` with WinuxCmd and bash/sh shims.
@@ -2028,7 +2028,7 @@ jobs:
           git -C ..\rubash remote add origin https://github.com/JayWanX/rubash.git
           git -C ..\rubash fetch --depth 1 origin $rev
           if ($LASTEXITCODE -ne 0) {
-            throw "could not fetch the pinned rubash revision $rev; if rubash master was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)"
+            throw "could not fetch the pinned rubash revision $rev; if rubash main was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)"
           }
           git -C ..\rubash checkout --quiet FETCH_HEAD
           if ($LASTEXITCODE -ne 0) { throw "could not check out the pinned rubash revision $rev" }

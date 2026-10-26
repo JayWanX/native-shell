@@ -68,7 +68,7 @@ of the script — the API object is the reviewable artifact.
 
 ## Operator impact
 
-- **A tag push is one-shot.** Confirm `origin/master` is final before
+- **A tag push is one-shot.** Confirm `origin/main` is final before
   pushing `vX.Y.Z`; there is no delete-and-re-push without an admin
   bypass. The release runbook's ignition sequence was updated for this
   (docs/release-runbook.md).

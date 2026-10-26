@@ -7,12 +7,10 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - master
-      - "rewrite/**"
+      - main
   pull_request:
     branches:
-      - master
-      - "rewrite/**"
+      - main
 
 env:
   CARGO_TERM_COLOR: always
@@ -51,7 +49,7 @@ jobs:
           components: rustfmt
 
       # No `cargo update -p rubash` here on purpose: under the [patch] path
-      # override the sibling clone above IS latest master (the lock's git rev
+      # override the sibling clone above IS latest main (the lock's git rev
       # never participates in compilation), and a re-resolution of the rubash
       # subtree rewires transitive windows-sys refs (0.61.2 -> 0.59/0.48) in
       # a way that drops the patched crate's target-specific windows-sys
@@ -122,7 +120,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       # Same as build-and-test: no `cargo update -p rubash` under the
-      # [patch] override -- the sibling clone is already latest master and
+      # [patch] override -- the sibling clone is already latest main and
       # the subtree re-resolution breaks windows-sys feature resolution.
 
       - name: cargo check (unix acceptance line)
@@ -179,7 +177,7 @@ jobs:
           target: ${{ matrix.target }}
 
       # Same as the other jobs: no `cargo update -p rubash` under the
-      # [patch] override -- the sibling clone is already latest master.
+      # [patch] override -- the sibling clone is already latest main.
 
       - name: cargo check --target ${{ matrix.target }}
         run: cargo check --workspace --locked --target ${{ matrix.target }}
@@ -222,7 +220,7 @@ jobs:
           target: x86_64-unknown-linux-musl
 
       # No `cargo update -p rubash` under the [patch] override, same as the
-      # other jobs: the sibling clone is already latest master.
+      # other jobs: the sibling clone is already latest main.
 
       - name: Pin rubash revision
         id: rubash
@@ -334,31 +332,78 @@ jobs:
       - name: Install perfbudget dependencies
         run: pip install pywinpty pyte
 
-      # Same pinned revisions as the release gate and the committed baseline
-      # (scripts/perf/baselines/asset-timing-baseline.json) — bumping a pin
-      # requires re-recording the baseline in the same change.
+      # Bumping a pin requires re-recording the baseline in the same change.
       - name: Checkout pinned asset sources
         shell: pwsh
         run: |
-          git init ..\oh-my-bash
-          git -C ..\oh-my-bash remote add origin https://github.com/ohmybash/oh-my-bash
-          git -C ..\oh-my-bash fetch --depth 1 origin abf8461
-          git -C ..\oh-my-bash checkout --quiet FETCH_HEAD
-          git init ..\bash-it
-          git -C ..\bash-it remote add origin https://github.com/Bash-it/bash-it
-          git -C ..\bash-it fetch --depth 1 origin 4725d29
-          git -C ..\bash-it checkout --quiet FETCH_HEAD
-
-      - name: Run the per-asset timing budget gate
-        shell: pwsh
-        run: |
-          python scripts/perf/asset-timing.py `
-            --native-shell (Resolve-Path target/release/native-shell.exe) `
-            --omb (Resolve-Path ..\oh-my-bash) `
-            --bash-it (Resolve-Path ..\bash-it) `
-            --run-dir "$env:RUNNER_TEMP\perfbudget-run" `
-            --compare-baseline scripts/perf/baselines/asset-timing-baseline.json `
-            --out perfbudget-trend/asset-timing.json
+          $ErrorActionPreference = "Stop"
+          $dest = "perfbudget-trend"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          # The pins are FULL 40-char object ids: git resolves a fetch refspec
+          # server-side as a ref NAME, so an abbreviated pin fails before the
+          # gate measures anything ("couldn't find remote ref abf8461").
+          # Last-fetched revision, kept in sync with the committed baseline
+          # (scripts/perf/baselines/asset-timing-baseline.json).
+          $pins = @(
+            @{ source = "oh-my-bash"; owner = "ohmybash"; repo = "oh-my-bash"; flag = "--omb"; dest = "..\oh-my-bash"; pin = "abf846186ab0a8a41ec5888e827ece6277dfe446" },
+            @{ source = "bash-it"; owner = "Bash-it"; repo = "bash-it"; flag = "--bash-it"; dest = "..\bash-it"; pin = "4725d29db8c0ac8c21df47664b28539f3b8fce94" }
+          )
+          $fetchLatency = @{}
+          $usable = @{}
+          foreach ($p in $pins) {
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $ok = $false
+            $attempts = 0
+            git init $p.dest
+            git -C $p.dest remote add origin "https://github.com/$($p.owner)/$($p.repo)"
+            foreach ($attempt in 1..5) {
+              $attempts = $attempt
+              git -C $p.dest fetch --depth 1 origin $p.pin
+              if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+              Start-Sleep -Seconds (5 * $attempt)
+            }
+            if ($ok) { git -C $p.dest checkout --quiet FETCH_HEAD }
+            $sw.Stop()
+            $usable[$p.source] = $ok
+            $fetchLatency[$p.repo] = @{
+              pin      = $p.pin
+              seconds  = [math]::Round($sw.Elapsed.TotalSeconds, 2)
+              attempts = $attempts
+              ok       = $ok
+            }
+            if (-not $ok) {
+              # Fail OPEN with a loud label: a transport flap must not kill the
+              # gate before it measures, and a skip must never read as a
+              # measurement. An empty source arg disables it in asset-timing.py.
+              "source $($p.source) @ $($p.pin) could not be fetched after $attempts attempts; the budget trend runs WITHOUT it - this is a SKIP, not a measurement" |
+                Set-Content (Join-Path $dest "SKIPPED-$($p.source).txt")
+              Write-Host "::warning::perfbudget-trend skipped $($p.source) @ $($p.pin) after $attempts attempts; see $dest/SKIPPED-$($p.source).txt"
+            }
+          }
+          $fetchLatency | ConvertTo-Json -Depth 4 |
+            Set-Content (Join-Path $dest "fetch-latency.json")
+          # An empty string is asset-timing.py's documented disable form, so a
+          # skipped source still gets its flag: always-splatting the vector keeps
+          # it from falling back to the developer defaults hardcoded in that
+          # script -- a skip must never read as a measurement. PowerShell 7
+          # (shell: pwsh) passes the empty argument through; 5.1 would drop it.
+          $gateArgs = @(
+            "scripts/perf/asset-timing.py",
+            "--native-shell", (Resolve-Path target/release/native-shell.exe).Path
+          )
+          foreach ($p in $pins) {
+            $gateArgs += @(
+              $p.flag,
+              $(if ($usable[$p.source]) { (Resolve-Path $p.dest).Path } else { "" })
+            )
+          }
+          $gateArgs += @(
+            "--run-dir", "$env:RUNNER_TEMP\perfbudget-run",
+            "--compare-baseline", "scripts/perf/baselines/asset-timing-baseline.json",
+            "--out", (Join-Path $dest "asset-timing.json")
+          )
+          python @gateArgs
+          exit $LASTEXITCODE
 
       - name: Upload perfbudget trend record
         if: always()
@@ -366,5 +411,5 @@ jobs:
         with:
           name: perfbudget-trend
           path: perfbudget-trend
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 90

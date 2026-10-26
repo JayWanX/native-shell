@@ -72,6 +72,6 @@ panic = "abort"
 strip = "symbols"
 
 # Local override for cross-repo compat runs: build native-shell against the local
-# rubash worktree (master + unpushed fixes) instead of the pinned git rev.
+# rubash worktree (main + unpushed fixes) instead of the pinned git rev.
 [patch."https://github.com/JayWanX/rubash.git"]
 rubash = { path = "../rubash" }

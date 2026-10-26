@@ -90,7 +90,7 @@ jobs:
       # The sibling path matters: Cargo.toml patches rubash to ../rubash
       # (same step the main ci.yml windows job uses).
       - name: clone rubash as the ../rubash sibling dependency
-        run: git clone --depth 1 --branch master https://github.com/${{ github.repository_owner }}/rubash.git "${{ github.workspace }}/../rubash"
+        run: git clone --depth 1 --branch main https://github.com/${{ github.repository_owner }}/rubash.git "${{ github.workspace }}/../rubash"
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: install test deps

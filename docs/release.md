@@ -17,13 +17,14 @@ first.**
 - The tag must match `^v\d+\.\d+\.\d+$`, must exist as a git tag, and the
   `version` in `Cargo.toml` at that tag must equal the tag's version. Any
   mismatch fails the build.
-- Every build job clones rubash `master` as a sibling (`../rubash`, the
-  `[patch]` path override), pins its revision into job outputs, and fails if
-  that checkout is dirty. `build.rs` embeds the same revision into the
-  binary, so `native-shell --version` names the engine the binary actually contains.
-- The `release` job refuses to publish if the three platform jobs did not
-  compile the same rubash revision (a master commit landing between two
-  jobs' clones would otherwise ship mixed engines).
+- Every build job clones the pinned rubash revision as a sibling
+  (`../rubash`, the `[patch]` path override), pins it into job outputs, and
+  fails if that checkout is dirty. `build.rs` embeds the same revision into
+  the binary, so `native-shell --version` names the engine the binary
+  actually contains.
+- The `release` job refuses to publish if the platform jobs did not compile
+  the same rubash revision (a different clone landing between two jobs
+  would otherwise ship mixed engines).
 
 ## Artifact matrix
 
@@ -174,8 +175,8 @@ and completions call plain `awk`, and wpm's gawk package registers only
 forbidden forever, MSVC collision) are recorded policy in the manifest
 and pinned by `tests/preinstall_manifest.rs`. Installs are **fail-open**:
 three attempts with backoff (the local proxy `http://127.0.0.1:7897` as
-the final-attempt fallback, same convention as the perfbudget gate), and
-a failure warns (`::warning` + step summary + release-notes caveat)
+the final-attempt fallback, the same convention the nightly budget trend
+uses), and a failure warns (`::warning` + step summary + release-notes caveat)
 instead of blocking the release — currently that only bites the arm64
 legs, whose wpm index has no artifact. Whatever DID install is
 hard-verified in the staged package before upload (`--version` per shim

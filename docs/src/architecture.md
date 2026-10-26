@@ -44,7 +44,7 @@ Native Shell links rubash directly as a Rust crate dependency:
 
 ```toml
 [dependencies]
-rubash = { git = "https://github.com/unixwin/rubash.git", branch = "master" }
+rubash = { git = "https://github.com/JayWanX/rubash.git", branch = "main" }
 ```
 
 All shell semantics (parsing, execution, built-ins, variable expansion,

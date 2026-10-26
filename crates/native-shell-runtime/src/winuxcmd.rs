@@ -986,8 +986,9 @@ mod tests {
         // A package payload deep in the tree still reaches the bundled tree.
         let from_payload =
             bundled_winuxcmd_candidates(Path::new(r"C:\tools\cmd\opt\native-git\bin"));
-        assert!(from_payload.iter().any(|candidate| candidate.path
-            == PathBuf::from(r"C:\tools\cmd\usr\bin\native-cmd.exe")));
+        assert!(from_payload.iter().any(
+            |candidate| candidate.path == PathBuf::from(r"C:\tools\cmd\usr\bin\native-cmd.exe")
+        ));
 
         // The native-shell layout: `<x>\bin\bash.exe` finds `<x>\cmd\...`.
         let from_native_shell_bin =
@@ -995,8 +996,7 @@ mod tests {
         let bundled = from_native_shell_bin
             .iter()
             .find(|candidate| {
-                candidate.path
-                    == PathBuf::from(r"C:\apps\NativeShell\cmd\usr\bin\native-cmd.exe")
+                candidate.path == PathBuf::from(r"C:\apps\NativeShell\cmd\usr\bin\native-cmd.exe")
             })
             .expect("the bundled tree must be a candidate");
         assert_eq!(bundled.root, PathBuf::from(r"C:\apps\NativeShell\winuxcmd"));

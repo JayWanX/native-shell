@@ -71,10 +71,10 @@ dotfiles 里加载 nvm.sh 的链路也走同一套 harness，分相计时在案
 （[基线](scripts/perf/baselines/asset-timing-baseline.json)、
 [快照](scripts/harvest/snapshots/wt92-local-20261005/)）。
 
-**慢的发布发不出去。** [budgets.toml](scripts/perf/budgets.toml) 里每个
-资产都带实测预算（健康主题重渲染 11-35 ms；预算线 120 ms；超预算 5 倍
-硬失败）。[发布流水线](.github/workflows/release.yml)跑 `perfbudget`
-门禁，超限即 fail 本次发布；另有每夜趋势跑盯漂移。
+**慢的主题一天之内就会暴露。** [budgets.toml](scripts/perf/budgets.toml)
+里每个资产都带实测预算（健康主题重渲染 11-35 ms；预算线 120 ms；超预算
+5 倍硬失败）。[ci.yml](.github/workflows/ci.yml) 的 `perfbudget-trend`
+每夜把每个资产对着已提交的基线重测一遍，并把完整的逐资产趋势存档。
 
 GNU Bash 上游 golden 套件的实测记录也属于这里；等手上的修复落地，它就回来。
 
