@@ -145,6 +145,25 @@ If native-shell saved you a Linux VM, a mangled quote, or an argument PowerShell
 ate, [star the repo](https://github.com/JayWanX/native-shell) and tell a
 developer. ★
 
+## Attribution
+
+native-shell is a **renamed fork** of [unixwin/niubash](https://github.com/unixwin/niubash)
+("Niubash"), which is itself built on [unixwin/rubash](https://github.com/unixwin/rubash) and
+[unixwin/WinuxCmd](https://github.com/unixwin/WinuxCmd). It is published here
+under a different name for personal use; the code is upstream's, not new work
+presented as original.
+
+The MIT license and the upstream copyright notice are unchanged and travel with
+every copy — see [LICENSE](LICENSE) ("Copyright (c) 2026 unixwin team") and the
+SPDX headers on the source files. Each component keeps its own upstream license:
+
+| Component | Upstream | License |
+| --- | --- | --- |
+| this shell | [unixwin/niubash](https://github.com/unixwin/niubash) | MIT, © 2026 unixwin team |
+| shell engine (rubash) | [unixwin/rubash](https://github.com/unixwin/rubash) | MIT, © 2024-2026 unixwin team |
+| Unix commands (native-cmd) | [unixwin/WinuxCmd](https://github.com/unixwin/WinuxCmd) | MIT, © 2026 caomengxuan666 |
+| bundled git (native-git) | [git-for-windows/git](https://github.com/git-for-windows/git) | GPL-2.0 |
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

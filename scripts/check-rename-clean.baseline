@@ -17,7 +17,13 @@ CHANGELOG.md	  niu-git question prints the same cancelled note as every other qu
 CHANGELOG.md	  niu-vs-cmd-vs-powershell decision guidance) and installs it into agent
 CHANGELOG.md	- **Windows releases bundle niu-git 2.55.0.5** (`scripts/release/preinstall.json`).
 CHANGELOG.md	- `argv[0]`-marked login shells (`-bash`, `-niu`) preserve `shopt login_shell` as `on` across `reset_shell_options` (#465, rubash#911).
+README-zh.md	native-shell 是 [unixwin/niubash](https://github.com/unixwin/niubash)（Niubash）的**改名分支**，
+README-zh.md	| 本 shell | [unixwin/niubash](https://github.com/unixwin/niubash) | MIT，© 2026 unixwin team |
+README-zh.md	而 Niubash 本身构建在 [unixwin/rubash](https://github.com/unixwin/rubash) 与
+README.md	("Niubash"), which is itself built on [unixwin/rubash](https://github.com/unixwin/rubash) and
 README.md	[niu-git](https://github.com/unixwin/niu-git): the real git-for-windows C
+README.md	native-shell is a **renamed fork** of [unixwin/niubash](https://github.com/unixwin/niubash)
+README.md	| this shell | [unixwin/niubash](https://github.com/unixwin/niubash) | MIT, © 2026 unixwin team |
 assets/native-shell.rc	#define IDI_NIUBASH 101
 assets/native-shell.rc	IDI_NIUBASH ICON "native-shell-icon.ico"
 crates/native-shell-runtime/assets/plugins/recipes.toml	summary = "native Windows git without MSYS (niu-git build); the setup wizard's git pick"

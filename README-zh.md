@@ -111,6 +111,24 @@ tar -xzf native-shell-v*-linux-x86_64.tar.gz && native-shell-v*-linux-x86_64/nat
 的参数，[给仓库点个 Star](https://github.com/JayWanX/native-shell)，转告下一位
 开发者。★
 
+## 归属说明
+
+native-shell 是 [unixwin/niubash](https://github.com/unixwin/niubash)（Niubash）的**改名分支**，
+而 Niubash 本身构建在 [unixwin/rubash](https://github.com/unixwin/rubash) 与
+[unixwin/WinuxCmd](https://github.com/unixwin/WinuxCmd) 之上。此处以另一个名字发布，
+仅供个人使用；代码属于上游，不是冒充原创的新作品。
+
+MIT 许可证与上游版权声明保持不变，并随每一份副本一同分发——见
+[LICENSE](LICENSE)（“Copyright (c) 2026 unixwin team”）以及各源文件头的 SPDX 声明。
+各组件各自遵循其上游许可证：
+
+| 组件 | 上游 | 许可证 |
+| --- | --- | --- |
+| 本 shell | [unixwin/niubash](https://github.com/unixwin/niubash) | MIT，© 2026 unixwin team |
+| 语言引擎（rubash） | [unixwin/rubash](https://github.com/unixwin/rubash) | MIT，© 2024-2026 unixwin team |
+| Unix 命令层（native-cmd） | [unixwin/WinuxCmd](https://github.com/unixwin/WinuxCmd) | MIT，© 2026 caomengxuan666 |
+| 内置 git（native-git） | [git-for-windows/git](https://github.com/git-for-windows/git) | GPL-2.0 |
+
 ## 许可证
 
 MIT，详见 [LICENSE](LICENSE)。
