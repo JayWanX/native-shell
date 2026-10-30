@@ -5,6 +5,11 @@ on:
     # nightly trend run (perfbudget-trend) — 03:23 UTC, off the busy hours
     - cron: "23 3 * * *"
   workflow_dispatch:
+    inputs:
+      perfbudget:
+        description: "Also run the per-asset timing gate (25+ min)"
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -294,7 +299,7 @@ jobs:
   # regression is caught by the nightly, not at the next release tag.
   perfbudget-trend:
     name: per-asset timing trend (nightly)
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || inputs.perfbudget
     runs-on: windows-2025
     timeout-minutes: 75
     env:
