@@ -139,10 +139,10 @@ def run_journey(exe: Path, root: Path) -> None:
         sys.exit(2)
     git = Path(git)
     # Mirror layout matches the canonical recipe origins so the insteadOf
-    # rewrite lands on these trees: ohmybash/oh-my-bash.git,
+    # rewrite lands on these trees: JayWanX/oh-my-bash.git,
     # scop/bash-completion.git.
     seed_mirror_repo(git, FIXTURES / "oh-my-bash",
-                      mirror / "ohmybash" / "oh-my-bash.git")
+                      mirror / "JayWanX" / "oh-my-bash.git")
     seed_mirror_repo(git, FIXTURES / "bash-completion",
                       mirror / "scop" / "bash-completion.git")
     mirror_base = mirror.resolve().as_posix()
@@ -224,7 +224,7 @@ def run_journey(exe: Path, root: Path) -> None:
     # declared the collection's sources (canonical origins; the mirror is
     # transport-only) with the picked theme snapshotted.
     spec = (home / ".native-shell" / "plugins.toml").read_text(encoding="utf-8")
-    assert "https://github.com/ohmybash/oh-my-bash.git" in spec, spec
+    assert "https://github.com/JayWanX/oh-my-bash.git" in spec, spec
     assert "https://github.com/scop/bash-completion.git" in spec, spec
     assert "theme = 'agnoster'" in spec, spec
 

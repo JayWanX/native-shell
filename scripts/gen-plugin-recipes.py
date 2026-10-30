@@ -20,8 +20,8 @@ import argparse
 import re
 from pathlib import Path
 
-OMB_REPO = "https://github.com/ohmybash/oh-my-bash"
-BASHIT_REPO = "https://github.com/Bash-it/bash-it"
+OMB_REPO = "https://github.com/JayWanX/oh-my-bash"
+BASHIT_REPO = "https://github.com/JayWanX/bash-it"
 
 ABOUT_ALIAS = re.compile(r"^about-alias ['\"](.+?)['\"]")
 ABOUT_PLUGIN = re.compile(r"^about-plugin ['\"](.+?)['\"]")

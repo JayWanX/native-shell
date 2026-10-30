@@ -948,8 +948,8 @@ mod tests {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sources");
         let mirror = sandbox.root.join("mirror");
         for (fixture, owner_repo) in [
-            ("oh-my-bash", "ohmybash/oh-my-bash.git"),
-            ("bash-it", "Bash-it/bash-it.git"),
+            ("oh-my-bash", "JayWanX/oh-my-bash.git"),
+            ("bash-it", "JayWanX/bash-it.git"),
             ("bash-completion", "scop/bash-completion.git"),
             ("bash-preexec", "rcaloras/bash-preexec.git"),
             ("complete-alias", "cykerway/complete-alias.git"),

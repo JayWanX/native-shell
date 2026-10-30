@@ -262,7 +262,7 @@ mod tests {
     fn git_instead_of_args_only_for_github_origins() {
         let custom = mirror("custom", Some("https://gitclone.example.com/github.com"));
         assert_eq!(
-            git_clone_args_with(&custom, "https://github.com/ohmybash/oh-my-bash.git"),
+            git_clone_args_with(&custom, "https://github.com/JayWanX/oh-my-bash.git"),
             vec![
                 "-c".to_string(),
                 "url.https://gitclone.example.com/github.com.insteadOf=https://github.com/"

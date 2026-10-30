@@ -2620,7 +2620,7 @@ mod tests {
         .unwrap();
         let _guard = EnvVarGuard::set("NATIVE_SHELL_MIRRORS", &config);
 
-        let origin = "https://github.com/ohmybash/oh-my-bash.git";
+        let origin = "https://github.com/JayWanX/oh-my-bash.git";
         let args = clone_arg_list(origin, "HEAD", false);
         let expected_pair = [
             "-c",
@@ -3496,7 +3496,7 @@ mod tests {
         let pinned = SourceRecord {
             id: "oh-my-bash".to_string(),
             adapter: "oh-my-bash".to_string(),
-            url: "https://github.com/ohmybash/oh-my-bash.git".to_string(),
+            url: "https://github.com/JayWanX/oh-my-bash.git".to_string(),
             ref_name: "HEAD".to_string(),
             version: "git-abc123".to_string(),
             path: root.join("oh-my-bash"),

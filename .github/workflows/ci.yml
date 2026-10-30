@@ -345,8 +345,8 @@ jobs:
           # Last-fetched revision, kept in sync with the committed baseline
           # (scripts/perf/baselines/asset-timing-baseline.json).
           $pins = @(
-            @{ source = "oh-my-bash"; owner = "ohmybash"; repo = "oh-my-bash"; flag = "--omb"; dest = "..\oh-my-bash"; pin = "abf846186ab0a8a41ec5888e827ece6277dfe446" },
-            @{ source = "bash-it"; owner = "Bash-it"; repo = "bash-it"; flag = "--bash-it"; dest = "..\bash-it"; pin = "4725d29db8c0ac8c21df47664b28539f3b8fce94" }
+            @{ source = "oh-my-bash"; owner = "JayWanX"; repo = "oh-my-bash"; flag = "--omb"; dest = "..\oh-my-bash"; pin = "d99fb526e35a7e0a4d61e48d2ad8ffbae6b5fa76" },
+            @{ source = "bash-it"; owner = "JayWanX"; repo = "bash-it"; flag = "--bash-it"; dest = "..\bash-it"; pin = "4725d29db8c0ac8c21df47664b28539f3b8fce94" }
           )
           $fetchLatency = @{}
           $usable = @{}

@@ -916,7 +916,7 @@ fn d2_wizard_one_run_theme_journey() {
     // origins (the mirror is transport-only) and the picked theme.
     let spec = fs::read_to_string(home.join(".native-shell").join("plugins.toml")).unwrap();
     assert!(
-        spec.contains("https://github.com/ohmybash/oh-my-bash.git"),
+        spec.contains("https://github.com/JayWanX/oh-my-bash.git"),
         "oh-my-bash declared by its canonical origin: {spec}"
     );
     assert!(

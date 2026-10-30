@@ -507,7 +507,7 @@ fn plugin_add_catalog_id_resolves_and_hints_the_next_steps() {
         "{discover_out}"
     );
     assert!(
-        discover_out.contains("https://github.com/ohmybash/oh-my-bash.git"),
+        discover_out.contains("https://github.com/JayWanX/oh-my-bash.git"),
         "{discover_out}"
     );
     // bash-it and bash-completion are curated too; the GPL one says so.

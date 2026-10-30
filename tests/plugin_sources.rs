@@ -308,7 +308,7 @@ fn plugin_discover_is_read_only_and_lists_available_managers() {
         "{text}"
     );
     assert!(
-        text.contains("https://github.com/ohmybash/oh-my-bash.git"),
+        text.contains("https://github.com/JayWanX/oh-my-bash.git"),
         "{text}"
     );
     assert!(
