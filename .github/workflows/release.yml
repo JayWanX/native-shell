@@ -1,0 +1,2177 @@
+name: NativeShell Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      # There is deliberately NO `tag` input: the release version IS the crate
+      # version (`Cargo.toml`), a disagreement is rejected below anyway, and a
+      # tag PUSH always uses the pushed ref. A dispatch derives it the same way,
+      # so nothing is left for the operator to type.
+      # `native_cmd_tag` stays because the bundled command layer versions
+      # independently; empty FOLLOWS ITS LATEST RELEASE -- nothing is pinned in
+      # the repository, so there is no committed value to keep in sync.
+      # There is deliberately NO digest input either: the tag is the contract,
+      # and a CPack zip is not byte-reproducible.
+      native_cmd_tag:
+        description: "Native Cmd (JayWanX/native-cmd) tag to bundle (empty = the latest release)"
+        required: false
+        default: ""
+        type: string
+
+      # Off by default: publishing is a separate, irreversible step (crates.io
+      # versions cannot be deleted or reused), and rubash is not on crates.io
+      # yet so it fails anyway. A tag PUSH ignores this and never publishes.
+      publish_crates:
+        description: "Publish the workspace to crates.io (tag pushes never publish)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: stable
+
+jobs:
+  # Single source of truth for the release tag/version. Every other job reads
+  # these outputs instead of re-parsing Cargo.toml itself: one checkout, one
+  # computation, so the whole workflow can never disagree with itself.
+  resolve-tag:
+    name: resolve release tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          # No tag input: the release version IS the crate version, and a tag
+          # PUSH always uses the pushed ref.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            cargo_version="$(grep -m1 -E '^version[[:space:]]*=' Cargo.toml | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/')"
+            if [ -z "${cargo_version}" ]; then
+              echo "Could not read the package version from Cargo.toml" >&2
+              exit 1
+            fi
+            tag="v${cargo_version}"
+            echo "resolved release tag from Cargo.toml: $tag"
+          else
+            tag="${{ github.ref_name }}"
+            echo "release tag from the pushed ref: $tag"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release tag '$tag'" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+  build-windows:
+    name: build-windows (${{ matrix.arch }})
+    runs-on: windows-2025
+    needs: resolve-tag
+    outputs:
+      # Both matrix legs fetch the same PINNED rubash revision, so this
+      # resolves to the same value in both; the pin steps fail the build if
+      # the checkout is not exactly the pinned revision (rubash#827).
+      rubash_revision: ${{ steps.rubash.outputs.revision }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The NORMAL package is the one WITHOUT the bundled git, because that
+        # is the shape every leg can produce: native-git has no ARM64 artifact.
+        # `package_arch` therefore carries the plain arch for the standard tree
+        # on both legs, so `native-shell-v<V>-win-x64` / `-win-arm64` mean the
+        # same thing by content across both. The package that DOES bundle git is
+        # the extra one and names itself: `-win-x64-with-git`.
+        #
+        # That keeps the ordinary name honest for `--self-update`, which builds
+        # `native-shell-win-<arch>-setup.exe` from the running arch alone: it
+        # always lands on the standard package, and a with-git user who runs it
+        # is moved back to the standard tree (disclosed in the release body, not
+        # gated in code).
+        include:
+          - arch: x64
+            variant: standard
+            package_arch: x64
+            rust_target: x86_64-pc-windows-msvc
+            native_cmd_asset_pattern: "NativeCmd-*-win-x64.zip"
+          - arch: arm64
+            # arm64 has no native-git artifact, so the standard tree is the only
+            # one it can build - which is exactly why the standard tree is the
+            # one without the bundled git.
+            variant: standard
+            package_arch: arm64
+            rust_target: aarch64-pc-windows-msvc
+            native_cmd_asset_pattern: "NativeCmd-*-win-arm64.zip"
+          # The variant package: the standard x64 tree PLUS the native-git payload
+          # (see the manifest's "Variant contract" note). Portable archive only -
+          # the normal name already owns the installer and the self-update channel,
+          # and a second setup.exe would fight that channel rather than add to it.
+          - arch: x64
+            variant: with-git
+            package_arch: x64-with-git
+            rust_target: x86_64-pc-windows-msvc
+            native_cmd_asset_pattern: "NativeCmd-*-win-x64.zip"
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+
+      # rubash#827 (conclusion B): the engine source is PINNED, never
+      # "whatever rubash main HEAD was at clone time" -- that float is how
+      # v1.4.0 (run 38506862578) compiled e785c3c8f610 while the release era
+      # declared rubash v1.4.0 (f69e7900). The pin
+      # (scripts/release/rubash-pin.json) names a full 40-char commit; this step fetches
+      # exactly it and dies unless the checked-out HEAD equals the pin. The
+      # clone lands at ../rubash, where the [patch] path override in
+      # Cargo.toml deterministically takes over -- the tree Cargo compiles IS
+      # the pinned tree. Read from the pre-tag-checkout tree: a tag push uses
+      # the pin committed at the tag, a dispatch of an old tag runs today's
+      # pin (same #312 semantics as the Native Cmd pin). Bumping the pin is one
+      # commit to that file; see its notes for the flow.
+      - name: Checkout pinned rubash revision
+        id: rubash-pin
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pin = Get-Content -LiteralPath scripts/release/rubash-pin.json -Raw | ConvertFrom-Json
+          $rev = $pin.rubash_rev
+          if ($rev -notmatch '^[0-9a-f]{40}$') {
+            throw "rubash-pin.json: rubash_rev must be a full 40-char commit sha, got '$rev' (abbreviated forms cannot be fetched -- git resolves the fetch argument server-side as a ref name)"
+          }
+          if (Test-Path -LiteralPath ..\rubash) {
+            throw "a rubash checkout already exists at ..\rubash; refusing to pin over it"
+          }
+          git init ..\rubash
+          if ($LASTEXITCODE -ne 0) { throw "git init ../rubash failed" }
+          git -C ..\rubash remote add origin https://github.com/JayWanX/rubash.git
+          git -C ..\rubash fetch --depth 1 origin $rev
+          if ($LASTEXITCODE -ne 0) {
+            throw "could not fetch the pinned rubash revision $rev; if rubash main was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)"
+          }
+          git -C ..\rubash checkout --quiet FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { throw "could not check out the pinned rubash revision $rev" }
+          git -C ..\rubash submodule update --init --depth 1
+          if ($LASTEXITCODE -ne 0) { throw "rubash submodules failed to initialize at the pinned revision" }
+          $actual = (git -C ..\rubash rev-parse HEAD).Trim()
+          if ($actual -ne $rev) {
+            throw "rubash checkout resolved to $actual, not the pinned $rev; refusing to build (rubash#827)"
+          }
+          Write-Host "rubash pinned at $($rev.Substring(0,12)) (v$($pin.rubash_version))"
+          "revision=$($rev.Substring(0,12))" >> $env:GITHUB_OUTPUT
+
+
+      - name: Preserve current release packager
+        shell: pwsh
+        run: |
+          Copy-Item -LiteralPath scripts/package-release.ps1 -Destination (Join-Path $env:RUNNER_TEMP "package-release.ps1") -Force
+          New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP "installer") | Out-Null
+          Copy-Item -LiteralPath installer/native-shell.iss -Destination (Join-Path $env:RUNNER_TEMP "installer\native-shell.iss") -Force
+          Copy-Item -LiteralPath assets/native-shell-icon.ico -Destination (Join-Path $env:RUNNER_TEMP "native-shell-icon.ico") -Force
+          # native-shell#312: the ecosystem pins are CURRENT release policy, same
+          # discipline as the packager and the journey/perf gates — a dispatch
+          # of an old tag runs today's pins (the tag's own copy predates them),
+          # while a tag push re-reads the identical file committed at the tag.
+          New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP "release-policy") | Out-Null
+          Copy-Item -LiteralPath scripts/release/preinstall.json -Destination (Join-Path $env:RUNNER_TEMP "release-policy\preinstall.json") -Force
+          Copy-Item -LiteralPath scripts/release/rubash-pin.json -Destination (Join-Path $env:RUNNER_TEMP "release-policy\rubash-pin.json") -Force
+
+      - name: Checkout release tag
+        shell: pwsh
+        run: |
+          git fetch --tags --force
+          $tag = "${{ needs.resolve-tag.outputs.tag }}"
+          # A dispatch derives the tag from Cargo.toml and may run before the tag
+          # exists (or to re-fly from the branch). Check out the tag only when it
+          # is really there; otherwise release the ref this run checked out.
+          git rev-parse -q --verify "refs/tags/$tag" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            git checkout "$tag"
+            if ($LASTEXITCODE -ne 0) { throw "could not check out tag $tag" }
+          }
+          else {
+            $head = (git rev-parse --short HEAD).Trim()
+            $branch = (git rev-parse --abbrev-ref HEAD).Trim()
+            Write-Host "tag $tag does not exist yet; releasing from $head ($branch)"
+          }
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "package-release.ps1") -Destination scripts/package-release.ps1 -Force
+          New-Item -ItemType Directory -Force -Path installer | Out-Null
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "installer\native-shell.iss") -Destination installer/native-shell.iss -Force
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "native-shell-icon.ico") -Destination assets/native-shell-icon.ico -Force
+          New-Item -ItemType Directory -Force -Path scripts/release | Out-Null
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "release-policy\preinstall.json") -Destination scripts/release/preinstall.json -Force
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "release-policy\rubash-pin.json") -Destination scripts/release/rubash-pin.json -Force
+
+      - name: Validate Cargo version matches release tag
+        shell: pwsh
+        run: |
+          $cargoToml = Get-Content -LiteralPath Cargo.toml -Raw
+          if ($cargoToml -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
+            throw "Could not read package version from Cargo.toml"
+          }
+          if ($Matches[1] -ne "${{ needs.resolve-tag.outputs.version }}") {
+            throw "Cargo.toml version $($Matches[1]) does not match release tag ${{ needs.resolve-tag.outputs.tag }}"
+          }
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.rust_target }}
+
+      # rubash is a path dependency, so `cargo update -p rubash` cannot pin it:
+      # there is no registry entry to update, and the step silently did nothing.
+      # The pinned-clone step above already fetched exactly the pinned commit;
+      # this step re-derives the revision, refuses a dirty tree, and
+      # cross-checks the pin before anything is compiled (rubash#827). The
+      # revision is embedded at build time by build.rs, so `native-shell --version`
+      # reports it.
+      - name: Pin rubash revision
+        id: rubash
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath ..\rubash)) {
+            throw "rubash checkout missing at ..\rubash"
+          }
+          $revision = (git -C ..\rubash rev-parse --short=12 HEAD).Trim()
+          if ([string]::IsNullOrWhiteSpace($revision)) {
+            throw "could not resolve rubash revision"
+          }
+          $dirty = git -C ..\rubash status --porcelain
+          if (-not [string]::IsNullOrWhiteSpace($dirty)) {
+            throw "rubash checkout is dirty; a release must pin a committed revision`n$dirty"
+          }
+          $pinned = "${{ steps.rubash-pin.outputs.revision }}"
+          if ([string]::IsNullOrWhiteSpace($pinned)) {
+            throw "the pinned-rubash clone step produced no revision to cross-check"
+          }
+          if ($revision -ne $pinned) {
+            throw "rubash checkout ($revision) drifted from the pinned revision ($pinned); refusing to build (rubash#827)"
+          }
+          Write-Host "rubash revision: $revision (matches the pin)"
+          "revision=$revision" >> $env:GITHUB_OUTPUT
+
+      - name: Build native-shell
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+        run: cargo build --locked --release --target ${{ matrix.rust_target }}
+
+      - name: Download pinned Native Cmd release
+        id: native_cmd
+        shell: pwsh
+        env:
+          # The bundle source now lives in ANOTHER repository (JayWanX/native-cmd),
+          # so github.token (scoped to this repo) cannot read its releases. Prefer a
+          # PAT with cross-repo contents:read; fall back to github.token so a public
+          # native-cmd still works without extra setup.
+          GH_TOKEN: ${{ secrets.NATIVECMD_TOKEN || github.token }}
+          NATIVE_CMD_TAG_INPUT: ${{ inputs.native_cmd_tag }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repo = "JayWanX/native-cmd"
+          $archKey = "windows-${{ matrix.arch }}"
+
+          # The bundled command layer follows the LATEST published release of the
+          # bundle repo by default -- no committed value to keep in sync. An
+          # explicit native_cmd_tag input still overrides it for a deliberate
+          # pin or a backfill. `gh release view` with no tag resolves the
+          # repository's latest release (drafts and prereleases excluded).
+          $requestedTag = $env:NATIVE_CMD_TAG_INPUT
+          if ([string]::IsNullOrWhiteSpace($requestedTag)) {
+            $latest = gh release view --repo $repo --json tagName 2>$null |
+              ConvertFrom-Json
+            if (-not $latest -or [string]::IsNullOrWhiteSpace($latest.tagName)) {
+              throw "no native_cmd_tag input and no published release to follow in $repo; pass native_cmd_tag explicitly"
+            }
+            $requestedTag = $latest.tagName
+            Write-Host "no native_cmd_tag input; following the latest $repo release: $requestedTag"
+          }
+          else {
+            Write-Host "bundling the explicit native_cmd_tag: $requestedTag"
+          }
+
+          # Exact-tag lookup only: no gh release view without a tag argument.
+          $releaseJson = gh release view $requestedTag --repo $repo --json tagName,assets | ConvertFrom-Json
+          $asset = $releaseJson.assets |
+            Where-Object { $_.name -like "${{ matrix.native_cmd_asset_pattern }}" } |
+            Select-Object -First 1
+          if (-not $asset) {
+            throw "No Native Cmd asset matched ${{ matrix.native_cmd_asset_pattern }} in $($releaseJson.tagName)"
+          }
+
+          $downloadDir = Join-Path $env:RUNNER_TEMP "native-cmd-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
+          gh release download $releaseJson.tagName --repo $repo --pattern $asset.name --dir $downloadDir
+
+          $zipPath = Join-Path $downloadDir $asset.name
+          # The TAG is the pin. The downloaded asset records its SHA-256 in the
+          # step log and is not compared against a committed expectation: a
+          # reassembled CPack zip is not byte-reproducible (embedded mtimes), so a
+          # stored digest went stale on every re-run and blocked releases for no
+          # safety gain beyond what the pinned tag already provides.
+          $actualSha = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "Native Cmd $($releaseJson.tagName) $($asset.name) SHA-256: $actualSha"
+
+          $extractDir = Join-Path $downloadDir "extract"
+          Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
+          $nativeCmdExe = Get-ChildItem -LiteralPath $extractDir -Recurse -Filter native-cmd.exe |
+            Select-Object -First 1
+          if (-not $nativeCmdExe) {
+            throw "native-cmd.exe not found in $($asset.name)"
+          }
+
+          "tag=$($releaseJson.tagName)" >> $env:GITHUB_OUTPUT
+          "asset=$($asset.name)" >> $env:GITHUB_OUTPUT
+          "exe=$($nativeCmdExe.FullName)" >> $env:GITHUB_OUTPUT
+
+      # native-shell#189, extended to the #209 must-install bundle — release
+      # pre-install, manifest-driven. wpm ships INSIDE native-cmd.exe
+      # (`native-cmd wpm ...`), so the binary the step above extracted is all
+      # the package manager this needs. The manifest
+      # (scripts/release/preinstall.json) names the packages (gawk; plus
+      # native-git / ripgrep / fd per #209 so `native-shell setup` full distro works on a
+      # gitless machine), the extra command shims, and the owner-ordered
+      # exclusions (no compression tools; goawk forbidden; `link` forbidden
+      # forever — MSVC collision); tests/preinstall_manifest.rs pins that
+      # policy. The staged root mirrors
+      # the shipped layout exactly (<root>\usr\bin\<cmd>.exe hardlink shims
+      # forwarding to <root>\opt\<pkg>\ payloads), and package-release.ps1
+      # copies both into the package.
+      #
+      # native-shell#312 — PINNED pre-install: the committed manifest carries the
+      # exact artifact SHA-256 per package and arch. Before installing, the
+      # live wpm index this build resolves must agree with the pin; wpm then
+      # verifies the downloaded zip against that same index entry, so
+      # pin == index == downloaded bytes closes the chain and the release no
+      # longer depends on the index state of the build minute. A missing or
+      # mismatched pin is a LOUD fail-open skip (below) — the package ships
+      # without pre-install rather than with unverified bytes.
+      #
+      # FAIL-CLOSED on x64, FAIL-OPEN on other legs (owner decision,
+      # native-shell#468): pre-installing is an enhancement, not a promise — on
+      # the non-primary legs. A failed install (e.g. arm64 legs — the wpm
+      # index carries windows-x64 artifacts only for these packages) is a
+      # loud ::warning
+      # plus a step-summary line, never a release blocker on the non-primary
+      # legs; the verify step below hard-asserts only what this step reports
+      # as installed, and the release body discloses the caveat. On x64 —
+      # the primary user-facing leg — the same failure is FAIL-CLOSED and
+      # stops the release outright (native-shell#468): a silently skipped gawk
+      # preinstall once shipped a 1.4.1 without opt\gawk and left
+      # usr\bin\awk.exe/gawk.exe as 1.4.0-era copies. Transport retries
+      # follow the repo convention (perfbudget's Fetch-Pinned): 3 attempts
+      # with backoff, the local proxy as the final-attempt fallback via
+      # wpm's --proxy flag.
+      - name: Pre-install release packages (wpm, manifest-driven)
+        id: preinstall
+        shell: pwsh
+        env:
+          # Install-ForkRelease resolves/downloads native-git with `gh`, which
+          # needs a token for a private source repository. NATIVEGIT_TOKEN is the
+          # dedicated PAT; fall back to the shared one then to github.token, so a
+          # setup that configures only one secret still works.
+          GH_TOKEN: ${{ secrets.NATIVEGIT_TOKEN || secrets.NATIVECMD_TOKEN || github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $manifest = Get-Content -LiteralPath scripts/release/preinstall.json -Raw | ConvertFrom-Json
+          $nativeCmdExe = "${{ steps.native_cmd.outputs.exe }}"
+          $root = Join-Path $env:RUNNER_TEMP "preinstall-root-${{ matrix.arch }}"
+          $archKey = "windows-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force -Path (Join-Path $root "usr\bin") | Out-Null
+          Copy-Item -LiteralPath $nativeCmdExe -Destination (Join-Path $root "usr\bin\native-cmd.exe") -Force
+
+          # wpm info consults the root's LOCAL index only (a fresh root does
+          # not auto-fetch — only install does), so fetch it once up front.
+          # The pin checks below and the installs then resolve the SAME cached
+          # index; a transport failure here is fail-open per-package below.
+          $previousEap = $ErrorActionPreference
+          $ErrorActionPreference = "Continue"
+          $indexOutput = & $nativeCmdExe wpm index update --root $root 2>&1
+          $ErrorActionPreference = $previousEap
+          $indexOutput | ForEach-Object { Write-Host "$_" }
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning::wpm index update failed on ${{ matrix.arch }}; every package will fail its pin check and ship WITHOUT pre-install (fail-open, native-shell#312)"
+          }
+
+          function Confirm-PackagePin([object]$package, [string]$pinArchKey) {
+            # native-shell#312: refuse to install bytes the committed manifest did
+            # not pin. Reads the live index metadata via `wpm info --json`;
+            # the subsequent install verifies its download against the same
+            # index entry, so a pass here pins the exact shipped artifact.
+            $expected = $package.sha256.$pinArchKey
+            if (-not $expected) {
+              Write-Host "::warning::package '$($package.name)' has no $pinArchKey sha256 pin in preinstall.json; skipping pre-install on ${{ matrix.arch }} (fail-open, native-shell#312)"
+              return $false
+            }
+            # Same stderr discipline as Install-Package below: capture the
+            # whole output stream, EAP scoped to Continue so a native stderr
+            # record cannot terminate the step before the fail-open path runs.
+            $previousEap = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $infoOutput = & $nativeCmdExe wpm info $package.name --root $root --json 2>&1
+            $ErrorActionPreference = $previousEap
+            if ($LASTEXITCODE -ne 0) {
+              $infoOutput | ForEach-Object { Write-Host "$_" }
+              Write-Host "::warning::wpm info '$($package.name)' failed; cannot verify the preinstall pin (fail-open, native-shell#312)"
+              return $false
+            }
+            try {
+              $info = (($infoOutput | ForEach-Object { "$_" }) -join "`n") | ConvertFrom-Json
+            }
+            catch {
+              Write-Host "::warning::wpm info '$($package.name)' did not return parseable JSON; cannot verify the preinstall pin (fail-open, native-shell#312)"
+              return $false
+            }
+            $artifact = $info.artifacts.$pinArchKey
+            if (-not $artifact -or -not $artifact.sha256) {
+              Write-Host "::warning::wpm index carries no $pinArchKey artifact for '$($package.name)' (expected on this leg); skipping pre-install (fail-open)"
+              return $false
+            }
+            if ($artifact.sha256.ToLowerInvariant() -ne $expected.ToLowerInvariant()) {
+              Write-Host "::warning::preinstall pin mismatch for '$($package.name)' ($pinArchKey): manifest pins $expected but the live index resolves $($artifact.sha256); refusing to install unverified bytes (native-shell#312)"
+              return $false
+            }
+            Write-Host "pin verified: $($package.name) $($info.version) $pinArchKey sha256 match"
+            return $true
+          }
+
+          function Install-Package([string]$name) {
+            # Attempt 1-2: direct. Attempt 3: local proxy fallback
+            # (repo convention, cf. GIT_PERF_FALLBACK_PROXY in the
+            # perfbudget gate).
+            foreach ($attempt in 1..3) {
+              $wpmArgs = @("wpm", "install", $name, "--root", $root, "--yes")
+              if ($attempt -eq 3) {
+                $wpmArgs += @("--proxy", "http://127.0.0.1:7897")
+              }
+              # Capture wpm's stdout+stderr into a variable (never the
+              # pipeline): a function's return value is its whole output
+              # stream, and a failed install's error text must not turn the
+              # returned $false into a truthy string array. EAP is scoped to
+              # Continue around the native call because Windows PowerShell
+              # 5.1 turns `2>&1` stderr records into terminating
+              # NativeCommandErrors under Stop — fail-open must survive
+              # wpm's error text on both pwsh 7 and 5.1.
+              $previousEap = $ErrorActionPreference
+              $ErrorActionPreference = "Continue"
+              $output = & $nativeCmdExe @wpmArgs 2>&1
+              $ErrorActionPreference = $previousEap
+              $output | ForEach-Object { Write-Host "$_" }
+              if ($LASTEXITCODE -eq 0) { return $true }
+              Write-Host "wpm install $name failed (attempt $attempt/3)"
+              Start-Sleep -Seconds (5 * $attempt)
+            }
+            return $false
+          }
+
+          function New-CommandShim([string]$name) {
+            $target = Join-Path $root "usr\bin\native-cmd.exe"
+            $shim = Join-Path $root "usr\bin\$name.exe"
+            if (Test-Path -LiteralPath $shim) { return $true }
+            try {
+              New-Item -ItemType HardLink -Path $shim -Target $target -ErrorAction Stop | Out-Null
+            }
+            catch {
+              # File systems without hardlink support still get a copy: the
+              # shim dispatch only needs the native-cmd.exe image by that name.
+              $null = Copy-Item -LiteralPath $target -Destination $shim -Force
+            }
+            return (Test-Path -LiteralPath $shim)
+          }
+
+          # native-git does NOT go through wpm. It is fetched straight from our own
+          # fork release and unpacked with the exact file mapping the wpm index used
+          # to declare (layout=flat: mingw64/ + etc/ under opt\git, git.exe on
+          # usr\bin). This keeps one weak link out of the resolver chain: the fork
+          # is ours, so its tag/asset naming is ours to hold stable.
+          function Install-ForkRelease([object]$package) {
+            $repo = $package.repo
+            $tag = $package.tag
+            if ([string]::IsNullOrWhiteSpace($tag) -or $tag -eq "latest") {
+              $latest = gh release view --repo $repo --json tagName 2>$null | ConvertFrom-Json
+              if (-not $latest -or [string]::IsNullOrWhiteSpace($latest.tagName)) {
+                Write-Host "::warning::no published release in $repo; cannot pre-install $($package.name)"
+                return $false
+              }
+              $tag = $latest.tagName
+            }
+            $pattern = $package.asset_pattern -replace "\{arch\}", "${{ matrix.arch }}"
+            $dl = Join-Path $env:RUNNER_TEMP ("fork-" + $package.name + "-${{ matrix.arch }}")
+            Remove-Item -LiteralPath $dl -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force -Path $dl | Out-Null
+            $previousEap = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            gh release download $tag --repo $repo --pattern $pattern --dir $dl 2>&1 |
+              ForEach-Object { Write-Host "$_" }
+            $ErrorActionPreference = $previousEap
+            $zip = Get-ChildItem -LiteralPath $dl -Filter *.zip -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+            if (-not $zip) {
+              Write-Host "::warning::no $pattern asset in $repo $tag; cannot pre-install $($package.name)"
+              return $false
+            }
+            # No committed digest on purpose: this fork is rebuilt by us, so a
+            # stored sha256 would go stale on every rebuild. The digest is logged.
+            $sha = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            Write-Host "$($package.name) $tag $($zip.Name) SHA-256: $sha"
+            $x = Join-Path $dl "extract"
+            Expand-Archive -LiteralPath $zip.FullName -DestinationPath $x -Force
+            # wpm's flat-layout rule, reproduced exactly (wpm.cpp
+            # normalized_package_target): normalize separators, strip leading
+            # slashes, and a FILE target with no directory component means usr\bin.
+            # Without that last rule `to: git.exe` lands at the root and the staged
+            # verify finds no usr\bin\git.exe.
+            function Resolve-InstalledPath([object]$map) {
+              $to = ($map.to -replace "\\", "/")
+              while ($to.StartsWith("/")) { $to = $to.Substring(1) }
+              $isDir = $map.from.EndsWith("/")
+              if (-not $isDir -and $to -notmatch "/") { return Join-Path $root "usr\bin\$to" }
+              return Join-Path $root ($to -replace "/", "\")
+            }
+            # Two passes, because a FILE mapping whose source also lives inside a
+            # DIRECTORY mapping must not be copied out of the extraction tree: that
+            # ships a second independent copy of git.exe (the payload already holds
+            # it under opt/git/mingw64/bin) and defeats the dedup the tarball is
+            # shipped for. Directories land first; the file mappings then hardlink
+            # from the mapped payload instead of the extract dir - the rule wpm
+            # follows with payload_source_for (NativeCmd#1188).
+            $mapped = 0
+            $directoryMaps = @($package.files | Where-Object { $_.from.EndsWith("/") })
+            $fileMaps = @($package.files | Where-Object { -not $_.from.EndsWith("/") })
+            foreach ($map in $directoryMaps) {
+              $dest = Resolve-InstalledPath $map
+              $src = Join-Path $x ($map.from -replace "/", "\")
+              if (-not (Test-Path -LiteralPath $src)) {
+                Write-Host "::warning::$($package.name): $($map.from) missing from $($zip.Name)"
+                return $false
+              }
+              New-Item -ItemType Directory -Force -Path $dest | Out-Null
+              Copy-Item -Path (Join-Path $src "*") -Destination $dest -Recurse -Force
+              $mapped++
+            }
+            foreach ($map in $fileMaps) {
+              $dest = Resolve-InstalledPath $map
+              # Source the file from the payload copy this same install just laid
+              # down, so the two names share one file on disk.
+              $src = $null
+              $fromPayload = $false
+              foreach ($dirMap in $directoryMaps) {
+                $dirFrom = $dirMap.from
+                if (-not $map.from.StartsWith($dirFrom)) { continue }
+                $relInside = $map.from.Substring($dirFrom.Length)
+                $candidate = Join-Path (Resolve-InstalledPath $dirMap) ($relInside -replace "/", "\")
+                if (Test-Path -LiteralPath $candidate) { $src = $candidate; $fromPayload = $true }
+                break
+              }
+              if ($null -eq $src) {
+                # No directory mapping covers it: use the extract dir directly.
+                $src = Join-Path $x ($map.from -replace "/", "\")
+                if (-not (Test-Path -LiteralPath $src)) {
+                  Write-Host "::warning::$($package.name): $($map.from) missing from $($zip.Name)"
+                  return $false
+                }
+              }
+              New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
+              $linked = $false
+              if ($fromPayload) {
+                try {
+                  if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Force }
+                  New-Item -ItemType HardLink -Path $dest -Target $src -ErrorAction Stop | Out-Null
+                  $linked = $true
+                }
+                catch { $linked = $false }
+              }
+              if (-not $linked) { Copy-Item -LiteralPath $src -Destination $dest -Force }
+              $mapped++
+            }
+            Write-Host "pre-installed (fork release): $($package.name) $tag ($mapped mappings)"
+            return $true
+          }
+
+          $installed = @()
+          $failed = @()
+          $variant = "${{ matrix.variant }}"
+          foreach ($package in $manifest.packages) {
+            # Variant scope (manifest "Variant contract"): an entry WITHOUT the
+            # field is required in EVERY variant, so this skip can only ever
+            # remove a package that opted in. A skipped package lands in
+            # neither $installed nor $failed, so it cannot trip the fail-closed
+            # gate below; the staged verify only asserts what $installed names.
+            # PSObject.Properties.Name is an explicit existence check, so this
+            # does not lean on PowerShell missing-property ($null) semantics.
+            if ($package.PSObject.Properties.Name -contains "variants") {
+              if (-not (@($package.variants) -contains $variant)) {
+                Write-Host "variant skip: $($package.name) is not part of the $variant package"
+                continue
+              }
+            }
+            # A fork-release package bypasses wpm entirely (no index entry,
+            # no pin lookup): it is fetched from the fork and unpacked.
+            if ($package.source -eq "fork-release") {
+              if (Install-ForkRelease $package) {
+                $installed += $package.name
+              }
+              else {
+                $failed += $package.name
+              }
+              continue
+            }
+            # native-shell#312: nothing installs unless the committed pin matches
+            # the live index. A pin failure counts as a failed install — the
+            # same loud, non-blocking fail-open path as a transport failure.
+            if (-not (Confirm-PackagePin $package $archKey)) {
+              $failed += $package.name
+              continue
+            }
+            if (Install-Package $package.name) {
+              $installed += $package.name
+              Write-Host "pre-installed: $($package.name)"
+            }
+            else {
+              $failed += $package.name
+              Write-Host "::warning::pre-install of '$($package.name)' failed on ${{ matrix.arch }} after retries; shipping WITHOUT it (fail-open, native-shell#189)"
+            }
+          }
+
+          # Adapted-command argv prefixes (native-shell#467). Declared here, not in
+          # shims.map: wpm rewrites shims.map wholesale from its own (command,
+          # payload) pairs on every `wpm links rebuild`, which runs at each shell
+          # start, so anything stored there would be erased. The forwarders read
+          # <root>\.wpm\adapters.map instead and never write it.
+          $adapterLines = @(
+            "# Adapted-command argv prefixes, written by the NativeShell release.",
+            "# <command>=<argv prefix spliced ahead of the caller argv>"
+          )
+          $adaptersWritten = 0
+          foreach ($package in $manifest.packages) {
+            if (-not $package.adapted_argv) { continue }
+            # Only for packages this leg really installed: an adapter for an absent
+            # payload would be dead weight and would mask the "cannot pre-install"
+            # warning above.
+            if ($installed -notcontains $package.name) { continue }
+            foreach ($command in @($package.adapted_argv.commands)) {
+              if ([string]::IsNullOrWhiteSpace($command)) { continue }
+              $prefix = (@($package.adapted_argv.prepend) | Where-Object { $_ }) -join " "
+              if ([string]::IsNullOrWhiteSpace($prefix)) { continue }
+              $adapterLines += "$command=$prefix"
+              $adaptersWritten++
+            }
+          }
+          if ($adaptersWritten -gt 0) {
+            $adapterPath = Join-Path $root ".wpm\adapters.map"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $adapterPath) | Out-Null
+            # LF line endings, matching what the C++ reader documents: it splits
+            # on LF and trims a trailing CR, so either ending parses, but LF keeps
+            # the shipped file byte-identical to the format described there.
+            $adapterText = ($adapterLines -join "`n") + "`n"
+            [System.IO.File]::WriteAllText($adapterPath, $adapterText, (New-Object System.Text.UTF8Encoding($false)))
+            Write-Host "adapters.map: $adaptersWritten command(s) -> $adapterPath"
+            foreach ($line in $adapterLines | Where-Object { $_ -notmatch "^#" }) { Write-Host "  $line" }
+          }
+
+          $shimsMade = @()
+          foreach ($shim in $manifest.shims) {
+            # A shim may only reference an installed package's payload.
+            if ($installed -notcontains $shim.target) { continue }
+            if (New-CommandShim $shim.name) {
+              $shimsMade += $shim.name
+            }
+            else {
+              Write-Host "::warning::shim '$($shim.name)' could not be materialized (fail-open)"
+            }
+          }
+
+          # The package-shim forwarder ships beside native-cmd.exe in the
+          # Native Cmd release zip and belongs in usr\bin of the product
+          # package (native-shell#466/#468). Preinstalled layout:shim commands
+          # keep forwarding through native-cmd.exe — it resolves
+          # opt\<pkg>\<cmd>.exe itself and needs no shipped .wpm state —
+          # but runtime `wpm install` and `wpm links rebuild` need the
+          # forwarder present to link package shims and to heal stale
+          # hardlink shims on upgrade. Stage it AFTER the installs: if it
+          # sat in usr\bin during `wpm install`, package shims would link
+          # to it and then depend on a .wpm\shims.map this package
+          # deliberately does not ship.
+          $forwarder = Join-Path (Split-Path -Path $nativeCmdExe -Parent) "native-cmd-shim.exe"
+          if (Test-Path -LiteralPath $forwarder) {
+            Copy-Item -LiteralPath $forwarder -Destination (Join-Path $root "usr\bin\native-cmd-shim.exe") -Force
+            Write-Host "staged the package-shim forwarder native-cmd-shim.exe"
+          }
+          else {
+            Write-Host "::warning::native-cmd-shim.exe not found beside $nativeCmdExe (the Native Cmd zip should carry it since v1.1.15); layout:shim installs fall back to native-cmd.exe forwarding"
+            $failed += "native-cmd-shim"
+          }
+
+          # native-shell#468 — FAIL-CLOSED on the primary leg: a silently skipped
+          # preinstall once shipped a gawk-less 1.4.1 and left
+          # usr\bin\awk.exe/gawk.exe as 1.4.0-era copies of an older
+          # native-cmd.exe. x64 is the user-facing leg, so any failure here
+          # must stop the release; other legs keep the loud-warning
+          # fail-open contract (arm64 has no gawk/native-git artifacts by
+          # design).
+          # Variant-aware by construction: a package the manifest scoped away
+          # from this variant is skipped BEFORE the loop body and therefore
+          # never enters $failed, so the with-git leg cannot be failed by the
+          # native-git it deliberately does not ship. Everything this variant
+          # DOES require (gawk, ripgrep, fd, the awk shim) stays fail-closed.
+          if ("${{ matrix.arch }}" -eq "x64") {
+            if ($failed.Count -gt 0) {
+              throw "x64 pre-install is fail-closed (native-shell#468, variant $variant): failed packages: $($failed -join ', ')"
+            }
+            $missingShims = @($manifest.shims | Where-Object { $shimsMade -notcontains $_.name } | ForEach-Object { $_.name })
+            if ($missingShims.Count -gt 0) {
+              throw "x64 pre-install is fail-closed (native-shell#468): manifest shims not materialized: $($missingShims -join ', ')"
+            }
+          }
+
+          $summary = "### Pre-install (${{ matrix.package_arch }}, variant $variant)`ninstalled: $(if ($installed) { $installed -join ', ' } else { 'none' })`nshims: $(if ($shimsMade) { $shimsMade -join ', ' } else { 'none' })`nfailed: $(if ($failed) { $failed -join ', ' } else { 'none' })"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $summary
+          "root=$root" >> $env:GITHUB_OUTPUT
+          "installed=$($installed -join ',')" >> $env:GITHUB_OUTPUT
+          "shims=$($shimsMade -join ',')" >> $env:GITHUB_OUTPUT
+          "failed=$($failed -join ',')" >> $env:GITHUB_OUTPUT
+
+      - name: Package release zip
+        shell: pwsh
+        run: |
+          ./scripts/package-release.ps1 `
+            -Version "${{ needs.resolve-tag.outputs.version }}" `
+            -NativeCmdPath "${{ steps.native_cmd.outputs.exe }}" `
+            -PreinstallRoot "${{ steps.preinstall.outputs.root }}" `
+            -Configuration release `
+            -Target "${{ matrix.rust_target }}" `
+            -Arch "${{ matrix.package_arch }}"
+
+      # native-shell#470: the staged tree carries real NTFS hardlinks (wpm's own
+      # layout, restored after the Copy-Item staging sweep), and the two
+      # hardlink-native companions must transport that faithfully. Measured
+      # on the v1.4.2 x64 tree: .tar.gz (bsdtar) round-trips the hardlinks
+      # exactly (git.exe family 6-way, awk 3-way, every file byte-identical);
+      # 7-Zip 26.04 archives the CONTENT once (solid compression) but does
+      # not restore hardlinks on extraction, so the .7z gate asserts
+      # content-identity only. A failure here fails the release: an archive
+      # that unpacks to anything other than the staged bytes never ships.
+      - name: Verify hardlink-native archives
+        shell: pwsh
+        env:
+          # fsutil hardlink list needs an elevated shell; GitHub Windows
+          # runners provide one.
+          HS_ARCHIVE_VERSION: ${{ needs.resolve-tag.outputs.version }}
+          HS_ARCHIVE_ARCH: ${{ matrix.package_arch }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:HS_ARCHIVE_VERSION
+          $arch = $env:HS_ARCHIVE_ARCH
+          $name = "native-shell-v$version-win-$arch"
+          # Absolute on purpose: the fingerprint function strips this prefix
+          # from absolute FullName paths, so a relative root would cut
+          # mid-path and every comparison would spuriously differ.
+          $stage = (Resolve-Path "dist/$name").Path
+          $tarGz = "dist/$name.tar.gz"
+          $sevenZipArchive = "dist/$name.7z"
+          foreach ($artifact in @($tarGz, $sevenZipArchive)) {
+            if (-not (Test-Path -LiteralPath $artifact)) {
+              throw "expected hardlink-native archive missing: $artifact"
+            }
+          }
+
+          $extractTar = Join-Path $env:RUNNER_TEMP "archive-verify-tar"
+          $extract7z = Join-Path $env:RUNNER_TEMP "archive-verify-7z"
+          New-Item -ItemType Directory -Force -Path $extractTar, $extract7z | Out-Null
+          tar -xf $tarGz -C $extractTar
+          if ($LASTEXITCODE -ne 0) { throw "tar -xf failed on $tarGz" }
+
+          $sevenZipCandidates = @()
+          if ($env:ProgramFiles) { $sevenZipCandidates += Join-Path $env:ProgramFiles "7-Zip\7z.exe" }
+          if (${env:ProgramFiles(x86)}) { $sevenZipCandidates += Join-Path ${env:ProgramFiles(x86)} "7-Zip\7z.exe" }
+          $sevenZip = $sevenZipCandidates |
+            Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $sevenZip) { $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source }
+          if (-not $sevenZip) { throw "7z.exe not found on the runner; cannot verify $sevenZipArchive" }
+          & $sevenZip x $sevenZipArchive ("-o" + $extract7z) -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "7z x failed on $sevenZipArchive" }
+
+          # Byte-identity: every path in the staged tree must unpack to the
+          # same length and SHA-256 from BOTH archives.
+          function Get-TreeFingerprint([string]$root) {
+            Get-ChildItem -LiteralPath $root -Recurse -File | ForEach-Object {
+              "{0}|{1}|{2}" -f $_.FullName.Substring($root.Length + 1).ToLowerInvariant(), $_.Length,
+                (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+            } | Sort-Object
+          }
+          $expected = Get-TreeFingerprint $stage
+          $fromTar = Get-TreeFingerprint (Join-Path $extractTar $name)
+          $from7z = Get-TreeFingerprint (Join-Path $extract7z $name)
+          $diffTar = Compare-Object -ReferenceObject $expected -DifferenceObject $fromTar
+          if ($diffTar) {
+            $diffTar | Select-Object -First 5 | ForEach-Object { Write-Host $_.InputObject }
+            throw ".tar.gz round-trip is not byte-identical to the staged tree ($($diffTar.Count) differing entries)"
+          }
+          $diff7z = Compare-Object -ReferenceObject $expected -DifferenceObject $from7z
+          if ($diff7z) {
+            $diff7z | Select-Object -First 5 | ForEach-Object { Write-Host $_.InputObject }
+            throw ".7z round-trip is not byte-identical to the staged tree ($($diff7z.Count) differing entries)"
+          }
+          Write-Host "content identity: .tar.gz OK, .7z OK ($($expected.Count) files)"
+
+          # Hardlink restoration, .tar.gz only (7-Zip's limitation is
+          # documented, not gated): the bash/sh shim family is shipped on
+          # every leg, so its >=2 links are the universal probe; native-git's
+          # git.exe family (6-way on a leg where it pre-installed) is the
+          # payload probe this dedup exists for.
+          function Get-HardLinkCount([string]$path) {
+            $listing = fsutil hardlink list $path 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "fsutil hardlink list failed for $path`: $listing" }
+            return ($listing | Measure-Object -Line).Lines
+          }
+          $tarRoot = Join-Path $extractTar $name
+          $bashProbe = Join-Path $tarRoot "cmd\usr\bin\bash.exe"
+          if (-not (Test-Path -LiteralPath $bashProbe)) { throw "cmd\usr\bin\bash.exe missing from the .tar.gz extraction" }
+          $bashLinks = Get-HardLinkCount $bashProbe
+          if ($bashLinks -lt 2) {
+            throw ".tar.gz did not restore hardlinks: cmd\usr\bin\bash.exe has $bashLinks link(s), expected >= 2"
+          }
+          Write-Host "bash.exe shim family links in .tar.gz extraction: $bashLinks"
+          $gitProbe = Join-Path $tarRoot "cmd\usr\bin\git.exe"
+          if (Test-Path -LiteralPath $gitProbe) {
+            $gitLinks = Get-HardLinkCount $gitProbe
+            if ($gitLinks -lt 2) {
+              throw ".tar.gz did not restore hardlinks: cmd\usr\bin\git.exe has $gitLinks link(s), expected >= 2"
+            }
+            Write-Host "git.exe family links in .tar.gz extraction: $gitLinks"
+          }
+          else {
+            Write-Host "::warning::native-git not pre-installed on this leg; git.exe link probe skipped"
+          }
+
+          $zipBytes = (Get-Item "dist/$name.zip").Length
+          $tarBytes = (Get-Item $tarGz).Length
+          $sevenBytes = (Get-Item $sevenZipArchive).Length
+          $table = "### Archive sizes ($arch)`n| asset | MB |`n|---|---|`n| zip | $([Math]::Round($zipBytes / 1MB, 2)) |`n| tar.gz (hardlink-native) | $([Math]::Round($tarBytes / 1MB, 2)) |`n| 7z | $([Math]::Round($sevenBytes / 1MB, 2)) |"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $table
+
+      # native-shell#189 acceptance, enforced per-artifact: whatever the pre-install
+      # step INSTALLED must work inside the staged package — `--version` on
+      # every shim, and a bash-it plugin-shaped awk pipeline through the
+      # PACKAGED native-shell.exe (the same `| awk '{print $1}'` shape the gradle
+      # completion pipes through) plus a raw-byte line-ending assertion on
+      # that pipeline (native-shell#467 — PowerShell's native capture strips \r,
+      # so string equality cannot see the CRLF regression; the probe reads
+      # back the file the shell itself redirects to). What failed to install
+      # only warns (fail-open); what installed but does not work fails the job.
+      - name: Verify pre-installed packages in the staged release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $manifest = Get-Content -LiteralPath scripts/release/preinstall.json -Raw | ConvertFrom-Json
+          $stage = "dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.package_arch }}"
+          $installed = "${{ steps.preinstall.outputs.installed }}" -split "," | Where-Object { $_ }
+          $failed = "${{ steps.preinstall.outputs.failed }}" -split "," | Where-Object { $_ }
+
+          foreach ($failure in $failed) {
+            Write-Host "::warning::release ships without pre-installed '$failure' (${{ matrix.arch }}; users can run native-cmd wpm install $failure after install)"
+          }
+
+          $binDir = Join-Path $stage "cmd\usr\bin"
+          # native-shell#312 says this step hard-asserts only what the pre-install
+          # step reported as INSTALLED (the fail-open contract): a package
+          # skipped by design on this leg (no arch pin, pin mismatch) asserts
+          # nothing. And wpm materializes a usr\bin shim per REGISTERED
+          # COMMAND — the native-git package ships git.exe, ripgrep ships rg.exe —
+          # never per package name, so the assertion targets each package's
+          # `commands` from the manifest (mirroring the wpm index), with the
+          # package name as the fallback for entries that carry none.
+          # The staged payloads are NATIVE programs, so on a foreign-arch leg they
+          # cannot be executed at all: Windows x64 has no ARM64 user-mode emulator,
+          # and invoking an aarch64 image fails with a ResourceUnavailable error
+          # before --version ever runs ("StandardOutputEncoding is only supported
+          # when standard output is redirected"). The behaviour is only assertable
+          # where the binary can run; elsewhere fall back to a structural PE check,
+          # the same contract the bash/sh face gate below already applies.
+          $shimMachines = @{ "x64" = 0x8664; "arm64" = 0xAA64 }
+          $shimTargetMachine = $shimMachines["${{ matrix.arch }}"]
+          if (-not $shimTargetMachine) { throw "unknown arch ${{ matrix.arch }}" }
+          $shimHostArch = (Get-CimInstance -ClassName Win32_Processor |
+            Select-Object -First 1).Architecture
+          $shimCanRunNatively = ($shimHostArch -eq 9 -and "${{ matrix.arch }}" -eq "x64") -or
+            ($shimHostArch -eq 12 -and "${{ matrix.arch }}" -eq "arm64")
+
+          function Get-StagedPEMachine([string]$path) {
+            $fs = [System.IO.File]::OpenRead($path)
+            try {
+              $br = New-Object System.IO.BinaryReader($fs)
+              if ($br.ReadUInt16() -ne 0x5A4D) { throw "not an MZ image: $path" }
+              $null = $fs.Seek(0x3C, [System.IO.SeekOrigin]::Begin)
+              $peOffset = $br.ReadUInt32()
+              $null = $fs.Seek($peOffset, [System.IO.SeekOrigin]::Begin)
+              if ($br.ReadUInt32() -ne 0x00004550) { throw "not a PE image: $path" }
+              return $br.ReadUInt16()
+            }
+            finally {
+              $fs.Dispose()
+            }
+          }
+
+          function Assert-StagedShim([string]$name, [string]$packageName) {
+            $exe = Join-Path $binDir "$name.exe"
+            if (-not (Test-Path -LiteralPath $exe)) {
+              throw "pre-install reported '$packageName' installed but $exe is missing from the staged package"
+            }
+            if (-not $shimCanRunNatively) {
+              # Foreign-arch leg: assert the image is really built for this package
+              # arch rather than pretending the forwarder ran.
+              $machine = Get-StagedPEMachine $exe
+              if ($machine -ne $shimTargetMachine) {
+                throw ("$name.exe is machine 0x{0:X4} in the staged ${{ matrix.arch }} package, expected 0x{1:X4}" -f $machine, $shimTargetMachine)
+              }
+              Write-Host "$name.exe: foreign-arch leg, PE machine 0x$($machine.ToString("X4")) OK (not executed)"
+              return
+            }
+            $out = & $exe --version 2>&1
+            if ($LASTEXITCODE -ne 0 -or -not "$out") {
+              throw "$name --version failed inside the staged package (exit $LASTEXITCODE)"
+            }
+            Write-Host "$name --version: $($out | Select-Object -First 1)"
+          }
+          foreach ($package in $manifest.packages) {
+            if ($installed -notcontains $package.name) { continue }
+            $names = @($package.commands | Where-Object { $_ })
+            if ($names.Count -eq 0) { $names = @($package.name) }
+            foreach ($name in $names) {
+              Assert-StagedShim $name $package.name
+            }
+          }
+          foreach ($shim in $manifest.shims) {
+            # A manifest shim exists only when its target package installed
+            # (the pre-install step materializes it under exactly that rule).
+            if ($installed -notcontains $shim.target) { continue }
+            Assert-StagedShim $shim.name $shim.target
+          }
+
+          # The awk probes run the staged binaries, so they need the same native-arch
+          # gate as Assert-StagedShim: on a foreign-arch leg `gawk` cannot start and
+          # the LF contract is unobservable here (the arm64 package is verified
+          # structurally by the face gate below).
+          if ($installed -contains "gawk" -and $shimCanRunNatively) {
+            $env:PATH = "$(Resolve-Path $binDir);$env:PATH"
+
+            $native_shell = Join-Path $stage "native-shell.exe"
+            $out = Write-Output "gradle-hash-input" | & $native_shell -c "awk '{print `$1}'"
+            if ("$out" -ne "gradle-hash-input") {
+              throw "plugin-shaped awk pipeline through the packaged native-shell.exe printed '$out' instead of 'gradle-hash-input'"
+            }
+            Write-Host "awk pipeline through packaged native-shell.exe: $out"
+
+            # native-shell#467 — the LF contract is on the BYTES, and a PowerShell
+            # native-command capture silently strips \r, so the string check
+            # above cannot see the regression (exactly how the text-mode
+            # mingw gawk shipped). The bundled payload's CRT rewrites \n as
+            # \r\n on write and folds \r\n into \n on read; the shipped fix
+            # is the Native Cmd forwarder's adapted-command argv splice
+            # (-v BINMODE=3 for awk/gawk). Each probe lets native-shell redirect the
+            # pipeline to a file itself and asserts the raw bytes — LF output
+            # on both command faces (the wpm-made gawk shim and the manifest
+            # awk shim forward through the same dispatcher), and an explicit
+            # "\r\n" ORS landing exactly \r\n (not the \r\r\n doubling a
+            # text-mode stdout produces). On a forwarder without the adapter
+            # these fail the release — fail-closed, like the rest of this step.
+            $probeDir = ($env:RUNNER_TEMP -replace '\\', '/')
+            function Assert-AwkOutputBytes([string]$face, [string]$command, [byte[]]$expected, [string]$probe) {
+              & $native_shell -c ($command + " > '" + $probe + "'")
+              if ($LASTEXITCODE -ne 0) {
+                throw "$face byte probe exited $LASTEXITCODE"
+              }
+              $hex = (([System.IO.File]::ReadAllBytes($probe)) | ForEach-Object { $_.ToString('x2') }) -join ' '
+              $want = ($expected | ForEach-Object { $_.ToString('x2') }) -join ' '
+              Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+              if ($hex -ne $want) {
+                throw "$face stdout landed as [$hex], expected [$want] — the staged bundle ships a text-mode gawk (native-shell#467); the bundled forwarders must splice the adapted_argv prefix declared in scripts/release/preinstall.json (shipped as cmd\.wpm\adapters.map)"
+              }
+              Write-Host "$face raw output bytes: $hex"
+            }
+            Assert-AwkOutputBytes "awk"  "printf 'a\nb\n' | awk '{print `$1}'"  ([byte[]](0x61, 0x0a, 0x62, 0x0a))             "$probeDir/native-shell-awk-lf.bin"
+            Assert-AwkOutputBytes "gawk" "printf 'a\nb\n' | gawk '{print `$1}'" ([byte[]](0x61, 0x0a, 0x62, 0x0a))             "$probeDir/native-shell-gawk-lf.bin"
+            Assert-AwkOutputBytes "awk"  ("printf 'a\nb\n' | awk '" + 'BEGIN{ORS="\r\n"}{print $1}' + "'") ([byte[]](0x61, 0x0d, 0x0a, 0x62, 0x0d, 0x0a)) "$probeDir/native-shell-awk-ors.bin"
+
+          }
+
+      - name: Verify bash/sh invocation faces in the staged release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $stage = "dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.package_arch }}"
+          $usrBin = Join-Path $stage "cmd\usr\bin"
+
+          # The behavioral face check runs the staged shims on THIS runner.
+          # The arm64 leg cross-compiles on an x64 windows-2025 host, and
+          # x64 Windows has no ARM64 user-mode emulator, so correctly-built
+          # aarch64 shims can never start here (run 39233051251: "The
+          # specified executable is not a valid application for this OS
+          # platform" — the shims were aarch64 as the package demands; the
+          # host simply cannot execute them). On such a foreign-arch leg the
+          # gate degrades to a structural PE-machine check: bash.exe,
+          # sh.exe, native-shell.exe and the staged native-cmd.exe must each carry the
+          # target arch's machine type — the property the behavioral check
+          # would have exercised the invocation-face forwarding through.
+          # The pre-install fail-open contract above already degrades the
+          # same way (an arm64 wpm client cannot run on this host either).
+          $targetMachines = @{ "x64" = 0x8664; "arm64" = 0xAA64 }
+          $targetMachine = $targetMachines["${{ matrix.arch }}"]
+          if (-not $targetMachine) { throw "unknown arch ${{ matrix.arch }}" }
+          $hostArch = (Get-CimInstance -ClassName Win32_Processor |
+            Select-Object -First 1).Architecture
+          $canRunNatively = ($hostArch -eq 9 -and "${{ matrix.arch }}" -eq "x64") -or
+            ($hostArch -eq 12 -and "${{ matrix.arch }}" -eq "arm64")
+
+          # PE header machine field (IMAGE_FILE_MACHINE_*), parsed without
+          # external tooling.
+          function Get-PEMachine([string]$path) {
+            $fs = [System.IO.File]::OpenRead($path)
+            try {
+              $br = New-Object System.IO.BinaryReader($fs)
+              if ($br.ReadUInt16() -ne 0x5A4D) { throw "not an MZ image: $path" }
+              $null = $fs.Seek(0x3C, [System.IO.SeekOrigin]::Begin)
+              $peOffset = $br.ReadUInt32()
+              $null = $fs.Seek($peOffset, [System.IO.SeekOrigin]::Begin)
+              if ($br.ReadUInt32() -ne 0x00004550) { throw "not a PE image: $path" }
+              return $br.ReadUInt16()
+            }
+            finally {
+              $fs.Dispose()
+            }
+          }
+
+          if ($canRunNatively) {
+            foreach ($face in @("bash", "sh")) {
+              $exe = Join-Path $usrBin "$face.exe"
+              if (-not (Test-Path -LiteralPath $exe)) {
+                throw "$face.exe is missing from the staged package at $exe"
+              }
+
+              $help = (& $exe --help 2>&1 | Out-String)
+              if ($LASTEXITCODE -ne 0) {
+                throw "$face --help exited $LASTEXITCODE inside the staged package"
+              }
+              if ($help -notmatch "GNU bash, version" -or $help -notmatch "GNU long options:") {
+                throw "$face --help did not print the GNU usage form; the shim is not forwarding the invocation face`n$help"
+              }
+
+              $version = (& $exe --version 2>&1 | Out-String)
+              if ($LASTEXITCODE -ne 0 -or $version -notmatch "GNU bash, version") {
+                throw "$face --version did not print the GNU version banner"
+              }
+
+              $zero = (& $exe -c 'echo $0' 2>&1 | Out-String).Trim()
+              if ($LASTEXITCODE -ne 0 -or $zero -ne $face) {
+                throw "$face -c 'echo `$0' printed '$zero' instead of '$face'; the invocation face did not reach the packaged native-shell.exe"
+              }
+
+              Write-Host "$face --help: GNU usage OK; `$0 = $zero"
+            }
+
+            $native_shell = Join-Path $stage "native-shell.exe"
+            $productHelp = (& $native_shell --help 2>&1 | Out-String)
+            if ($LASTEXITCODE -ne 0 -or $productHelp -notmatch "Native Shell ") {
+              throw "the native-shell face no longer prints the product help"
+            }
+            Write-Host "native-shell --help: product help OK"
+          }
+          else {
+            # Foreign-arch leg: structural verification only. Fails the job
+            # on a wrong-arch shim (the v1.4.0-era failure shape: an x64
+            # shim smuggled into the arm64 package would run on the host
+            # but ship broken), so the gate still pins the package's
+            # architecture honestly.
+            Write-Host "host arch $($hostArch) cannot execute ${{ matrix.arch }} binaries; running the structural PE-machine face check"
+            foreach ($rel in @("cmd\usr\bin\bash.exe", "cmd\usr\bin\sh.exe", "native-shell.exe", "cmd\usr\bin\native-cmd.exe")) {
+              $path = Join-Path $stage $rel
+              if (-not (Test-Path -LiteralPath $path)) {
+                throw "$rel is missing from the staged package at $path"
+              }
+              $machine = Get-PEMachine $path
+              if ($machine -ne $targetMachine) {
+                throw ("{0} carries PE machine 0x{1:X4}, expected 0x{2:X4} for the {3} package" -f `
+                  $rel, $machine, $targetMachine, "${{ matrix.arch }}")
+              }
+              Write-Host ("{0}: PE machine 0x{1:X4} matches the {2} package" -f `
+                $rel, $machine, "${{ matrix.arch }}")
+            }
+          }
+
+      # The -with-git variant is archive-only (no setup.exe): the normal name
+      # already owns the install and self-update channel, and a second
+      # setup.exe would fight that channel rather than add to it.
+      - name: Install Inno Setup
+        if: matrix.variant != 'with-git'
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Inno Setup installer
+        if: matrix.variant != 'with-git'
+        shell: pwsh
+        run: |
+          $isccCandidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $isccCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            throw "ISCC.exe not found after installing Inno Setup"
+          }
+          $sourceDir = Join-Path (Resolve-Path dist) "native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.package_arch }}"
+          $outputDir = Resolve-Path dist
+          & $iscc installer\native-shell.iss `
+            "/DAppVersion=${{ needs.resolve-tag.outputs.version }}" `
+            "/DAppArch=${{ matrix.arch }}" `
+            "/DSourceDir=$sourceDir" `
+            "/DOutputDir=$outputDir"
+
+      # Deliberately NO stable "latest-compatible" aliases. They doubled every
+      # payload in the release (the same bytes under a version-less name) so
+      # `releases/latest/download/<name>` could resolve. --self-update does
+      # not need them: installer_assets() lists the versioned installer and
+      # download_verified_installer() falls through to it when the stable name
+      # 404s, verifying against the versioned .sha256 sidecar.
+      - name: Emit SHA-256 digest sidecars for the installers
+        if: matrix.variant != 'with-git'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Only the versioned installer ships, so only its sidecar does. The
+          # name stays '<installer>.sha256' because digest_asset_for() derives
+          # the sidecar name from the installer name it is verifying.
+          foreach ($file in @(
+            "dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.package_arch }}-setup.exe"
+          )) {
+            if (-not (Test-Path -LiteralPath $file)) {
+              throw "expected installer artifact missing: $file"
+            }
+            $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            Set-Content -LiteralPath "$file.sha256" -Value "$hash  $(Split-Path -Leaf $file)" -Encoding ascii
+            Write-Host "$(Split-Path -Leaf $file): $hash"
+          }
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.package_arch }}
+          # One artifact per format, versioned name only:
+          #   .tar.gz     the hardlink-preserving payload (the .zip alternative
+          #               spent 54.47 MB vs 29.63 MB on the same tree, because
+          #               Compress-Archive expands the 6-way git.exe hardlink
+          #               family into independent copies - native-shell#470)
+          #   -setup.exe  the Inno installer
+          #   .sha256     the digest --self-update verifies against
+          # The .7z is still BUILT and verified inside the job (content identity
+          # against the staged tree); it is simply no longer published.
+          # The -with-git variant is a PORTABLE archive only: it has no installer,
+          # so its upload carries the tarball alone and the installer lines
+          # simply do not match any file it produced.
+          path: |
+            dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.package_arch }}.tar.gz
+            dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.package_arch }}-setup.exe
+            dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-win-${{ matrix.package_arch }}-setup.exe.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  # Unix release legs. The engine's Linux port (rubash#225-#240) is closed
+  # and the CI cross-check line is green, so the release pipeline ships what
+  # CI compiles — but never unverified: each leg smoke-runs the exact binary
+  # it uploads, on that OS, before any artifact leaves the job. A smoke
+  # failure fails the job, so nothing untested can reach the release.
+  #
+  # No Native Cmd bundling on Unix, and none of the Windows package-manager
+  # surface either (standing platform red line): Unix has native coreutils,
+  # and the compile-time cfg already keeps the Windows-only layer out of
+  # non-Windows binaries.
+  build-linux:
+    name: build-linux (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    needs: resolve-tag
+    outputs:
+      # Both matrix legs fetch the same PINNED rubash revision, so this
+      # resolves to the same value in both; the pin steps fail the build if
+      # the checkout is not exactly the pinned revision (rubash#827).
+      rubash_revision: ${{ steps.rubash.outputs.revision }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # gnu, not musl (released shape, recorded in docs/release.md):
+          # musl is now compiled AND smoke-gated by `cross-target-smoke` in
+          # ci.yml, so a musl leg no longer ships an untested libc surface —
+          # but the released tarballs stay gnu until a consumer needs a
+          # static build. Adding one is a delivery decision: add
+          # rust_target: x86_64-unknown-linux-musl here. The glibc floor is
+          # the build image's (2.35 on ubuntu-22.04): Ubuntu 22.04+,
+          # Debian 12+. Move both legs forward together when the image
+          # retires.
+          - arch: x86_64
+            rust_target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          # Native arm64 runner (free for public repos), not cross/qemu:
+          # it compiles natively AND runs the smoke gate natively — the
+          # whole point of the honest gate.
+          - arch: aarch64
+            rust_target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+
+      # Same pinned-rubash contract as build-windows (rubash#827): fetch
+      # exactly scripts/release/rubash-pin.json's commit into ../rubash, where
+      # the [patch] path override takes over, and die on any mismatch.
+      - name: Checkout pinned rubash revision
+        id: rubash-pin
+        run: |
+          set -euo pipefail
+          rev="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rubash_rev"])' scripts/release/rubash-pin.json)"
+          if [[ ! "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "rubash-pin.json: rubash_rev must be a full 40-char commit sha, got '$rev' (abbreviated forms cannot be fetched -- git resolves the fetch argument server-side as a ref name)" >&2
+            exit 1
+          fi
+          if [ -e ../rubash ]; then
+            echo "a rubash checkout already exists at ../rubash; refusing to pin over it" >&2
+            exit 1
+          fi
+          git init -q ../rubash
+          git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
+          if ! git -C ../rubash fetch --depth 1 origin "$rev"; then
+            echo "could not fetch the pinned rubash revision $rev; if rubash main was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
+            exit 1
+          fi
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          git -C ../rubash submodule update --init --depth 1
+          actual="$(git -C ../rubash rev-parse HEAD)"
+          if [ "$actual" != "$rev" ]; then
+            echo "rubash checkout resolved to $actual, not the pinned $rev; refusing to build (rubash#827)" >&2
+            exit 1
+          fi
+          pin_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rubash_version"])' scripts/release/rubash-pin.json)"
+          echo "rubash pinned at ${rev:0:12} (v$pin_version)"
+          echo "revision=${rev:0:12}" >> "$GITHUB_OUTPUT"
+
+
+      - name: Checkout release tag
+        run: |
+          git fetch --tags --force
+          tag="${{ needs.resolve-tag.outputs.tag }}"
+          # A dispatch derives the tag from Cargo.toml and may run before the tag
+          # exists (or to re-fly from the branch). Check out the tag only when it
+          # is really there; otherwise release the ref this run checked out.
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            git checkout "${tag}"
+          else
+            echo "tag ${tag} does not exist yet; releasing from $(git rev-parse --short HEAD) ($(git rev-parse --abbrev-ref HEAD))"
+          fi
+
+      - name: Validate Cargo version matches release tag
+        run: |
+          line="$(grep -m1 -E '^version[[:space:]]*=' Cargo.toml)"
+          cargo_version="$(printf '%s' "$line" | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/')"
+          if [ "$cargo_version" != "${{ needs.resolve-tag.outputs.version }}" ]; then
+            echo "Cargo.toml version '$cargo_version' does not match release tag ${{ needs.resolve-tag.outputs.tag }}" >&2
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      # Same contract as build-windows: the pinned-clone step above already
+      # fetched exactly the pinned commit; this step re-derives the revision,
+      # refuses a dirty tree, and cross-checks the pin before anything is
+      # compiled (rubash#827). The revision is embedded by build.rs, so
+      # `native-shell --version` reports it.
+      - name: Pin rubash revision
+        id: rubash
+        run: |
+          if [ ! -d ../rubash ]; then
+            echo "rubash checkout missing at ../rubash" >&2
+            exit 1
+          fi
+          revision="$(git -C ../rubash rev-parse --short=12 HEAD)"
+          if [ -z "$revision" ]; then
+            echo "could not resolve rubash revision" >&2
+            exit 1
+          fi
+          dirty="$(git -C ../rubash status --porcelain)"
+          if [ -n "$dirty" ]; then
+            echo "rubash checkout is dirty; a release must pin a committed revision" >&2
+            printf '%s\n' "$dirty" >&2
+            exit 1
+          fi
+          pinned="${{ steps.rubash-pin.outputs.revision }}"
+          if [ -z "$pinned" ]; then
+            echo "the pinned-rubash clone step produced no revision to cross-check" >&2
+            exit 1
+          fi
+          if [ "$revision" != "$pinned" ]; then
+            echo "rubash checkout ($revision) drifted from the pinned revision ($pinned); refusing to build (rubash#827)" >&2
+            exit 1
+          fi
+          echo "rubash revision: $revision (matches the pin)"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      # No RUSTFLAGS here: crt-static is a Windows-leg choice; Linux gnu
+      # binaries link the system glibc dynamically (the documented floor).
+      - name: Build native-shell
+        run: cargo build --locked --release --target ${{ matrix.rust_target }}
+
+      # HONEST GATE — smoke the binary this job just built, on this OS,
+      # before anything is packaged or uploaded. A binary that cannot pass
+      # these four checks on its build OS never becomes an artifact.
+      - name: "Smoke-test built binary (gate: no smoke, no artifact)"
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.rust_target }}/release/native-shell"
+          test -x "$bin"
+
+          # 1) --version carries this release's version and the pinned engine
+          #    revision (exact substrings pinned by
+          #    tests/rubash_revision_banner.rs).
+          out="$("$bin" --version)"
+          printf '%s\n' "$out"
+          grep -qF "Native Shell ${{ needs.resolve-tag.outputs.version }} " <<<"$out"
+          grep -qF "rubash   git ${{ steps.rubash.outputs.revision }}" <<<"$out"
+
+          # 2) one-shot engine execution
+          out="$("$bin" -c 'echo ok')"
+          [ "$out" = "ok" ]
+
+          # 3) external commands + pipeline through native coreutils
+          out="$(printf 'a\nb\n' | "$bin" -c 'sort | head -1')"
+          [ "$out" = "a" ]
+
+          # 4) plugin stack offline check: empty spec, isolated HOME —
+          #    must exit 0 with zero output and touch no network.
+          mkdir -p "$RUNNER_TEMP/smoke-home"
+          : > "$RUNNER_TEMP/smoke-plugins.toml"
+          out="$(HOME="$RUNNER_TEMP/smoke-home" \
+            NATIVE_SHELL_PLUGIN_SPEC="$RUNNER_TEMP/smoke-plugins.toml" \
+            "$bin" plugin sync --bootstrap 2>&1)"
+          if [ -n "$out" ]; then
+            echo "plugin sync --bootstrap was not quiet on empty spec:" >&2
+            printf '%s\n' "$out" >&2
+            exit 1
+          fi
+
+          face_dir="$RUNNER_TEMP/face"
+          mkdir -p "$face_dir"
+          cp "$bin" "$face_dir/bash"
+          cp "$bin" "$face_dir/sh"
+          face_help="$("$face_dir/bash" --help)"
+          grep -qF "GNU bash, version" <<<"$face_help"
+          grep -qF "GNU long options:" <<<"$face_help"
+          face_help="$("$face_dir/sh" --help)"
+          grep -qF "GNU bash, version" <<<"$face_help"
+          grep -qF "GNU long options:" <<<"$face_help"
+          face_version="$("$face_dir/bash" --version)"
+          grep -qF "GNU bash, version" <<<"$face_version"
+          face_version="$("$face_dir/sh" --version)"
+          grep -qF "GNU bash, version" <<<"$face_version"
+          [ "$("$face_dir/bash" -c 'echo $0')" = "bash" ]
+          [ "$("$face_dir/sh" -c 'echo $0')" = "sh" ]
+          [ "$("$bin" -c 'echo $0')" = "native-shell" ]
+
+          # Record the libc floor this binary actually requires.
+          ldd --version | head -1
+
+      - name: Package portable tarball
+        run: |
+          set -euo pipefail
+          name="native-shell-v${{ needs.resolve-tag.outputs.version }}-linux-${{ matrix.arch }}"
+          stage="dist/$name"
+          mkdir -p "$stage"
+          cp "target/${{ matrix.rust_target }}/release/native-shell" "$stage/native-shell"
+          cp README.md LICENSE "$stage/"
+          tar -czf "dist/$name.tar.gz" -C dist "$name"
+          tar -tzf "dist/$name.tar.gz"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-shell-v${{ needs.resolve-tag.outputs.version }}-linux-${{ matrix.arch }}
+          path: dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  # macos-13 (the Intel runner) is retired, so both macOS targets build on
+  # the arm64 runner: aarch64 natively, x86_64 as a first-class Apple
+  # cross-compile (same SDK), with its smoke gate run under Rosetta 2.
+  build-macos:
+    name: build-macos (${{ matrix.arch }})
+    runs-on: macos-latest
+    needs: resolve-tag
+    outputs:
+      # Both matrix legs fetch the same PINNED rubash revision, so this
+      # resolves to the same value in both; the pin steps fail the build if
+      # the checkout is not exactly the pinned revision (rubash#827).
+      rubash_revision: ${{ steps.rubash.outputs.revision }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            rust_target: aarch64-apple-darwin
+          - arch: x86_64
+            rust_target: x86_64-apple-darwin
+            rosetta: true
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+
+      # Same pinned-rubash contract as build-windows (rubash#827): fetch
+      # exactly scripts/release/rubash-pin.json's commit into ../rubash, where
+      # the [patch] path override takes over, and die on any mismatch.
+      - name: Checkout pinned rubash revision
+        id: rubash-pin
+        run: |
+          set -euo pipefail
+          rev="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rubash_rev"])' scripts/release/rubash-pin.json)"
+          if [[ ! "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "rubash-pin.json: rubash_rev must be a full 40-char commit sha, got '$rev' (abbreviated forms cannot be fetched -- git resolves the fetch argument server-side as a ref name)" >&2
+            exit 1
+          fi
+          if [ -e ../rubash ]; then
+            echo "a rubash checkout already exists at ../rubash; refusing to pin over it" >&2
+            exit 1
+          fi
+          git init -q ../rubash
+          git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
+          if ! git -C ../rubash fetch --depth 1 origin "$rev"; then
+            echo "could not fetch the pinned rubash revision $rev; if rubash main was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
+            exit 1
+          fi
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          git -C ../rubash submodule update --init --depth 1
+          actual="$(git -C ../rubash rev-parse HEAD)"
+          if [ "$actual" != "$rev" ]; then
+            echo "rubash checkout resolved to $actual, not the pinned $rev; refusing to build (rubash#827)" >&2
+            exit 1
+          fi
+          pin_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rubash_version"])' scripts/release/rubash-pin.json)"
+          echo "rubash pinned at ${rev:0:12} (v$pin_version)"
+          echo "revision=${rev:0:12}" >> "$GITHUB_OUTPUT"
+
+
+      - name: Checkout release tag
+        run: |
+          git fetch --tags --force
+          tag="${{ needs.resolve-tag.outputs.tag }}"
+          # A dispatch derives the tag from Cargo.toml and may run before the tag
+          # exists (or to re-fly from the branch). Check out the tag only when it
+          # is really there; otherwise release the ref this run checked out.
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            git checkout "${tag}"
+          else
+            echo "tag ${tag} does not exist yet; releasing from $(git rev-parse --short HEAD) ($(git rev-parse --abbrev-ref HEAD))"
+          fi
+
+      - name: Validate Cargo version matches release tag
+        run: |
+          line="$(grep -m1 -E '^version[[:space:]]*=' Cargo.toml)"
+          cargo_version="$(printf '%s' "$line" | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/')"
+          if [ "$cargo_version" != "${{ needs.resolve-tag.outputs.version }}" ]; then
+            echo "Cargo.toml version '$cargo_version' does not match release tag ${{ needs.resolve-tag.outputs.tag }}" >&2
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.rust_target }}
+
+      # Same contract as build-windows: the pinned-clone step above already
+      # fetched exactly the pinned commit; this step re-derives the revision,
+      # refuses a dirty tree, and cross-checks the pin before anything is
+      # compiled (rubash#827). The revision is embedded by build.rs, so
+      # `native-shell --version` reports it.
+      - name: Pin rubash revision
+        id: rubash
+        run: |
+          if [ ! -d ../rubash ]; then
+            echo "rubash checkout missing at ../rubash" >&2
+            exit 1
+          fi
+          revision="$(git -C ../rubash rev-parse --short=12 HEAD)"
+          if [ -z "$revision" ]; then
+            echo "could not resolve rubash revision" >&2
+            exit 1
+          fi
+          dirty="$(git -C ../rubash status --porcelain)"
+          if [ -n "$dirty" ]; then
+            echo "rubash checkout is dirty; a release must pin a committed revision" >&2
+            printf '%s\n' "$dirty" >&2
+            exit 1
+          fi
+          pinned="${{ steps.rubash-pin.outputs.revision }}"
+          if [ -z "$pinned" ]; then
+            echo "the pinned-rubash clone step produced no revision to cross-check" >&2
+            exit 1
+          fi
+          if [ "$revision" != "$pinned" ]; then
+            echo "rubash checkout ($revision) drifted from the pinned revision ($pinned); refusing to build (rubash#827)" >&2
+            exit 1
+          fi
+          echo "rubash revision: $revision (matches the pin)"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Build native-shell
+        run: cargo build --locked --release --target ${{ matrix.rust_target }}
+
+      # Rosetta 2 lets the arm64 runner execute the cross-compiled x86_64
+      # binary, so the smoke gate runs on real hardware either way.
+      - name: Ensure Rosetta 2 (x86_64 leg)
+        if: matrix.rosetta
+        run: |
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            softwareupdate --install-rosetta --agree-to-license
+          fi
+          arch -x86_64 /usr/bin/true
+
+      # HONEST GATE — same five checks as build-linux, on this OS. The
+      # x86_64 leg runs them through `arch -x86_64` (Rosetta). The prefix
+      # is an unquoted string (not an array): macOS steps may run under
+      # bash 3.2, where expanding an empty array under `set -u` errors.
+      - name: "Smoke-test built binary (gate: no smoke, no artifact)"
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.rust_target }}/release/native-shell"
+          test -x "$bin"
+          if [ "${{ matrix.rosetta }}" = "true" ]; then
+            prefix="arch -x86_64"
+          else
+            prefix=""
+          fi
+
+          # 1) --version carries this release's version and the pinned engine
+          #    revision (exact substrings pinned by
+          #    tests/rubash_revision_banner.rs).
+          out="$($prefix "$bin" --version)"
+          printf '%s\n' "$out"
+          grep -qF "Native Shell ${{ needs.resolve-tag.outputs.version }} " <<<"$out"
+          grep -qF "rubash   git ${{ steps.rubash.outputs.revision }}" <<<"$out"
+
+          # 2) one-shot engine execution
+          out="$($prefix "$bin" -c 'echo ok')"
+          [ "$out" = "ok" ]
+
+          # 3) external commands + pipeline through native coreutils
+          out="$(printf 'a\nb\n' | $prefix "$bin" -c 'sort | head -1')"
+          [ "$out" = "a" ]
+
+          # 4) plugin stack offline check: empty spec, isolated HOME —
+          #    must exit 0 with zero output and touch no network.
+          mkdir -p "$RUNNER_TEMP/smoke-home"
+          : > "$RUNNER_TEMP/smoke-plugins.toml"
+          out="$(HOME="$RUNNER_TEMP/smoke-home" \
+            NATIVE_SHELL_PLUGIN_SPEC="$RUNNER_TEMP/smoke-plugins.toml" \
+            $prefix "$bin" plugin sync --bootstrap 2>&1)"
+          if [ -n "$out" ]; then
+            echo "plugin sync --bootstrap was not quiet on empty spec:" >&2
+            printf '%s\n' "$out" >&2
+            exit 1
+          fi
+
+          face_dir="$RUNNER_TEMP/face"
+          mkdir -p "$face_dir"
+          cp "$bin" "$face_dir/bash"
+          cp "$bin" "$face_dir/sh"
+          face_help="$($prefix "$face_dir/bash" --help)"
+          grep -qF "GNU bash, version" <<<"$face_help"
+          grep -qF "GNU long options:" <<<"$face_help"
+          face_help="$($prefix "$face_dir/sh" --help)"
+          grep -qF "GNU bash, version" <<<"$face_help"
+          grep -qF "GNU long options:" <<<"$face_help"
+          face_version="$($prefix "$face_dir/bash" --version)"
+          grep -qF "GNU bash, version" <<<"$face_version"
+          face_version="$($prefix "$face_dir/sh" --version)"
+          grep -qF "GNU bash, version" <<<"$face_version"
+          [ "$($prefix "$face_dir/bash" -c 'echo $0')" = "bash" ]
+          [ "$($prefix "$face_dir/sh" -c 'echo $0')" = "sh" ]
+          [ "$($prefix "$bin" -c 'echo $0')" = "native-shell" ]
+
+          # Record what this binary was smoke-verified on.
+          sw_vers
+          uname -m
+
+      - name: Package portable tarball
+        run: |
+          set -euo pipefail
+          name="native-shell-v${{ needs.resolve-tag.outputs.version }}-macos-${{ matrix.arch }}"
+          stage="dist/$name"
+          mkdir -p "$stage"
+          cp "target/${{ matrix.rust_target }}/release/native-shell" "$stage/native-shell"
+          cp README.md LICENSE "$stage/"
+          tar -czf "dist/$name.tar.gz" -C dist "$name"
+          tar -tzf "dist/$name.tar.gz"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-shell-v${{ needs.resolve-tag.outputs.version }}-macos-${{ matrix.arch }}
+          path: dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-macos-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  # Experimental mobile/embedded legs (roadmap native-shell#207): Android (bionic)
+  # and OpenHarmony (aarch64-unknown-linux-ohos). They are deliberately NOT in
+  # the `release` job's needs and carry `continue-on-error` -- the same
+  # incubation pattern the musl leg followed before #221 tightened it into a
+  # real gate (check-only first, then build, then smoke, then release).
+  # Nothing either job uploads reaches the GitHub Release; artifacts go to the
+  # workflow run only. Tighten (drop continue-on-error, add to needs, then
+  # extend the smoke gate) only after these run green for a while.
+  build-android:
+    name: build-android (${{ matrix.arch }})
+    runs-on: ubuntu-22.04
+    # Incubation: failures here surface as yellow on the run, they never
+    # block a release. Remove once the leg has been green for a cycle.
+    continue-on-error: true
+    needs: resolve-tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            rust_target: aarch64-linux-android
+            ndk_triple: aarch64-linux-android
+          # rubash#456 fixed the armv7 bionic cfg surface (u16 S_IFMT,
+          # i32 off_t), so this leg compiles; keep it optional alongside.
+          # The NDK triple is armv7a (with the trailing a) — the rust
+          # target name armv7-linux-androideabi must NOT be pasted onto the
+          # NDK wrapper names.
+          - arch: armv7
+            rust_target: armv7-linux-androideabi
+            ndk_triple: armv7a-linux-androideabi
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+
+      # Same pinned-rubash contract as the build jobs (rubash#827): fetch
+      # exactly scripts/release/rubash-pin.json's commit into ../rubash, where
+      # the [patch] path override takes over, and die on any mismatch. This
+      # leg uploads nothing to the release, but what it compiles must still be
+      # a named revision, not build-minute main HEAD.
+      - name: Checkout pinned rubash revision
+        id: rubash-pin
+        run: |
+          set -euo pipefail
+          rev="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rubash_rev"])' scripts/release/rubash-pin.json)"
+          if [[ ! "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "rubash-pin.json: rubash_rev must be a full 40-char commit sha, got '$rev'" >&2
+            exit 1
+          fi
+          if [ -e ../rubash ]; then
+            echo "a rubash checkout already exists at ../rubash; refusing to pin over it" >&2
+            exit 1
+          fi
+          git init -q ../rubash
+          git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
+          if ! git -C ../rubash fetch --depth 1 origin "$rev"; then
+            echo "could not fetch the pinned rubash revision $rev; if rubash main was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
+            exit 1
+          fi
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          git -C ../rubash submodule update --init --depth 1
+          actual="$(git -C ../rubash rev-parse HEAD)"
+          if [ "$actual" != "$rev" ]; then
+            echo "rubash checkout resolved to $actual, not the pinned $rev; refusing to build (rubash#827)" >&2
+            exit 1
+          fi
+          pin_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rubash_version"])' scripts/release/rubash-pin.json)"
+          echo "rubash pinned at ${rev:0:12} (v$pin_version)"
+          echo "revision=${rev:0:12}" >> "$GITHUB_OUTPUT"
+
+
+      - name: Checkout release tag
+        run: |
+          git fetch --tags --force
+          tag="${{ needs.resolve-tag.outputs.tag }}"
+          # A dispatch derives the tag from Cargo.toml and may run before the tag
+          # exists (or to re-fly from the branch). Check out the tag only when it
+          # is really there; otherwise release the ref this run checked out.
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            git checkout "${tag}"
+          else
+            echo "tag ${tag} does not exist yet; releasing from $(git rev-parse --short HEAD) ($(git rev-parse --abbrev-ref HEAD))"
+          fi
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          target: ${{ matrix.rust_target }}
+
+      - name: Pin rubash revision
+        id: rubash
+        run: |
+          if [ ! -d ../rubash ]; then
+            echo "rubash checkout missing at ../rubash" >&2
+            exit 1
+          fi
+          revision="$(git -C ../rubash rev-parse --short=12 HEAD)"
+          if [ -z "$revision" ]; then
+            echo "could not resolve rubash revision" >&2
+            exit 1
+          fi
+          dirty="$(git -C ../rubash status --porcelain)"
+          if [ -n "$dirty" ]; then
+            echo "rubash checkout is dirty; a release must pin a committed revision" >&2
+            printf '%s\n' "$dirty" >&2
+            exit 1
+          fi
+          pinned="${{ steps.rubash-pin.outputs.revision }}"
+          if [ -z "$pinned" ]; then
+            echo "the pinned-rubash clone step produced no revision to cross-check" >&2
+            exit 1
+          fi
+          if [ "$revision" != "$pinned" ]; then
+            echo "rubash checkout ($revision) drifted from the pinned revision ($pinned); refusing to build (rubash#827)" >&2
+            exit 1
+          fi
+          echo "rubash revision: $revision (matches the pin)"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      # Real link, not check-only: the NDK provides the bionic clang driver
+      # (rubash#456 fixed the cfg surface, this job proves it actually
+      # links). API 24 is the floor the rust android targets document.
+      - name: Install Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          add-to-path: false
+
+      - name: Build native-shell (bionic, release)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          # NDK wrapper naming: clang drivers are <triple><api>-clang. The
+          # armv7 triple is armv7a-linux-androideabi (r27c ships
+          # armv7a-linux-androideabi24-clang; there is no
+          # armv7-linux-androideabi24-clang — the missing trailing "a" is
+          # what red the armv7 leg with "linker not found"). aarch64 has no
+          # suffix in its triple, so its line is already the real name.
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER: ${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi24-clang
+        run: cargo build --locked --release --target ${{ matrix.rust_target }}
+
+      # The runner cannot execute bionic binaries, so the four-check smoke
+      # gate is impossible here. This step is the honest substitute for
+      # THIS leg: prove a real ELF for the right ABI exists and say, on the
+      # artifact itself, that no smoke ran. It must never be read as a pass
+      # of the release smoke gate.
+      - name: Verify ELF shape (no runtime smoke on this leg)
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.rust_target }}/release/native-shell"
+          test -f "$bin"
+          file "$bin"
+          case "$(file -b "$bin")" in
+            *aarch64*|*ARM*) : ;;
+            *) echo "unexpected ELF arch for ${{ matrix.rust_target }}" >&2; exit 1 ;;
+          esac
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          Android leg: build + link verified, binary NOT smoke-run (no Android runtime on the runner).
+          EOF
+
+      - name: Package portable zip
+        run: |
+          set -euo pipefail
+          name="native-shell-v${{ needs.resolve-tag.outputs.version }}-android-${{ matrix.arch }}"
+          stage="dist/$name"
+          mkdir -p "$stage"
+          cp "target/${{ matrix.rust_target }}/release/native-shell" "$stage/native-shell"
+          cp README.md LICENSE "$stage/"
+          (cd dist && zip -r "$name.zip" "$name")
+          unzip -l "dist/$name.zip"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-shell-v${{ needs.resolve-tag.outputs.version }}-android-${{ matrix.arch }}
+          path: dist/native-shell-v${{ needs.resolve-tag.outputs.version }}-android-${{ matrix.arch }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  # OpenHarmony leg (roadmap native-shell#207). First version is CHECK-ONLY, on
+  # purpose and out loud: `aarch64-unknown-linux-ohos` is Tier 2 with host
+  # tools (same target cross-target-check in ci.yml gates), so `cargo check`
+  # needs no OpenHarmony SDK -- but real LINKING needs the OHOS SDK's clang
+  # wrapper, and there is no runner preinstall and no version-pinned,
+  # reproducibly-fetchable SDK source this workflow can responsibly pin yet
+  # (docs/src/platform-support.md "Packaging" documents what a real ship
+  # looks like: an HNP payload inside a signed HAP, an app-store release).
+  # Uploading a raw binary from a leg that cannot even link would violate
+  # the repo's "no untested artifact" line harder than uploading nothing.
+  # Follow the musl precedent: check now, add a pinned SDK + real link in a
+  # later PR, smoke/ship last. The artifact this uploads is the check log.
+  build-openharmony:
+    name: build-openharmony (aarch64, check-only)
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    needs: resolve-tag
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+
+      # Same pinned-rubash contract as the build jobs (rubash#827): fetch
+      # exactly scripts/release/rubash-pin.json's commit into ../rubash, where
+      # the [patch] path override takes over, and die on any mismatch. This
+      # leg uploads nothing to the release, but what it compiles must still be
+      # a named revision, not build-minute main HEAD.
+      - name: Checkout pinned rubash revision
+        id: rubash-pin
+        run: |
+          set -euo pipefail
+          rev="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rubash_rev"])' scripts/release/rubash-pin.json)"
+          if [[ ! "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "rubash-pin.json: rubash_rev must be a full 40-char commit sha, got '$rev'" >&2
+            exit 1
+          fi
+          if [ -e ../rubash ]; then
+            echo "a rubash checkout already exists at ../rubash; refusing to pin over it" >&2
+            exit 1
+          fi
+          git init -q ../rubash
+          git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
+          if ! git -C ../rubash fetch --depth 1 origin "$rev"; then
+            echo "could not fetch the pinned rubash revision $rev; if rubash main was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)" >&2
+            exit 1
+          fi
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          git -C ../rubash submodule update --init --depth 1
+          actual="$(git -C ../rubash rev-parse HEAD)"
+          if [ "$actual" != "$rev" ]; then
+            echo "rubash checkout resolved to $actual, not the pinned $rev; refusing to build (rubash#827)" >&2
+            exit 1
+          fi
+          pin_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rubash_version"])' scripts/release/rubash-pin.json)"
+          echo "rubash pinned at ${rev:0:12} (v$pin_version)"
+          echo "revision=${rev:0:12}" >> "$GITHUB_OUTPUT"
+
+
+      - name: Checkout release tag
+        run: |
+          git fetch --tags --force
+          tag="${{ needs.resolve-tag.outputs.tag }}"
+          # A dispatch derives the tag from Cargo.toml and may run before the tag
+          # exists (or to re-fly from the branch). Check out the tag only when it
+          # is really there; otherwise release the ref this run checked out.
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            git checkout "${tag}"
+          else
+            echo "tag ${tag} does not exist yet; releasing from $(git rev-parse --short HEAD) ($(git rev-parse --abbrev-ref HEAD))"
+          fi
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          target: aarch64-unknown-linux-ohos
+
+      - name: cargo check (aarch64-unknown-linux-ohos, no binary produced)
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          {
+            echo "native-shell ${{ needs.resolve-tag.outputs.tag }} — aarch64-unknown-linux-ohos"
+            echo "check-only leg: no binary is produced or shipped from this leg."
+            echo "rustc $(rustc --version); target is Tier 2 with host tools."
+            echo "---"
+            cargo check --workspace --locked --target aarch64-unknown-linux-ohos 2>&1
+          } | tee "dist/ohos-check-log.txt"
+
+      - name: Upload check log artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-shell-v${{ needs.resolve-tag.outputs.version }}-ohos-check-log
+          path: dist/ohos-check-log.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  skill-bundle:
+    runs-on: ubuntu-latest
+    needs: resolve-tag
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Golden-check the skill bundle
+        run: python scripts/test-skill-bundle.py
+
+      - name: Package native-shell-skill zip
+        run: |
+          mkdir -p dist
+          (cd skills && zip -r "../dist/native-shell-skill-v${{ needs.resolve-tag.outputs.version }}.zip" native-shell)
+          unzip -l "dist/native-shell-skill-v${{ needs.resolve-tag.outputs.version }}.zip"
+
+      - name: Verify zip layout (SKILL.md at native-shell/ root)
+        run: |
+          set -eu
+          test "$(unzip -l "dist/native-shell-skill-v${{ needs.resolve-tag.outputs.version }}.zip" | grep -c 'native-shell/SKILL.md')" -eq 1
+          unzip -l "dist/native-shell-skill-v${{ needs.resolve-tag.outputs.version }}.zip" | grep -q 'native-shell/references/quickref.md'
+          unzip -l "dist/native-shell-skill-v${{ needs.resolve-tag.outputs.version }}.zip" | grep -q 'native-shell/agents/openai.yaml'
+
+      - name: Upload skill bundle artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-shell-skill-v${{ needs.resolve-tag.outputs.version }}
+          path: dist/native-shell-skill-v${{ needs.resolve-tag.outputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [resolve-tag, build-windows, build-linux, build-macos, skill-bundle]
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      # All build jobs fetch the same PINNED rubash revision
+      # (scripts/release/rubash-pin.json), so they must have compiled the same
+      # revision. If they did not (a pin file drift, a partial fetch), the
+      # release would mix engines across platforms — refuse instead.
+      - name: Check engine revision agreement across build jobs
+        run: |
+          set -eu
+          revs="${{ needs.build-windows.outputs.rubash_revision }}
+          ${{ needs.build-linux.outputs.rubash_revision }}
+          ${{ needs.build-macos.outputs.rubash_revision }}"
+          unique="$(printf '%s\n' $revs | sed '/^$/d' | sort -u | wc -l | tr -d ' ')"
+          if [ "$unique" -ne 1 ]; then
+            echo "build jobs compiled different rubash revisions:" >&2
+            printf '%s\n' $revs >&2
+            exit 1
+          fi
+          echo "all platform builds compiled rubash git $(printf '%s\n' $revs | sed '/^$/d' | sort -u)"
+
+      # native-shell#311: one aggregate checksum file for the whole release. Payload
+      # artifacts only — the per-installer .sha256 sidecars are listed BY NAME
+      # here (hashing a hash would be circular), and the installer digests in
+      # this file are the same values the winget manifest's InstallerSha256
+      # consumes. A missing payload set is an error, never an empty sums file.
+      - name: Generate SHA256SUMS for every shipped artifact
+        run: |
+          set -euo pipefail
+          : > SHA256SUMS
+          count=0
+          while IFS= read -r file; do
+            hash="$(sha256sum "$file" | awk '{print $1}')"
+            printf '%s  %s\n' "$hash" "$(basename "$file")" >> SHA256SUMS
+            count=$((count + 1))
+          done < <(find artifacts -type f \( -name '*.zip' -o -name '*.exe' -o -name '*.tar.gz' -o -name '*.7z' \) | sort)
+          if [ "$count" -eq 0 ]; then
+            echo "no payload artifacts found to hash" >&2
+            exit 1
+          fi
+          echo "hashed $count artifacts:"
+          cat SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # GITHUB_TOKEN hits 403 "Resource not accessible by integration" on
+          # createRelease even with `permissions: contents: write` (observed on
+          # the 2026-11 re-tag runs of v1.0.0; the same YAML created the release
+          # fine on 2026-11-02). A repo-scoped fine-grained PAT in RELEASE_PAT
+          # bypasses the platform-side cap; the fallback keeps the workflow
+          # working unchanged if the secret is ever removed.
+          token: ${{ secrets.RELEASE_PAT || github.token }}
+          tag_name: ${{ needs.resolve-tag.outputs.tag }}
+          # A dispatch may run before the tag exists; the action then creates it.
+          # Pin it to the commit this run checked out so the tag cannot land on
+          # some later branch tip.
+          target_commitish: ${{ github.sha }}
+          name: NativeShell ${{ needs.resolve-tag.outputs.tag }}
+          body: |
+            NativeShell ${{ needs.resolve-tag.outputs.tag }} packages for Windows, Linux, and macOS.
+
+            Engine: rubash git ${{ needs.build-windows.outputs.rubash_revision }} — every platform build in this release compiled that same revision, pinned by `scripts/release/rubash-pin.json` and fail-hard verified at fetch time (rubash#827). The release compiles the pinned engine, not "whatever rubash main was when the pipeline ran".
+            Verify locally with `native-shell --version`, which prints the same revision.
+
+            Windows (x64, ARM64): Inno Setup installers (`*-setup.exe`) add user PATH and Windows Terminal profile integration; portable archives bundle `native-shell` with Native Cmd and bash/sh shims.
+
+            **Which Windows package has git?** The normal package — `native-shell-v<version>-win-x64` / `-win-arm64` — ships the Native Cmd Unix command layer (`ls`, `cat`, `grep`, `awk`, `rg`, `fd`), the bash/sh shell faces and the completions, but **no bundled git**: the shell and your own `git.exe` stay independent, which is what you want if you already have a git you trust. (ARM64 has never shipped a bundled git — native-git publishes no ARM64 artifact — so `-win-arm64` has always been this shape.) The package that DOES bundle native-git is the extra one: `native-shell-v<version>-win-x64-with-git.tar.gz`.
+
+            The `-with-git` package is a portable archive only: it has no installer, because the normal name already owns the install and self-update channel. `--self-update` always fetches the normal installer, so running it from a `-with-git` tree moves you back to the normal package. Update a `-with-git` install by unpacking a new `x64-with-git` tarball.
+
+            Portable download: `*.tar.gz` is the only portable archive shipped, and it is hardlink-native. The bundled payload ships real NTFS hardlinks (the whole `git.exe` family is one shared binary, `awk`/`gawk` likewise, exactly what `wpm install` lays down), so the tarball is roughly half the size of the equivalent zip and unpacks to a much smaller on-disk tree; `tar -xf <file>.tar.gz` works out of the box on Windows 10 1803+ and any modern Linux/macOS, and on a filesystem without hardlink support (FAT32/exFAT) extraction degrades gracefully to independent byte-identical copies with no loss of function (native-shell#470).
+
+            Windows packages come with the must-install bundle pre-installed (native-shell#189, native-shell#209): native-git (native Windows git — the full plugin distro's five entries install through git, so a fresh machine without git.exe no longer fails `native-shell setup`), gawk 5.4.1 with plain `awk` working too, plus ripgrep (`rg`) and fd — landing in the bundled Native Cmd root as wpm JSON-package payloads, while native-git is unpacked from the `JayWanX/native-git` release with the same flat layout. Everything is assembled at CI time with no runtime downloads, no runtime archive formats, and no symlinks. Pre-install is best-effort, not a promise: on legs where the package index has no matching artifact (currently native-git and gawk on the ARM64 builds; ripgrep and fd have ARM64 artifacts) the package ships WITHOUT that entry — run `native-cmd wpm install <name>` once after installing to add it. The pre-install list and its recorded exclusions live in `scripts/release/preinstall.json`.
+
+            `native-shell-skill-v<version>.zip` is the AI agent skill bundle (SKILL.md + references, Native Cmd-skill layout): unpack it into an agent skills directory, or let the shell do it — `native-shell skill install` embeds the same content.
+
+            Linux (x86_64, aarch64; glibc): portable tarballs with the `native-shell` binary, README, and LICENSE — Unix builds bundle nothing, native system tools are used. Untar anywhere and run `./native-shell`.
+
+            macOS (aarch64, x86_64): portable tarballs with the `native-shell` binary, README, and LICENSE. Untar anywhere and run `./native-shell`.
+
+            Every artifact was smoke-verified on the build OS of the job that produced it, before upload: `native-shell -c 'echo ok'`, `printf 'a\nb\n' | native-shell -c 'sort | head -1'`, an offline `NATIVE_SHELL_PLUGIN_SPEC=<empty> native-shell plugin sync --bootstrap` (exit 0, no output, no network), and a `native-shell --version` check against this tag and the engine revision.
+
+            Integrity (native-shell#311): `SHA256SUMS` lists the SHA-256 of every shipped artifact, and each Windows installer has a `.sha256` sidecar beside it. `native-shell --self-update` verifies the installer against the sidecar before running it and aborts rather than execute anything it cannot verify. The same digests feed the winget manifest `InstallerSha256`.
+          # *.zip stays for the skill bundle only (native-shell-skill-v<ver>.zip);
+          # the Windows payload ships as *.tar.gz now. *.7z is no longer built for
+          # publication, so it must not be listed: fail_on_unmatched_files would
+          # otherwise abort the release.
+          files: |
+            artifacts/**/*.zip
+            artifacts/**/*.exe
+            artifacts/**/*.tar.gz
+            artifacts/**/*.sha256
+            SHA256SUMS
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          generate_release_notes: true
+
+  publish-crates:
+    name: publish to crates.io
+    # Opt-in only: a manual dispatch must pass publish_crates=true, and a tag
+    # PUSH never sets it. Publishing is irreversible, so it is never implicit.
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_crates
+    runs-on: windows-latest
+    # rubash is not yet published to crates.io, so cargo publish refuses the
+    # bare path dependency. This job will start succeeding once rubash is on
+    # crates.io; until then it is best-effort and must not block the release.
+    continue-on-error: true
+    needs: resolve-tag
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+
+      # Same pinned-rubash contract as the build jobs (rubash#827): publishing
+      # resolves against the named engine revision too. No submodules needed
+      # here (same as before): nothing under third_party is imported.
+      - name: Checkout pinned rubash revision
+        id: rubash-pin
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pin = Get-Content -LiteralPath scripts/release/rubash-pin.json -Raw | ConvertFrom-Json
+          $rev = $pin.rubash_rev
+          if ($rev -notmatch '^[0-9a-f]{40}$') {
+            throw "rubash-pin.json: rubash_rev must be a full 40-char commit sha, got '$rev'"
+          }
+          if (Test-Path -LiteralPath ..\rubash) {
+            throw "a rubash checkout already exists at ..\rubash; refusing to pin over it"
+          }
+          git init ..\rubash
+          if ($LASTEXITCODE -ne 0) { throw "git init ../rubash failed" }
+          git -C ..\rubash remote add origin https://github.com/JayWanX/rubash.git
+          git -C ..\rubash fetch --depth 1 origin $rev
+          if ($LASTEXITCODE -ne 0) {
+            throw "could not fetch the pinned rubash revision $rev; if rubash main was rewritten upstream, bump scripts/release/rubash-pin.json (rubash#827)"
+          }
+          git -C ..\rubash checkout --quiet FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { throw "could not check out the pinned rubash revision $rev" }
+          $actual = (git -C ..\rubash rev-parse HEAD).Trim()
+          if ($actual -ne $rev) {
+            throw "rubash checkout resolved to $actual, not the pinned $rev; refusing to build (rubash#827)"
+          }
+          Write-Host "rubash pinned at $($rev.Substring(0,12)) (v$($pin.rubash_version))"
+
+
+      - name: Checkout release tag
+        shell: pwsh
+        run: |
+          git fetch --tags --force
+          $tag = "${{ needs.resolve-tag.outputs.tag }}"
+          # A dispatch derives the tag from Cargo.toml and may run before the tag
+          # exists (or to re-fly from the branch). Check out the tag only when it
+          # is really there; otherwise release the ref this run checked out.
+          git rev-parse -q --verify "refs/tags/$tag" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            git checkout "$tag"
+            if ($LASTEXITCODE -ne 0) { throw "could not check out tag $tag" }
+          }
+          else {
+            $head = (git rev-parse --short HEAD).Trim()
+            $branch = (git rev-parse --abbrev-ref HEAD).Trim()
+            Write-Host "tag $tag does not exist yet; releasing from $head ($branch)"
+          }
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      # Publishing needs version-annotated path deps so cargo can swap the
+      # path for a registry dependency. The rubash dep carries no version yet
+      # because rubash 1.0.0 is not on crates.io; `cargo publish` refuses a
+      # bare path dependency. Re-add version = "1.0.0" once rubash 1.0.0 is
+      # published.
+      #
+      # crates.io is idempotent per version: re-running a release (the
+      # v1.4.0 run's crates job died on steps the first attempt had already
+      # published) fails with one of two idempotency verdicts, both meaning
+      # the version IS live on crates.io — a successful publish, not a
+      # failure:
+      #   - HTTP 400 from the upload: "crate version `x.y.z` is already
+      #     uploaded" (the re-run this tolerance was built for), or
+      #   - the sparse-index pre-flight: "crate <name>@<x.y.z> already
+      #     exists on crates.io index" (release run 38404767765 — cargo
+      #     sees the version in the index and refuses before any upload,
+      #     so the HTTP-400 text never appears).
+      # Both steps grep for either phrasing and treat it as success; any
+      # other failure still fails the step (loudly, under the job's
+      # continue-on-error).
+      - name: Publish native-shell-runtime to crates.io
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $output = cargo publish --locked -p native-shell-runtime --token ${{ secrets.CRATES_IO_TOKEN }} 2>&1
+          $output | ForEach-Object { Write-Host "$_" }
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          if (($output | ForEach-Object { "$_" }) -match "is already uploaded|already exists on crates\.io") {
+            Write-Host "native-shell-runtime's version is already on crates.io - the publish already happened; treating as success"
+            exit 0
+          }
+          exit 1
+
+      - name: Publish native-shell to crates.io
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $output = cargo publish --locked -p native-shell --token ${{ secrets.CRATES_IO_TOKEN }} 2>&1
+          $output | ForEach-Object { Write-Host "$_" }
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          if (($output | ForEach-Object { "$_" }) -match "is already uploaded|already exists on crates\.io") {
+            Write-Host "native-shell's version is already on crates.io - the publish already happened; treating as success"
+            exit 0
+          }
+          exit 1

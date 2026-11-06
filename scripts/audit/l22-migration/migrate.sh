@@ -1,0 +1,339 @@
+#!/usr/bin/env bash
+# wt82-L01 / audit domain D10 (L22): 1.2.x → current first-run migration audit.
+#
+# Seeds a sandbox with a FAKE v1.2.x state reconstructed from the v1.2.5
+# tag (the pre-rename niubash.git 3d0de1e):
+#   - rc shape of the era, with the NATIVE_SHELL_* dead fields the pre-wt45 README
+#     sold (NATIVE_SHELL_THEME / NATIVE_SHELL_THEME_PLUGIN / NATIVE_SHELL_PLUGINS / NATIVE_SHELL_BANNER /
+#     NATIVE_SHELL_PROMPT_SYMBOL) hand-added, as a real 1.2.x user would have;
+#   - sources registry at the 1.2.5 schema (the HISTORICAL pre-rename
+#     "niubash:plugin-source-registry@0.1.0" marker — the product renamed
+#     its schema strings to native-shell:*, so this vintage file must keep
+#     the old spelling to reproduce the real 1.2.5 on-disk bytes) with one
+#     source row in the 1.2.5 record shape (no
+#     commit_sha/trust_policy/signature/spec_enabled/spec_theme fields —
+#     all of which are #[serde(default)] today);
+#   - a pre-spec imperative plugins tree under ~/.native-shell/sources/<id>/
+#     and NO ~/.native-shell/plugins.toml (the spec did not exist in 1.2.x);
+#   - optionally a pre-rename ~/.winuxshrc for the once-only migration.
+# Then runs the CURRENT binary's first contact and audits every migration
+# surface. Read-only over product code; everything under a sandbox HOME.
+#
+# Usage: scripts/audit/l22-migration/migrate.sh [path/to/native-shell.exe]
+set -u
+
+NATIVE_SHELL="${1:-}"
+if [ -z "$NATIVE_SHELL" ]; then
+    echo "usage: migrate.sh <path-to-native-shell.exe>" >&2
+    exit 2
+fi
+NATIVE_SHELL=$(cd "$(dirname "$NATIVE_SHELL")" && pwd)/$(basename "$NATIVE_SHELL")
+BASE="${NATIVE_SHELL%/target/release/native-shell.exe}"
+OUT="$BASE/target/audit-results/wt82-L01/migration-$(date +%Y%m%d-%H%M%S)"
+[ "$BASE" != "$NATIVE_SHELL" ] || OUT="./l22-migration-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$OUT"
+SB="$OUT/sandbox"
+export NATIVE_SHELL_LANG=en
+export MSYS_NO_PATHCONV=1
+
+PASS=0
+FAIL=0
+FAILED=""
+note() { printf '  NOTE %s\n' "$1"; }
+
+ok() { # id
+    PASS=$((PASS + 1))
+    echo "PASS $1"
+}
+bad() { # id detail
+    FAIL=$((FAIL + 1))
+    FAILED="$FAILED $1"
+    echo "FAIL $1 :: $2"
+}
+assert_file() { # id path
+    if [ -f "$2" ]; then ok "$1"; else bad "$1" "missing file $2"; fi
+}
+assert_no_file() { # id path
+    if [ ! -f "$2" ]; then ok "$1"; else bad "$1" "file exists: $2"; fi
+}
+assert_grep() { # id needle file
+    if command grep -q -- "$2" "$3" 2>/dev/null; then ok "$1"; else
+        bad "$1" "needle '$2' not found in $3"
+    fi
+}
+assert_no_grep() { # id needle file
+    if command grep -q -- "$2" "$3" 2>/dev/null; then
+        bad "$1" "unexpected '$2' in $3"
+    else
+        ok "$1"
+    fi
+}
+
+# ── Scenario 1: pre-rename ~/.winuxshrc migrates once ──────────────────────
+H1="$SB/home-winuxshrc"
+mkdir -p "$H1/.native-shell"
+cat >"$H1/.winuxshrc" <<'EOF'
+# winuxsh interactive rc (pre-rename, ~0.x vintage)
+export WINUXSH_LEGACY_MARKER=1
+alias ll='ls -la'
+# reference: ~/.winuxshrc.self and the winuxsh.exe entry point
+EOF
+before=$(cat "$H1/.winuxshrc")
+
+HOME="$H1" USERPROFILE="$H1" timeout 60 "$NATIVE_SHELL" -C 'echo s1-alive' \
+    >"$OUT/s1-first.out" 2>"$OUT/s1-first.err"
+rc=$?
+[ "$rc" -eq 0 ] && ok s1-first-run-exit-0 || bad s1-first-run-exit-0 "rc=$rc"
+command grep -q "s1-alive" "$OUT/s1-first.out" &&
+    ok s1-first-run-alive || bad s1-first-run-alive "no marker in stdout"
+assert_file s1-native-shellrc-created "$H1/.native-shellrc"
+assert_file s1-winuxshrc-kept "$H1/.winuxshrc"
+assert_grep s1-migrated-content-renamed "NATIVE_SHELL_LEGACY_MARKER" "$H1/.native-shellrc"
+assert_grep s1-migrated-entry-point "native-shell.exe" "$H1/.native-shellrc"
+assert_no_grep s1-migrated-no-winuxsh-stray "WINUXSH_LEGACY_MARKER" "$H1/.native-shellrc"
+[ "$(cat "$H1/.winuxshrc")" = "$before" ] &&
+    ok s1-original-untouched || bad s1-original-untouched "original .winuxshrc modified"
+# error surface of the first run: honest or silent, never a crash
+if command grep -qiE "panicked at|stack backtrace" "$OUT/s1-first.out" "$OUT/s1-first.err"; then
+    bad s1-no-panic "panic in first-run output"
+else
+    ok s1-no-panic
+fi
+
+# second run must not re-migrate (file identity: content + mtime)
+m1=$(stat -c %Y "$H1/.native-shellrc" 2>/dev/null; md5sum "$H1/.native-shellrc" | cut -d' ' -f1)
+HOME="$H1" USERPROFILE="$H1" timeout 60 "$NATIVE_SHELL" -C 'echo s1-second' \
+    >"$OUT/s1-second.out" 2>"$OUT/s1-second.err"
+m2=$(stat -c %Y "$H1/.native-shellrc" 2>/dev/null; md5sum "$H1/.native-shellrc" | cut -d' ' -f1)
+[ "$m1" = "$m2" ] && ok s1-once-only || bad s1-once-only ".native-shellrc changed on second run"
+command grep -q "winuxshrc.migrat" "$OUT/s1-first.out" "$OUT/s1-first.err" 2>/dev/null &&
+    note "first run printed a migration notice"
+
+# ── Scenario 2: full fake 1.2.x state → current first contact ──────────────
+H2="$SB/home-12x"
+mkdir -p "$H2/.native-shell/sources/oh-my-bash" "$H2/.native-shell/sources/bash-it"
+cat >"$H2/.native-shellrc" <<'EOF'
+# Native Shell interactive rc - generated by the setup wizard (1.2.x vintage).
+# Edit this file with normal Native Shell/bash syntax.
+NATIVE_SHELL_PROMPT_CWD_STYLE='home'
+NATIVE_SHELL_COMPLETION_STYLE='column'
+
+# ---- README-era hand-added fields (dead since the built-in stack retired) ----
+NATIVE_SHELL_THEME='robbyrussell'
+NATIVE_SHELL_THEME_PLUGIN='oh-my-niu'
+NATIVE_SHELL_PLUGINS=(git z syntax-highlighting)
+NATIVE_SHELL_BANNER=1
+NATIVE_SHELL_PROMPT_SYMBOL='%'
+export NATIVE_SHELL_THEME NATIVE_SHELL_THEME_PLUGIN NATIVE_SHELL_PLUGINS NATIVE_SHELL_BANNER NATIVE_SHELL_PROMPT_SYMBOL
+
+alias ll='ls -la'
+alias gs='git status'
+EOF
+# 1.2.5-vintage registry row (record shape as of tag 3d0de1e, schema @0.1.0)
+cat >"$H2/.native-shell/sources/registry.toml" <<EOF
+schema = "niubash:plugin-source-registry@0.1.0"
+
+[[sources]]
+id = "oh-my-bash"
+adapter = "oh-my-bash"
+url = "$H2/fake-remote/oh-my-bash"
+ref = "master"
+version = "fake-1.2.5-era"
+path = "$H2/.native-shell/sources/oh-my-bash"
+trusted = true
+license = "MIT"
+checksum_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+installed_at = "1727000000"
+previous = { ref = "master", version = "older", checksum_sha256 = "1111111111111111111111111111111111111111111111111111111111111111" }
+EOF
+# pre-spec imperative trees (the 1.2.x install shape)
+printf '#!/usr/bin/env bash\necho omb-fake-theme-loaded\n' >"$H2/.native-shell/sources/oh-my-bash/themes.sh"
+printf 'OSH=./\n' >"$H2/.native-shell/sources/oh-my-bash/oh-my-bash.sh"
+printf '#!/usr/bin/env bash\necho bashit-fake\n' >"$H2/.native-shell/sources/bash-it/bash_it.sh"
+# 1.2.x wrote the same setup-done marker name
+: >"$H2/.native-shell/.setup-done"
+# NO plugins.toml (pre-spec), NO backups dir
+[ -f "$H2/plugins.toml" ] || true
+
+# --- first contact ---
+HOME="$H2" USERPROFILE="$H2" timeout 60 "$NATIVE_SHELL" -C 'echo s2-alive' \
+    >"$OUT/s2-first.out" 2>"$OUT/s2-first.err"
+rc=$?
+[ "$rc" -eq 0 ] && ok s2-first-run-exit-0 || bad s2-first-run-exit-0 "rc=$rc"
+command grep -q "s2-alive" "$OUT/s2-first.out" &&
+    ok s2-first-run-alive || bad s2-first-run-alive "no marker in stdout"
+command grep -qiE "panicked at|stack backtrace" "$OUT/s2-first.out" "$OUT/s2-first.err" &&
+    bad s2-no-panic "panic in first-run output" || ok s2-no-panic
+command grep -qi "unknown plugin subcommand" "$OUT/s2-first.out" "$OUT/s2-first.err" &&
+    bad s2-no-bootstrap-noise "1.2.x rc produced plugin noise" || ok s2-no-bootstrap-noise
+
+# dead rc fields harmless: the shell does not error on them and does not
+# resurrect the retired stack semantics (no theme applied from NATIVE_SHELL_THEME)
+command grep -qiE "(NATIVE_SHELL_THEME|NATIVE_SHELL_PLUGINS|NATIVE_SHELL_BANNER).*(error|invalid|unknown)" \
+    "$OUT/s2-first.out" "$OUT/s2-first.err" &&
+    bad s2-dead-fields-harmless "dead fields produced errors" || ok s2-dead-fields-harmless
+
+# spec absence = imperative mode, silent (no spec error spam at startup)
+command grep -qiE "plugins.toml.*(error|unreadable|invalid)" "$OUT/s2-first.out" "$OUT/s2-first.err" &&
+    bad s2-spec-absence-silent "spec absence produced startup errors" || ok s2-spec-absence-silent
+assert_no_file s2-no-spec-written "$H2/.native-shell/plugins.toml"
+
+# registry version: bumped only on first write (lazy). Record the truth.
+if command grep -q 'niubash:plugin-source-registry@0.3.0' "$H2/.native-shell/sources/registry.toml"; then
+    note "registry schema bumped to @0.3.0 on first contact"
+else
+    note "registry schema still @0.1.0 after first contact (lazy bump on first write — expected)"
+fi
+assert_file s2-registry-intact "$H2/.native-shell/sources/registry.toml"
+command grep -q 'id = "oh-my-bash"' "$H2/.native-shell/sources/registry.toml" &&
+    ok s2-registry-row-preserved || bad s2-registry-row-preserved "1.2.5 row lost"
+
+# backups: first contact must not destroy the 1.2.x rc
+command grep -q "NATIVE_SHELL_THEME='robbyrussell'" "$H2/.native-shellrc" &&
+    ok s2-rc-untouched || bad s2-rc-untouched "1.2.x rc rewritten without consent"
+
+# --- ecosystem surfaces over the vintage state ---
+HOME="$H2" USERPROFILE="$H2" timeout 30 "$NATIVE_SHELL" plugin list \
+    >"$OUT/s2-list.out" 2>"$OUT/s2-list.err"
+rc=$?
+[ "$rc" -eq 0 ] && ok s2-list-exit-0 || bad s2-list-exit-0 "rc=$rc"
+command grep -qiE "oh-my-bash" "$OUT/s2-list.out" &&
+    ok s2-list-shows-vintage-source || bad s2-list-shows-vintage-source "vintage source invisible (registry parse failure? see findings M2)"
+# tree exists → ready; the zero checksum is only verified by verify/staging
+command grep -qE "ready" "$OUT/s2-list.out" &&
+    ok s2-list-state-truthful || note "list state: $(command grep -E 'oh-my-bash' "$OUT/s2-list.out" | head -1)"
+
+HOME="$H2" USERPROFILE="$H2" timeout 30 "$NATIVE_SHELL" plugin sync \
+    >"$OUT/s2-sync.out" 2>"$OUT/s2-sync.err"
+rc=$?
+[ "$rc" -eq 0 ] && ok s2-sync-exit-0 || bad s2-sync-exit-0 "rc=$rc"
+
+HOME="$H2" USERPROFILE="$H2" timeout 30 "$NATIVE_SHELL" doctor \
+    >"$OUT/s2-doctor.out" 2>"$OUT/s2-doctor.err"
+command grep -qiE "critical checks passed" "$OUT/s2-doctor.out" &&
+    ok s2-doctor-completes || bad s2-doctor-completes "doctor did not finish"
+command grep -qiE "degraded" "$OUT/s2-doctor.out" &&
+    ok s2-doctor-flags-degraded ||
+    note "doctor does not mention the degraded vintage tree"
+
+# --- wizard re-run over the vintage rc (the 1.3.x upgrade path) ---
+HOME="$H2" USERPROFILE="$H2" timeout 60 "$NATIVE_SHELL" setup --preset minimal \
+    >"$OUT/s2-wizard.out" 2>"$OUT/s2-wizard.err"
+rc=$?
+[ "$rc" -eq 0 ] && ok s2-wizard-exit-0 || bad s2-wizard-exit-0 "rc=$rc"
+if command grep -q 'command -v "\${NATIVE_SHELL_BIN:-native-shell}"' "$H2/.native-shellrc"; then
+    ok s2-wizard-writes-native-shell-line
+else
+    bad s2-wizard-writes-native-shell-line "rc lacks NATIVE_SHELL_BIN bootstrap"
+fi
+# backups: the wizard MUST have backed up the replaced 1.2.x rc
+assert_file s2-wizard-backup-created "$H2/.native-shell/backups/.native-shellrc."*.bak
+# the backup still carries the dead fields (real restore path)
+command grep -q "NATIVE_SHELL_THEME='robbyrussell'" "$H2/.native-shell/backups/".native-shellrc.*.bak &&
+    ok s2-backup-carries-vintage-fields ||
+    bad s2-backup-carries-vintage-fields "backup lost the 1.2.x content"
+
+# post-upgrade startup with a STALE native-shell first on PATH (V1-in-migration):
+# only meaningful when a stale binary is available
+STALE="${STALE_NATIVE_SHELL:-/c/Users/Administrator/AppData/Local/Programs/NativeShell/native-shell.exe}"
+if [ -f "$STALE" ]; then
+    mkdir -p "$SB/fakepath"
+    cp "$STALE" "$SB/fakepath/native-shell.exe"
+    win_fake=$(cygpath -m "$SB/fakepath" 2>/dev/null || echo "$SB/fakepath")
+    o="$OUT/s2-stalepath-startup.out" e="$OUT/s2-stalepath-startup.err"
+    HOME="$H2" USERPROFILE="$H2" PATH="$win_fake:$PATH" \
+        timeout 60 "$NATIVE_SHELL" -C 'echo s2-post-upgrade' >"$o" 2>"$e"
+    if command grep -q "s2-post-upgrade" "$o" &&
+        ! command grep -qiE "unknown plugin subcommand|is not recognized" "$o" "$e"; then
+        ok s2-post-upgrade-clean-under-stale-path
+    else
+        bad s2-post-upgrade-clean-under-stale-path "stale native-shell noise after upgrade"
+    fi
+else
+    echo "SKIP s2-post-upgrade-clean-under-stale-path (no stale native-shell available)"
+fi
+
+# second contact idempotence: no re-migration, no duplicate blocks
+m1=$(md5sum "$H2/.native-shellrc" | cut -d' ' -f1)
+HOME="$H2" USERPROFILE="$H2" timeout 60 "$NATIVE_SHELL" -C 'echo s2-second' \
+    >"$OUT/s2-second.out" 2>"$OUT/s2-second.err"
+m2=$(md5sum "$H2/.native-shellrc" | cut -d' ' -f1)
+[ "$m1" = "$m2" ] && ok s2-second-run-stable || bad s2-second-run-stable "rc changed on second contact"
+
+# ── Scenario 3: registry that fails to parse (M2 class) ────────────────────
+# A registry row whose shape does not match the current structs (corruption,
+# hand-edit, or future vintage skew) reads as EMPTY at the default log level:
+# list/discover/doctor all report "none installed" with no user-facing
+# signal (the parse warning goes to RUST_LOG=warn only). Worse, a sync WITH
+# a declared spec reconciles from that empty read and writes the registry
+# back — the unreadable rows are destroyed without consent.
+H3="$SB/home-corrupt-registry"
+mkdir -p "$H3/.native-shell/sources/legacy-src"
+cat >"$H3/.native-shell/sources/registry.toml" <<EOF
+schema = "niubash:plugin-source-registry@0.3.0"
+
+[[sources]]
+id = "legacy-src"
+adapter = "oh-my-bash"
+url = "$H3/remote/legacy"
+ref = "master"
+version = "vintage"
+path = "$H3/.native-shell/sources/legacy-src"
+trusted = true
+license = "MIT"
+checksum_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+installed_at = "1727000000"
+previous = { version = "older", checksum_sha256 = "1111111111111111111111111111111111111111111111111111111111111111" }
+EOF
+printf '#!/usr/bin/env bash\ntrue\n' >"$H3/.native-shell/sources/legacy-src/loader.sh"
+# Local-path declared source: the reconcile must not need the network.
+# Windows-form path: the spec is a data file — native-shell passes `target` to git
+# verbatim, and an MSYS-style literal would fail the clone (fixture artifact,
+# not product behavior).
+mkdir -p "$H3/local-src"
+printf '#!/usr/bin/env bash\ntrue\n' >"$H3/local-src/spec-plugin.sh"
+H3_WIN=$(cygpath -m "$H3" 2>/dev/null || echo "$H3")
+cat >"$H3/.native-shell/plugins.toml" <<EOF
+schema = "niubash:plugin-spec@0.1.0"
+
+[[sources]]
+target = "$H3_WIN/local-src"
+id = "spec-src"
+EOF
+
+HOME="$H3" USERPROFILE="$H3" timeout 30 "$NATIVE_SHELL" plugin list \
+    >"$OUT/s3-list.out" 2>"$OUT/s3-list.err"
+command grep -qi "no sources installed" "$OUT/s3-list.out" &&
+    ok s3-unparseable-registry-reads-empty ||
+    bad s3-unparseable-registry-reads-empty "expected silent-empty, got rows"
+command grep -qi "legacy-src" "$OUT/s3-list.out" ||
+    ok s3-no-user-facing-signal ||
+    bad s3-no-user-facing-signal "row visible after all (behavior changed — recheck)"
+HOME="$H3" USERPROFILE="$H3" RUST_LOG=warn timeout 30 "$NATIVE_SHELL" plugin list \
+    >"$OUT/s3-list-warn.out" 2>"$OUT/s3-list-warn.err"
+command grep -qi "failed to parse plugin source registry" "$OUT/s3-list-warn.err" &&
+    ok s3-parse-warning-only-under-rust-log ||
+    bad s3-parse-warning-only-under-rust-log "no warn even under RUST_LOG"
+
+before3=$(md5sum "$H3/.native-shell/sources/registry.toml" | cut -d' ' -f1)
+HOME="$H3" USERPROFILE="$H3" timeout 60 "$NATIVE_SHELL" plugin sync \
+    >"$OUT/s3-sync.out" 2>"$OUT/s3-sync.err"
+rc=$?
+[ "$rc" -eq 0 ] && ok s3-sync-exit-0 || bad s3-sync-exit-0 "rc=$rc"
+after3=$(md5sum "$H3/.native-shell/sources/registry.toml" | cut -d' ' -f1)
+if [ "$before3" != "$after3" ]; then
+    if command grep -q 'id = "legacy-src"' "$H3/.native-shell/sources/registry.toml"; then
+        ok s3-sync-preserves-unreadable-rows
+    else
+        bad s3-sync-preserves-unreadable-rows \
+            "sync REWROTE the registry and DROPPED the unreadable legacy row (record loss)"
+    fi
+else
+    ok s3-sync-preserves-unreadable-rows
+fi
+
+echo
+echo "PASS=$PASS FAIL=$FAIL"
+[ -n "$FAILED" ] && echo "failed:$FAILED"
+echo "artifacts: $OUT"
+exit 0

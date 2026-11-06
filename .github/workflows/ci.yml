@@ -1,0 +1,426 @@
+name: NativeShell CI
+
+on:
+  schedule:
+    # nightly trend run (perfbudget-trend) — 03:23 UTC, off the busy hours
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+    inputs:
+      perfbudget:
+        description: "Also run the per-asset timing gate (25+ min)"
+        type: boolean
+        default: false
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: stable
+
+jobs:
+  build-and-test:
+    # Pinned, not `windows-latest`: the single-hidden-console path the console
+    # gates measure depends on `AllocConsoleWithOptions` (Windows 11 24H2 /
+    # Server 2025+). On older images the session console is adopted from the
+    # first CREATE_NO_WINDOW child through AttachConsole instead — a race a
+    # loaded runner can lose. `windows-latest` also migrates images underneath
+    # the workflow, silently switching which path CI exercises.
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      # rubash is a path dependency, so the lockfile records the PATCHED package:
+      # the checkout must be exactly the pinned version, or `--locked` fails.
+      - name: Checkout pinned rubash path dependency
+        shell: bash
+        run: |
+          rev="$(grep -o '"rubash_rev": *"[0-9a-f]\{40\}"' scripts/release/rubash-pin.json | grep -o '[0-9a-f]\{40\}')"
+          test -n "$rev"
+          git init --quiet ../rubash
+          git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
+          git -C ../rubash fetch --quiet --depth 1 origin "$rev"
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          echo "rubash pinned at $(git -C ../rubash rev-parse --short=12 HEAD)"
+
+      # rubash#827: keep the release-pin verifier honest on every PR (local
+      # fixtures, no network). The verifier audits scripts/release/rubash-pin.json
+      # against a rubash tree; the release workflow enforces that contract
+      # inline, fail-hard, at fetch time.
+      - name: verify-rubash-pin self-test
+        run: python scripts/release/verify-rubash-pin.py --self-test
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt
+
+      # No `cargo update -p rubash` here on purpose: under the [patch] path
+      # override the sibling clone above IS latest main (the lock's git rev
+      # never participates in compilation), and a re-resolution of the rubash
+      # subtree rewires transitive windows-sys refs (0.61.2 -> 0.59/0.48) in
+      # a way that drops the patched crate's target-specific windows-sys
+      # features at build time -- a clean-machine repro of the E0432
+      # CreateFileW failure. Build with the committed lock; bump it by hand
+      # when the engine moves.
+
+      # Workspace-wide: the native-shell-runtime crate used to carry fmt
+      # violations that the -p native-shell gate never saw (observed upstream by
+      # x2410516039/xgr-native-shell; the tree has been clean since).
+      - name: cargo fmt --check (workspace)
+        run: cargo fmt --check --all
+
+      - name: cargo build
+        run: cargo build --locked
+
+      - name: cargo test (workspace)
+        run: cargo test --workspace --locked
+
+      # Skill bundle golden check (native-shell#188): the generated regions in
+      # skills/native-shell/ must match the corpus transcripts + applet inventory,
+      # and the launcher must embed the whole committed bundle. The
+      # install/status verbs themselves are covered by tests/skill_bundle.rs
+      # inside `cargo test` above.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: harvest resume fixtures
+        run: python -m unittest discover -s scripts/harvest -p "test_*.py" -v
+
+      - name: skill bundle golden check
+        run: python scripts/test-skill-bundle.py
+
+  # Cross-platform gating gate (ledger N9): the host layer must compile
+  # clean off Windows. `cargo check` is the hard acceptance line for the
+  # cfg-gating work; the lib test suite is informational until the unix
+  # runtime semantics land (wave-2).
+  cross-check:
+    name: cross-check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      # The [patch."https://github.com/JayWanX/rubash.git"] path override in
+      # Cargo.toml resolves rubash to a sibling checkout -- same step the
+      # build-and-test job uses.
+      # rubash is a path dependency, so the lockfile records the PATCHED package:
+      # the checkout must be exactly the pinned version, or `--locked` fails.
+      - name: Checkout pinned rubash path dependency
+        shell: bash
+        run: |
+          rev="$(grep -o '"rubash_rev": *"[0-9a-f]\{40\}"' scripts/release/rubash-pin.json | grep -o '[0-9a-f]\{40\}')"
+          test -n "$rev"
+          git init --quiet ../rubash
+          git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
+          git -C ../rubash fetch --quiet --depth 1 origin "$rev"
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          echo "rubash pinned at $(git -C ../rubash rev-parse --short=12 HEAD)"
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      # Same as build-and-test: no `cargo update -p rubash` under the
+      # [patch] override -- the sibling clone is already latest main and
+      # the subtree re-resolution breaks windows-sys feature resolution.
+
+      - name: cargo check (unix acceptance line)
+        run: cargo check --workspace --locked
+
+      # TODO(wave-2): unix lib tests are expected to have failures until the
+      # unix runtime work (spawn delegation, signal handling, terminal glue)
+      # lands. Track the first green run here, then drop continue-on-error.
+      - name: cargo test --lib (informational)
+        continue-on-error: true
+        run: cargo test --workspace --lib --locked
+
+  # Cross-target gating gate: the two `runs-on` platforms above only ever
+  # exercise x86_64 glibc. Neither the musl libc (Alpine / static builds) nor
+  # the OpenHarmony target (`aarch64-unknown-linux-ohos`, HarmonyOS PC) is
+  # covered, and both diverge from glibc in ways a host-only check cannot
+  # see -- e.g. rubash's `ulimit` used `libc::__rlimit_resource_t`, a typedef
+  # glibc alone defines, so musl and ohos failed to compile while the host
+  # stayed green. `cargo check` on an explicit target is the acceptance line.
+  #
+  # `aarch64-unknown-linux-ohos` is Tier 2 with host tools, so no external
+  # OpenHarmony SDK / clang wrapper is needed for a check-only build.
+  cross-target-check:
+    name: cross-target-check (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-ohos
+          - aarch64-linux-android
+          - armv7-linux-androideabi
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      # rubash is a path dependency, so the lockfile records the PATCHED package:
+      # the checkout must be exactly the pinned version, or `--locked` fails.
+      - name: Checkout pinned rubash path dependency
+        shell: bash
+        run: |
+          rev="$(grep -o '"rubash_rev": *"[0-9a-f]\{40\}"' scripts/release/rubash-pin.json | grep -o '[0-9a-f]\{40\}')"
+          test -n "$rev"
+          git init --quiet ../rubash
+          git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
+          git -C ../rubash fetch --quiet --depth 1 origin "$rev"
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          echo "rubash pinned at $(git -C ../rubash rev-parse --short=12 HEAD)"
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          target: ${{ matrix.target }}
+
+      # Same as the other jobs: no `cargo update -p rubash` under the
+      # [patch] override -- the sibling clone is already latest main.
+
+      - name: cargo check --target ${{ matrix.target }}
+        run: cargo check --workspace --locked --target ${{ matrix.target }}
+
+
+  # musl smoke gate: the point above only proves musl *compiles*. A static
+  # musl binary is a shipped artifact shape (Alpine, scratch containers,
+  # `-static` redistributions), and docs/release.md held the musl leg back
+  # until it could "carry the same smoke gate green" as the glibc legs --
+  # a compile check is not that gate. Unlike the ohos target, a static musl
+  # x86_64 binary runs natively on the glibc runner, so the gate can run in
+  # full here: build --release, then run the exact four checks the release
+  # pipeline runs (docs/release.md "The smoke gate"): --version banner,
+  # one-shot `-c`, a pipeline through native coreutils, and the offline
+  # plugin stack. No `musl-tools` package is needed -- rustc links against
+  # the toolchain's own self-contained musl crt/libc via the host `cc`.
+  cross-target-smoke:
+    name: cross-target-smoke (x86_64-unknown-linux-musl)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      # rubash is a path dependency, so the lockfile records the PATCHED package:
+      # the checkout must be exactly the pinned version, or `--locked` fails.
+      - name: Checkout pinned rubash path dependency
+        shell: bash
+        run: |
+          rev="$(grep -o '"rubash_rev": *"[0-9a-f]\{40\}"' scripts/release/rubash-pin.json | grep -o '[0-9a-f]\{40\}')"
+          test -n "$rev"
+          git init --quiet ../rubash
+          git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
+          git -C ../rubash fetch --quiet --depth 1 origin "$rev"
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          echo "rubash pinned at $(git -C ../rubash rev-parse --short=12 HEAD)"
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          target: x86_64-unknown-linux-musl
+
+      # No `cargo update -p rubash` under the [patch] override, same as the
+      # other jobs: the sibling clone is already latest main.
+
+      - name: Pin rubash revision
+        id: rubash
+        run: |
+          if [ ! -d ../rubash ]; then
+            echo "rubash checkout missing at ../rubash" >&2
+            exit 1
+          fi
+          revision="$(git -C ../rubash rev-parse --short=12 HEAD)"
+          if [ -z "$revision" ]; then
+            echo "could not resolve rubash revision" >&2
+            exit 1
+          fi
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Build native-shell (musl, release)
+        run: cargo build --locked --release --target x86_64-unknown-linux-musl
+
+      # Same four checks as build-linux in release.yml, against the binary
+      # this job just built. The --version check reads the version from
+      # Cargo.toml rather than a release tag -- there is no tag in CI.
+      - name: "Smoke-test the musl binary (gate: no smoke, no trust)"
+        run: |
+          set -euo pipefail
+          bin="target/x86_64-unknown-linux-musl/release/native-shell"
+          test -x "$bin"
+
+          # The whole point: prove it is actually static, not silently
+          # linked against the runner's glibc.
+          if ldd "$bin" 2>&1 | grep -qi 'not a dynamic executable\|statically linked'; then
+            ldd "$bin" 2>&1 | head -1
+          else
+            echo "musl binary is dynamically linked:" >&2
+            ldd "$bin" >&2
+            exit 1
+          fi
+
+          # 1) --version names this crate version and the pinned engine rev.
+          version="$(grep -m1 -E '^version[[:space:]]*=' Cargo.toml | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/')"
+          out="$("$bin" --version)"
+          printf '%s\n' "$out"
+          grep -qF "Native Shell $version " <<<"$out"
+          grep -qF "rubash   git ${{ steps.rubash.outputs.revision }}" <<<"$out"
+
+          # 2) one-shot engine execution
+          out="$("$bin" -c 'echo ok')"
+          [ "$out" = "ok" ]
+
+          # 3) external commands + pipeline through native coreutils
+          out="$(printf 'a\nb\n' | "$bin" -c 'sort | head -1')"
+          [ "$out" = "a" ]
+
+          # 4) plugin stack offline check: empty spec, isolated HOME --
+          #    must exit 0 with zero output and touch no network.
+          mkdir -p "$RUNNER_TEMP/smoke-home"
+          : > "$RUNNER_TEMP/smoke-plugins.toml"
+          out="$(HOME="$RUNNER_TEMP/smoke-home" \
+            NATIVE_SHELL_PLUGIN_SPEC="$RUNNER_TEMP/smoke-plugins.toml" \
+            "$bin" plugin sync --bootstrap 2>&1)"
+          if [ -n "$out" ]; then
+            echo "plugin sync --bootstrap was not quiet on empty spec:" >&2
+            printf '%s\n' "$out" >&2
+            exit 1
+          fi
+
+
+  # Per-asset timing budget trend (owner directive 2026-10-04): nightly run
+  # of the same gate the release enforces (scripts/perf/asset-timing.py over
+  # every theme/plugin asset of the pinned trusted sources). Records the
+  # full per-asset JSON as a trend artifact and enforces the budgets so a
+  # regression is caught by the nightly, not at the next release tag.
+  perfbudget-trend:
+    name: per-asset timing trend (nightly)
+    if: github.event_name == 'schedule' || inputs.perfbudget
+    runs-on: windows-2025
+    timeout-minutes: 75
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      # rubash is a path dependency, so the lockfile records the PATCHED package:
+      # the checkout must be exactly the pinned version, or `--locked` fails.
+      - name: Checkout pinned rubash path dependency
+        shell: bash
+        run: |
+          rev="$(grep -o '"rubash_rev": *"[0-9a-f]\{40\}"' scripts/release/rubash-pin.json | grep -o '[0-9a-f]\{40\}')"
+          test -n "$rev"
+          git init --quiet ../rubash
+          git -C ../rubash remote add origin https://github.com/JayWanX/rubash.git
+          git -C ../rubash fetch --quiet --depth 1 origin "$rev"
+          git -C ../rubash checkout --quiet FETCH_HEAD
+          echo "rubash pinned at $(git -C ../rubash rev-parse --short=12 HEAD)"
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: cargo build
+        run: cargo build --locked --release
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install perfbudget dependencies
+        run: pip install pywinpty pyte
+
+      # Bumping a pin requires re-recording the baseline in the same change.
+      - name: Checkout pinned asset sources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dest = "perfbudget-trend"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          # The pins are FULL 40-char object ids: git resolves a fetch refspec
+          # server-side as a ref NAME, so an abbreviated pin fails before the
+          # gate measures anything ("couldn't find remote ref abf8461").
+          # Last-fetched revision, kept in sync with the committed baseline
+          # (scripts/perf/baselines/asset-timing-baseline.json).
+          $pins = @(
+            @{ source = "oh-my-bash"; owner = "JayWanX"; repo = "oh-my-bash"; flag = "--omb"; dest = "..\oh-my-bash"; pin = "d99fb526e35a7e0a4d61e48d2ad8ffbae6b5fa76" },
+            @{ source = "bash-it"; owner = "JayWanX"; repo = "bash-it"; flag = "--bash-it"; dest = "..\bash-it"; pin = "4725d29db8c0ac8c21df47664b28539f3b8fce94" }
+          )
+          $fetchLatency = @{}
+          $usable = @{}
+          foreach ($p in $pins) {
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $ok = $false
+            $attempts = 0
+            git init $p.dest
+            git -C $p.dest remote add origin "https://github.com/$($p.owner)/$($p.repo)"
+            foreach ($attempt in 1..5) {
+              $attempts = $attempt
+              git -C $p.dest fetch --depth 1 origin $p.pin
+              if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+              Start-Sleep -Seconds (5 * $attempt)
+            }
+            if ($ok) { git -C $p.dest checkout --quiet FETCH_HEAD }
+            $sw.Stop()
+            $usable[$p.source] = $ok
+            $fetchLatency[$p.repo] = @{
+              pin      = $p.pin
+              seconds  = [math]::Round($sw.Elapsed.TotalSeconds, 2)
+              attempts = $attempts
+              ok       = $ok
+            }
+            if (-not $ok) {
+              # Fail OPEN with a loud label: a transport flap must not kill the
+              # gate before it measures, and a skip must never read as a
+              # measurement. An empty source arg disables it in asset-timing.py.
+              "source $($p.source) @ $($p.pin) could not be fetched after $attempts attempts; the budget trend runs WITHOUT it - this is a SKIP, not a measurement" |
+                Set-Content (Join-Path $dest "SKIPPED-$($p.source).txt")
+              Write-Host "::warning::perfbudget-trend skipped $($p.source) @ $($p.pin) after $attempts attempts; see $dest/SKIPPED-$($p.source).txt"
+            }
+          }
+          $fetchLatency | ConvertTo-Json -Depth 4 |
+            Set-Content (Join-Path $dest "fetch-latency.json")
+          # An empty string is asset-timing.py's documented disable form, so a
+          # skipped source still gets its flag: always-splatting the vector keeps
+          # it from falling back to the developer defaults hardcoded in that
+          # script -- a skip must never read as a measurement. PowerShell 7
+          # (shell: pwsh) passes the empty argument through; 5.1 would drop it.
+          $gateArgs = @(
+            "scripts/perf/asset-timing.py",
+            "--native-shell", (Resolve-Path target/release/native-shell.exe).Path
+          )
+          foreach ($p in $pins) {
+            $gateArgs += @(
+              $p.flag,
+              $(if ($usable[$p.source]) { (Resolve-Path $p.dest).Path } else { "" })
+            )
+          }
+          $gateArgs += @(
+            "--run-dir", "$env:RUNNER_TEMP\perfbudget-run",
+            "--compare-baseline", "scripts/perf/baselines/asset-timing-baseline.json",
+            "--out", (Join-Path $dest "asset-timing.json")
+          )
+          python @gateArgs
+          exit $LASTEXITCODE
+
+      - name: Upload perfbudget trend record
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perfbudget-trend
+          path: perfbudget-trend
+          if-no-files-found: warn
+          retention-days: 90

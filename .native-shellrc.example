@@ -1,0 +1,67 @@
+# NativeShell interactive rc - example.
+# Copy this file to ~/.native-shellrc to adopt it. That file is NativeShell's primary
+# interactive entry point for aliases, environment, and shell startup.
+#
+# Defaults are a floor, not an identity (design §14.5): the built-in prompt
+# renders only while nothing claims PS1. Anything that sets PS1 — your own
+# line below, an enabled oh-my-bash theme, `eval "$(starship init bash)"` —
+# owns the prompt completely, and disabling it lets this floor render again.
+
+# ── Floor knobs (built-in defaults only; never fight an external prompt) ──
+# NATIVE_SHELL_PROMPT_CWD_STYLE='home'    # home | full | basename — cwd shape in the default prompt
+# NATIVE_SHELL_COMPLETION_STYLE='column'  # ide | column | list | inline — completion menu style
+
+# Normalize HOME when it was not inherited from the environment.
+if [ -z "${HOME:-}" ] && [ -n "${USERPROFILE:-}" ]; then
+  case "$USERPROFILE" in
+    /[A-Za-z]/*)
+      __native_shell_home_drive="${USERPROFILE#/}"
+      __native_shell_home_drive="${__native_shell_home_drive%%/*}"
+      __native_shell_home_rest="${USERPROFILE#/$__native_shell_home_drive/}"
+      HOME="$__native_shell_home_drive:/$__native_shell_home_rest"
+      ;;
+    *)
+      HOME="${USERPROFILE//\\//}"
+      ;;
+  esac
+  export HOME
+fi
+unset __native_shell_home_drive __native_shell_home_rest
+
+# ── External frameworks (oh-my-bash / bash-it / starship) ──
+# Prefer the plugin manager over hand-writing loaders:
+#   native-shell plugin add oh-my-bash          # install from the curated catalog
+#   native-shell plugin trust oh-my-bash        # review, then pass the execution gate
+#   native-shell plugin enable oh-my-bash       # guarded loader block (below)
+#   native-shell plugin enable agnoster         # theme -> OSH_THEME inside the block
+#   native-shell plugin disable oh-my-bash      # remove the block; the floor returns
+#
+# `native-shell plugin enable/disable` maintains one managed block per source between
+# `# >>> native-shell source …` / `# <<< native-shell source …` markers appended at the end of
+# this file. Everything outside the markers is yours and is never rewritten.
+# The block shape (shown commented; let `native-shell plugin` write the real one):
+#
+# # >>> native-shell source oh-my-bash (managed by `native-shell plugin enable/disable`) >>>
+# OSH_THEME='agnoster'
+# plugins=('git')
+# # oh-my-bash source (external, primary; fallback stays active when absent)
+# if [ -f "${NATIVE_SHELL_PLUGIN_SOURCES_ROOT:-$HOME/.native-shell/sources}/oh-my-bash/oh-my-bash.sh" ]; then
+#   OSH="${NATIVE_SHELL_PLUGIN_SOURCES_ROOT:-$HOME/.native-shell/sources}/oh-my-bash"
+#   OSH="${OSH//\\//}"
+#   export OSH
+#   export NATIVE_SHELL_THEME_SOURCE=omb
+#   . "$OSH/oh-my-bash.sh"
+# fi
+# # <<< native-shell source oh-my-bash <<<
+#
+# starship needs no managed block; its own init claims PS1 per prompt:
+#   eval "$(starship init bash)"
+
+# ── Personal aliases and environment ──
+alias grep='grep --color=auto'
+alias ll='ls -la'
+alias la='ls -a'
+alias e='exit'
+
+export EDITOR='vim'
+export PAGER='less'

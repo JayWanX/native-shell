@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# native-shell#141 reproduction probe — external-command spawning under
+# MSYS/Cygwin parents.
+#
+# Reported: `native-shell -c 'printf "a\nb\n" | sort'` (and cut/rev/xargs/seq/tr
+# pipelines) fail with rc=126 "Unknown error" or silent empty rc=0 when
+# native-shell runs under a Git-Bash/MSYS2/Cygwin parent, while the same commands
+# work from Python or Native Cmd.
+#
+# Run this script FROM the parent shell being investigated:
+#   Git Bash:  bash scripts/probe-msys-spawn.sh path/to/native-shell.exe
+#   MSYS2:     bash scripts/probe-msys-spawn.sh path/to/native-shell.exe
+#   Cygwin:    bash scripts/probe-msys-spawn.sh path/to/native-shell.exe
+#   cmd:       git-bash scripts/probe-msys-spawn.sh C:\...\native-shell.exe
+#
+# Each case prints rc + captured stdout/stderr. With the rubash
+# posix_errors fix, a failed spawn now reports the real Win32 code
+# (e.g. "sort: The parameter is incorrect. (os error 87)") — capture and
+# attach to the issue.
+
+NATIVE_SHELL="${1:-native-shell.exe}"
+
+parent_env() {
+    echo "=== parent env ==="
+    echo "shell=$0"
+    env | grep -iE '^(MSYSTEM|MSYS|CYGWIN|CHERE|SHELL|TERM|OSTYPE|COMSPEC|SystemRoot|WINDIR|PATHEXT)=' | sort
+    echo "PATH entries:"
+    echo "$PATH" | tr ':' '\n' | head -20
+    echo "=================="
+}
+
+run_case() {
+    local label="$1" script="$2"
+    local out err rc
+    out="$("$NATIVE_SHELL" -c "$script" 2>/tmp/native-shell141-err.$$)"
+    rc=$?
+    err="$(cat /tmp/native-shell141-err.$$)"
+    printf '%-28s rc=%-3s out=%-22q err=%q\n' "$label" "$rc" "$out" "$err"
+}
+
+parent_env
+echo "NATIVE_SHELL=$NATIVE_SHELL"
+"$NATIVE_SHELL" --version | head -3
+echo "--- cases ---"
+run_case "printf|sort"        'printf "a\nb\n" | sort'
+run_case "printf|cut"         'printf "abc\n" | cut -c1'
+run_case "printf|rev"         'printf "a\nb\n" | rev'
+run_case "printf|xargs"       'printf "1\n2\n" | xargs -n1 echo'
+run_case "herestring-cut"     'cut -d: -f2 <<< "a:b:c"'
+run_case "seq|tr"             'seq 1 3 | tr "\n" " "'
+run_case "plain-sort-stdin"   'sort <<EOF2
+b
+a
+EOF2'
+run_case "builtin-only"       'echo builtin-ok'
+run_case "explicit-git-sort"  '"D:/Git/usr/bin/sort.exe" </dev/null && echo spawn-ok'
+run_case "type-sort"          'type sort; type cut'
+rm -f /tmp/native-shell141-err.$$
+echo "--- done ---"

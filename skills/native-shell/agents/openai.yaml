@@ -1,0 +1,7 @@
+interface:
+  display_name: "NativeShell"
+  short_description: "Run Windows tasks natively in NativeShell — bash syntax, no MSYS, no path conversion."
+  default_prompt: "Use the native-shell skill for shell tasks in the NativeShell environment."
+
+policy:
+  allow_implicit_invocation: true

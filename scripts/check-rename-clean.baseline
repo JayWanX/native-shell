@@ -1,0 +1,124 @@
+# winuxsh/winuxcmd residue baseline for scripts/check-rename-clean.sh
+# GENERATED — do not edit by hand. Regenerate with:
+#     sh scripts/check-rename-clean.sh --regen
+# Format: <repo-relative path><TAB><verbatim line text of the hit>
+AGENTS.md	- Runtime environment variables use the `NATIVE_SHELL_` prefix for the shell itself and `NATIVE_CMD_` for the bundled command layer. `NATIVE_SHELL_BIN` names the running shell binary (the `bash`/`sh` faces resolve it to this installation's real `native-shell.exe`), `NATIVE_SHELL_INVOKED_AS` carries the shim-forwarded invocation face, and `NATIVE_CMD_PATH` selects one exact command-layer dispatcher executable (file or directory) for the session. During the transition, native-shell also sets/reads the deprecated `WINUXCMD_PATH` and `WINUXCMD_HOME` names because current rubash upstream still reads them; these bridges are marked with comments and must be removed once rubash renames its readers. Native Shell also sets/reads the deprecated `WINUXSH_SHELL` and `WINUXSH_ROOT` names because current rubash upstream still reads them; these bridges are marked with comments and must be removed once rubash renames its readers. (The `*_SHELL_PATH_STYLE` pair was retired rubash-side in rubash#556 / rubash#537: the engine always renders `$PWD`/`pwd` in the POSIX persona form, and native-shell no longer exports the variables.)
+AGENTS.md	- Use `~/.native-shellrc` as the primary-only interactive user entry point for plugin lists, theme selection, exports, aliases, functions, and shell startup logic. Do not read, migrate, delete, or modify the legacy `~/.winuxshrc` and `~/.winshrc` startup files. An explicitly opted-in `~/.bashrc` fallback is a future plan only, not supported behavior. Startup must not automatically run setup or plugin sync, create the primary rc, or rewrite user rc files. Issue #359 case A (1.4.2): plugin management never writes the rc at all — the manifest (`plugins.toml` + `sources/registry.toml`) drives the generated loader `~/.native-shell/generated/plugins.nsh`, which the host sources read-only BEFORE the user rc; `native-shell setup` still writes the rc (create/whole-file) until its 1.4.3 create-only convergence. Never re-attach the retired managed-block writers (`assets::write_managed_block`/`remove_managed_block`) to any verb — the 359.12 structure ratchet fails the build's test suite if you do.
+CHANGELOG.md	    "niu" followed by a letter is not a bare-`niu` hit.
+CHANGELOG.md	    `NIU_*` environment variables (live contracts), `~/.winuxshrc` (the
+CHANGELOG.md	    `repo = "unixwin/oh-my-wlinuxsh"` line — are unchanged: they identify
+CHANGELOG.md	    instead of the retired `winuxsh`.
+CHANGELOG.md	    its `unixwin/niu-git#8` issue) stays where the text cites upstream.
+CHANGELOG.md	    legacy file on disk), the `niubash:plugin-*` schema strings (what the
+CHANGELOG.md	    upstream `unixwin/oh-my-wlinuxsh` repository — and the
+CHANGELOG.md	    upstream project identity (`unixwin/niu-git`, its `niugit` index entry,
+CHANGELOG.md	  (whose own product name is Niubash) stays byte-identical — it names the
+CHANGELOG.md	  - Deliberately unchanged: the deprecated `WINUXSH_*` / `WINUXCMD_*` /
+CHANGELOG.md	  - The brand gate now scans `niugit` too: the old pattern missed it, because
+CHANGELOG.md	  - `docs/planning/oh-my-wlinuxsh-bundle-plan.md` was renamed to
+CHANGELOG.md	  1.1.9 or newer (the POSIX-unlink hardlink break, unixwin/WinuxCmd#1183);
+CHANGELOG.md	  `AGENTS.md` records both alongside the deprecated `WINUXSH_SHELL` /
+CHANGELOG.md	  `WINUXSH_ROOT` bridges.
+CHANGELOG.md	  `unixwin/niu-git` project is still named as the origin wherever the text cites
+CHANGELOG.md	  names (`dsh-niu`, `niu-sandbox`, `@cmx666/dsh-niu-bundle`) verbatim, with a
+CHANGELOG.md	- **Deliberately unchanged.** The upstream attribution to `unixwin/niubash`
+README-zh.md	native-shell 是 [unixwin/niubash](https://github.com/unixwin/niubash) 的**改名分支**，
+README-zh.md	| Unix 命令层（native-cmd） | [unixwin/WinuxCmd](https://github.com/unixwin/WinuxCmd) | MIT，© 2026 caomengxuan666 |
+README-zh.md	| 本 shell | [unixwin/niubash](https://github.com/unixwin/niubash) | MIT，© 2026 unixwin team |
+README-zh.md	上游名称（`unixwin/niubash`，以及内置 git 的来源项目 `unixwin/niu-git`）在本仓库中
+README-zh.md	上游项目自身的产品名是 **Niubash**。该项目构建在 [unixwin/rubash](https://github.com/unixwin/rubash)
+README-zh.md	与 [unixwin/WinuxCmd](https://github.com/unixwin/WinuxCmd) 之上。此处以另一个名字发布，
+README-zh.md	来自 [Native Cmd](https://github.com/unixwin/WinuxCmd) 的真 Unix 命令、
+README.md	The upstream names (`unixwin/niubash`, and the `unixwin/niu-git` origin of the
+README.md	[unixwin/WinuxCmd](https://github.com/unixwin/WinuxCmd). It is published here
+README.md	commands from [Native Cmd](https://github.com/unixwin/WinuxCmd), a git-aware
+README.md	native-shell is a **renamed fork** of [unixwin/niubash](https://github.com/unixwin/niubash),
+README.md	whose own product name is **Niubash**. That upstream project is built on
+README.md	| Unix commands (native-cmd) | [unixwin/WinuxCmd](https://github.com/unixwin/WinuxCmd) | MIT, © 2026 caomengxuan666 |
+README.md	| this shell | [unixwin/niubash](https://github.com/unixwin/niubash) | MIT, © 2026 unixwin team |
+crates/native-shell-runtime/src/completion/path.rs	        .or_else(|| std::env::var_os("WINUXSH_ROOT")) // deprecated rubash bridge
+crates/native-shell-runtime/src/native_cmd.rs	        .or_else(|| std::env::var("WINUXCMD_PATH").ok())
+crates/native-shell-runtime/src/native_cmd.rs	    // Deprecated bridge: the engine (rubash) still reads `WINUXCMD_PATH` and
+crates/native-shell-runtime/src/native_cmd.rs	    // `WINUXCMD_HOME` to find the dispatcher, so export the same values under
+crates/native-shell-runtime/src/native_cmd.rs	    // `WINUXCMD_PATH` bridge stays readable until the engine renames its own
+crates/native-shell-runtime/src/native_cmd.rs	    // notices (unixwin/WinuxCmd#1206 - observed as a stale `yes.exe` hours
+crates/native-shell-runtime/src/native_cmd.rs	    std::env::set_var("WINUXCMD_HOME", root);
+crates/native-shell-runtime/src/native_cmd.rs	    std::env::set_var("WINUXCMD_PATH", exe);
+crates/native-shell-runtime/src/plugins/recipes.rs	/// distribution under `git` (an alias of the upstream `niugit` entry), and
+crates/native-shell-runtime/src/setup_wizard.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/setup_wizard.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/setup_wizard.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/setup_wizard.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/shell.rs	                for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/shell.rs	            executor.set_winuxcmd_path(native_cmd_path);
+crates/native-shell-runtime/src/shell.rs	            for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/shell.rs	            for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/shell.rs	        .or_else(|| std::env::var_os("WINUXSH_ROOT")) // deprecated rubash bridge
+crates/native-shell-runtime/src/shell.rs	        // NATIVE_SHELL_BIN_PATH_STYLE / WINUXSH_SHELL_PATH_STYLE are no longer set
+crates/native-shell-runtime/src/shell.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/shell.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/shell.rs	        for name in [".winuxshrc", ".winshrc", ".bashrc"] {
+crates/native-shell-runtime/src/shell_links.rs	//! like package links after a while - see unixwin/WinuxCmd#1194 for the parking
+crates/native-shell-runtime/src/shell_links.rs	/// contract variables (`NATIVE_SHELL_BIN`, `WINUXSH_SHELL`) and the shim's own target
+crates/native-shell-runtime/src/syntax_highlighting.rs	        .or_else(|| std::env::var_os("WINUXSH_ROOT")) // deprecated rubash bridge
+crates/native-shell-runtime/tests/fixtures/skill-corpus/native-shell-help.txt	Configuration: ~/.native-shellrc for interactive startup; a pre-rename ~/.winuxshrc is migrated once into ~/.native-shellrc
+docs/audit/findings/wt82-L01.md	  (target written, `WINUXSH_*`→`NATIVE_SHELL_*`, `winuxsh.exe`→`native-shell.exe`, `.winuxshrc`
+docs/audit/findings/wt82-L01.md	  `NATIVE_SHELL_BIN` (and deprecated `WINUXSH_SHELL`) from `std::env::current_exe()`
+docs/audit/findings/wt82-L01.md	- **Legacy `~/.winuxshrc` → `.native-shellrc` migration once-only.** First `-C` contact migrates
+docs/planning/native-git-integration-study.md	- GitHub `unixwin/niu-git`（public，2026-09-16 建仓，patch-only：源码永不入库，CI 拉 git-for-windows tag 打 `patches/`）
+docs/planning/native-git-integration-study.md	- wpm-source 官方索引（`D:\repo\wpm-source\index.json`，281 包）：`git`=MinGit 2.55.0.5（x64+arm64）、`niugit`=2.55.0.2（**x64 only**，`git` 是它的别名）双条目并存
+docs/planning/native-git-integration-study.md	- 产物 20.2MB zip（MinGit 38.9MB）；`wpm/niugit.json`（schema 1, layout shim）与 **GitHub Release v2.55.0.2 资产已存在且 sha256 三方一致**（index == release digest == 本地 zip == `fc293ad2...`），下载 13 次
+docs/planning/native-git-integration-study.md	- 生态接线：`D:\Code\Projects\NativeShell\crates\native-shell-runtime\src\setup_wizard.rs`（NATIVE_GIT_INSTALL_COMMAND）、`plugins/sources.rs:531`（Command::new("git")）、`D:\repo\unixwin-oh-my-winuxsh\lib\git.nsh`、`D:\repo\wpm-source\index.json`（git/niugit 条目）
+docs/planning/native-git-integration-study.md	1. wpm 双条目维持现状（`git`=MinGit 保持默认，`niugit` 并存）——现状即此，无需改动
+docs/planning/native-git-integration-study.md	调研对象：`unixwin/niu-git`（上游仓库名；本 fork 侧的产物名是 native-git；本地 checkout `D:\Code\Projects\NativeGit` @ d0e525e，Release v2.55.0.2）
+docs/planning/native-shell-git.md	- 仓名定案：**native-git**（上游仓库 `unixwin/niu-git`，本地仓已建 D:\Code\Projects\NativeGit，远程仓库已建 `JayWanX/native-git`）
+docs/planning/oh-my-native-shell-bundle-plan.md	The existing `unixwin/oh-my-winuxsh` repository is legacy content. Do not
+docs/planning/oh-my-native-shell-bundle-plan.md	repo = "unixwin/oh-my-winuxsh"
+docs/planning/user-rc-read-only.md	Decision update: retire both `~/.winuxshrc` and `~/.winshrc` as startup inputs.
+docs/planning/user-rc-read-only.md	The same protection applies to legacy `~/.winuxshrc` and `~/.winshrc`, symlink
+docs/shell-quirks-observed.md	tests). Push to `unixwin/WinuxCmd` pending network; the Native Cmd
+docs/src/agents.md	  `niu-sandbox` and `tool-bash`, disables the PowerShell shell/tool rows, and
+docs/src/agents.md	  `unixwin/niu-git` repository name is likewise its own; our own fork of it is
+docs/src/agents.md	- **Mechanism:** plugins. `dsh-niu` ships a profile bundle that enables
+docs/src/agents.md	- **Naming note:** `dsh-niu`, `niu-sandbox` and `@cmx666/dsh-niu-bundle` are the
+docs/src/agents.md	- **Set it to native-shell:** `dsh plugin --profile web add @cmx666/dsh-niu-bundle@<version>`.
+docs/src/architecture.md	   `Executor::set_winuxcmd_path`.
+docs/src/installer.md	  12.7 ms against a forwarding wrapper's 32.2 ms, unixwin/niu-git#8). A
+scripts/audit/l22-migration/migrate.sh	    ok s1-original-untouched || bad s1-original-untouched "original .winuxshrc modified"
+scripts/audit/l22-migration/migrate.sh	#     "niubash:plugin-source-registry@0.1.0" marker — the product renamed
+scripts/audit/l22-migration/migrate.sh	#   - optionally a pre-rename ~/.winuxshrc for the once-only migration.
+scripts/audit/l22-migration/migrate.sh	# reference: ~/.winuxshrc.self and the winuxsh.exe entry point
+scripts/audit/l22-migration/migrate.sh	# tag (the pre-rename niubash.git 3d0de1e):
+scripts/audit/l22-migration/migrate.sh	# winuxsh interactive rc (pre-rename, ~0.x vintage)
+scripts/audit/l22-migration/migrate.sh	# ── Scenario 1: pre-rename ~/.winuxshrc migrates once ──────────────────────
+scripts/audit/l22-migration/migrate.sh	H1="$SB/home-winuxshrc"
+scripts/audit/l22-migration/migrate.sh	NATIVE_SHELL_THEME_PLUGIN='oh-my-niu'
+scripts/audit/l22-migration/migrate.sh	[ "$(cat "$H1/.winuxshrc")" = "$before" ] &&
+scripts/audit/l22-migration/migrate.sh	assert_file s1-winuxshrc-kept "$H1/.winuxshrc"
+scripts/audit/l22-migration/migrate.sh	assert_no_grep s1-migrated-no-winuxsh-stray "WINUXSH_LEGACY_MARKER" "$H1/.native-shellrc"
+scripts/audit/l22-migration/migrate.sh	before=$(cat "$H1/.winuxshrc")
+scripts/audit/l22-migration/migrate.sh	cat >"$H1/.winuxshrc" <<'EOF'
+scripts/audit/l22-migration/migrate.sh	command grep -q "winuxshrc.migrat" "$OUT/s1-first.out" "$OUT/s1-first.err" 2>/dev/null &&
+scripts/audit/l22-migration/migrate.sh	export WINUXSH_LEGACY_MARKER=1
+scripts/audit/l22-migration/migrate.sh	if command grep -q 'niubash:plugin-source-registry@0.3.0' "$H2/.native-shell/sources/registry.toml"; then
+scripts/audit/l22-migration/migrate.sh	schema = "niubash:plugin-source-registry@0.1.0"
+scripts/audit/l22-migration/migrate.sh	schema = "niubash:plugin-source-registry@0.3.0"
+scripts/audit/l22-migration/migrate.sh	schema = "niubash:plugin-spec@0.1.0"
+scripts/audit/wt82-L02/conpty_lib.py	           "WINUXSH_ROOT", "NATIVE_SHELL_THEME", "OSH_THEME", "BASH_IT_THEME",
+scripts/audit/wt82-L02/conpty_lib.py	        "compat_rc_exists": (home / ".winuxshrc").is_file(),
+scripts/harvest/eco-test.py	                    "NATIVE_SHELL_REPL_STARTUP", "BASH_ENV", "WINUXSH_ROOT",
+scripts/journey/golden-journey.py	                "WINUXSH_ROOT", "NATIVE_SHELL_THEME", "OSH_THEME", "BASH_IT_THEME"):
+scripts/release/rubash-pin.json	    "Pinned to JayWanX/rubash 0c955b4a - 'Send the invocation face under the current variable name'. The shim forwarded the bash/sh invocation face under the legacy NIU_INVOKED_AS name while Native Shell reads NATIVE_SHELL_INVOKED_AS, so `bash --help` printed the product help and failed the staged-release face gate, and `bash -c 'echo $0'` printed native-shell instead of bash.",
+scripts/release/rubash-pin.json	    "The same fork carries e84ffd77 - 'Find the host shell by its current name, not the pre-rename one' - which rewires the shim's locate_shell() away from the legacy niu.exe/winuxsh.exe names and onto native-shell.exe. Without both commits a staged <root>/cmd/usr/bin/bash.exe neither finds the shell (exit 127) nor reproduces the GNU face.",
+scripts/release/rubash-pin.json	  "description": "Rubash source pin for native-shell releases (rubash#827, conclusion B). Every release job fetches exactly this rubash commit into ../rubash -- where the [patch] path override in Cargo.toml deterministically picks it up -- and fails the release unless the checked-out HEAD equals rubash_rev. The compiled engine is pinned to an exact commit instead of being 'whatever rubash main HEAD was at build time'. The engine now comes from JayWanX/rubash (our fork): upstream unixwin/rubash still ships the pre-rename bash shim lookup chain (the legacy niu.exe / winuxsh.exe names), which cannot find native-shell.exe and exits 127.",
+skills/native-shell/references/paths.md	to `unixwin/rubash` (shell semantics) or `unixwin/WinuxCmd` (command
+src/main.rs	            std::env::set_var("WINUXSH_SHELL", path);
+src/main.rs	    // WINUXSH_SHELL is a deprecated bridge for current rubash upstream.
+tests/issue153_root_slash_arg.rs	        .env_remove("WINUXSH_ROOT")
+tests/issue153_root_slash_arg.rs	/// clean WINUXSH_ROOT so the root under test is exactly `root`.
+tests/issue156_xargs_option_boundary.rs	            unixwin/WinuxCmd#1139); the current one eats -l silently"]
+tests/issue156_xargs_option_boundary.rs	            unixwin/WinuxCmd#1139); the current one eats -n"]
+tests/issue156_xargs_option_boundary.rs	            unixwin/WinuxCmd#1139); the current one parses -s as its own"]
+tests/issue156_xargs_option_boundary.rs	            unixwin/WinuxCmd#1139); the current one swallows the --"]
+tests/issue156_xargs_option_boundary.rs	//! https://github.com/unixwin/WinuxCmd/issues/1139
+tests/startup_files.rs	    [".winuxshrc", ".winshrc", ".bashrc"]
